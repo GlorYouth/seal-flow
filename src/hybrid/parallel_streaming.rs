@@ -7,10 +7,7 @@ use rayon::iter::ParallelIterator;
 use rayon::prelude::*;
 
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use seal_crypto::traits::{
-    kem::Kem,
-    symmetric::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor},
-};
+use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -259,7 +256,6 @@ mod tests {
     use super::*;
     use crate::algorithms::definitions::{Aes256Gcm, Rsa2048};
     use crate::algorithms::traits::AsymmetricAlgorithm;
-    use seal_crypto::traits::key::KeyGenerator;
     use std::io::Cursor;
 
     fn get_test_data(size: usize) -> Vec<u8> {

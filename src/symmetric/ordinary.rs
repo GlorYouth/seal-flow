@@ -4,7 +4,7 @@ use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
 use crate::error::{Error, Result};
 use rand::{rngs::OsRng, TryRngCore};
-use seal_crypto::traits::symmetric::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor};
+use seal_crypto::prelude::*;
 
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
@@ -120,7 +120,6 @@ pub fn decrypt<S: SymmetricAlgorithm>(key: &S::Key, ciphertext: &[u8]) -> Result
 mod tests {
     use super::*;
     use crate::algorithms::definitions::Aes256Gcm;
-    use seal_crypto::traits::symmetric::SymmetricKeyGenerator;
 
     #[test]
     fn test_symmetric_ordinary_roundtrip() {

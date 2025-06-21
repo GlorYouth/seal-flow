@@ -4,7 +4,7 @@ use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
 use crate::error::{Error, Result};
 use rand::{rngs::OsRng, TryRngCore};
-use seal_crypto::traits::symmetric::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor};
+use seal_crypto::prelude::*;
 use std::io::{self, Read, Write};
 
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
@@ -180,7 +180,6 @@ mod tests {
     use super::*;
     use crate::algorithms::definitions::Aes256Gcm;
     use crate::algorithms::traits::SymmetricAlgorithm;
-    use seal_crypto::traits::symmetric::SymmetricKeyGenerator;
     use std::io::{Cursor, Read, Write};
 
     fn test_streaming_roundtrip(plaintext: &[u8]) {

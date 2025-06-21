@@ -7,7 +7,7 @@ use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
 use crate::error::{Error, Result};
 use rand::{rngs::OsRng, TryRngCore};
 use rayon::prelude::*;
-use seal_crypto::traits::symmetric::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor};
+use seal_crypto::prelude::*;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::mpsc;
@@ -268,7 +268,6 @@ where
 mod tests {
     use super::*;
     use crate::algorithms::{definitions::Aes256Gcm, traits::SymmetricAlgorithm};
-    use seal_crypto::traits::symmetric::SymmetricKeyGenerator;
     use std::io::Cursor;
 
     fn get_test_data(size: usize) -> Vec<u8> {

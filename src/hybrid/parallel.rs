@@ -3,13 +3,8 @@ use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
 use crate::error::{Error, Result};
 use rand::{rngs::OsRng, TryRngCore};
 use rayon::prelude::*;
-use seal_crypto::{
-    traits::{
-        kem::Kem,
-        symmetric::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor},
-    },
-    zeroize::Zeroizing,
-};
+use seal_crypto::prelude::*;
+use seal_crypto::zeroize::Zeroizing;
 
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
@@ -133,7 +128,6 @@ mod tests {
     use super::*;
     use crate::algorithms::definitions::{Aes256Gcm, Rsa2048};
     use crate::algorithms::traits::AsymmetricAlgorithm;
-    use seal_crypto::traits::key::KeyGenerator;
 
     #[test]
     fn test_hybrid_parallel_roundtrip() {

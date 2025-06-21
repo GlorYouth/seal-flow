@@ -1,10 +1,7 @@
 //! Defines the core traits for type-safe algorithm specification.
 
 use crate::common;
-use seal_crypto::traits::{
-    kem::Kem,
-    symmetric::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor, SymmetricKeyGenerator},
-};
+use seal_crypto::prelude::*;
 
 /// A marker trait representing a specific symmetric encryption algorithm.
 ///

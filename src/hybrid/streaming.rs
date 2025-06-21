@@ -3,13 +3,8 @@ use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
 use crate::error::{Error, Result};
 use rand::{rngs::OsRng, TryRngCore};
-use seal_crypto::{
-    traits::{
-        kem::Kem,
-        symmetric::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor},
-    },
-    zeroize::Zeroizing,
-};
+use seal_crypto::prelude::*;
+use seal_crypto::zeroize::Zeroizing;
 use std::io::{self, Read, Write};
 
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
@@ -223,7 +218,6 @@ where
 mod tests {
     use super::*;
     use crate::algorithms::definitions::{Aes256Gcm, Rsa2048};
-    use seal_crypto::traits::key::KeyGenerator;
     use std::io::{Cursor, Read, Write};
 
     fn test_hybrid_streaming_roundtrip(plaintext: &[u8]) {

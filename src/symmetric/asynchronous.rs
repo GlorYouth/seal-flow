@@ -6,7 +6,7 @@ use crate::error::{Error, Result};
 use futures::ready;
 use pin_project_lite::pin_project;
 use rand::{rngs::OsRng, TryRngCore};
-use seal_crypto::traits::symmetric::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor};
+use seal_crypto::prelude::*;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
@@ -290,7 +290,6 @@ where
 mod tests {
     use super::*;
     use crate::algorithms::{definitions::Aes256Gcm, traits::SymmetricAlgorithm};
-    use seal_crypto::traits::symmetric::SymmetricKeyGenerator;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     async fn test_async_streaming_roundtrip(plaintext: &[u8]) {

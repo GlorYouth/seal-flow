@@ -1,4 +1,4 @@
-use seal_crypto::traits::{key::KeyGenerator, symmetric::SymmetricKeyGenerator};
+use seal_crypto::prelude::*;
 use seal_flow::{
     algorithms::{
         definitions::{Aes256Gcm, Rsa2048},

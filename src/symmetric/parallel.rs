@@ -3,7 +3,7 @@ use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
 use crate::error::{Error, Result};
 use rand::{rngs::OsRng, TryRngCore};
 use rayon::prelude::*;
-use seal_crypto::traits::symmetric::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor};
+use seal_crypto::prelude::*;
 
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
@@ -115,7 +115,6 @@ mod tests {
     use crate::algorithms::{definitions::Aes256Gcm, traits::SymmetricAlgorithm};
     use crate::error::Error as FlowError;
     use seal_crypto::errors::Error as CryptoError;
-    use seal_crypto::traits::symmetric::SymmetricKeyGenerator;
 
     #[test]
     fn test_symmetric_parallel_roundtrip() {
