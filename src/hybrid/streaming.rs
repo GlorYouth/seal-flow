@@ -1,34 +1,35 @@
 //! Synchronous, streaming hybrid encryption and decryption implementation.
-use crate::common::algorithms::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
 use crate::error::{Error, Result};
 use rand::{rngs::OsRng, TryRngCore};
 use seal_crypto::{
     traits::{
-        kem::{Kem, SharedSecret},
-        key::KeyGenerator,
+        kem::Kem,
         symmetric::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor},
     },
+    zeroize::Zeroizing,
 };
 use std::io::{self, Read, Write};
 
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Implements `std::io::Write` for synchronous, streaming hybrid encryption.
-pub struct HybridStreamingEncryptor<W: Write, K: Kem, S: SymmetricEncryptor> {
+pub struct Encryptor<W: Write, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
     writer: W,
-    symmetric_key: S::Key, // This is the derived DEK
+    symmetric_key: Zeroizing<Vec<u8>>, // This is the derived DEK
     base_nonce: [u8; 12],
     chunk_size: usize,
     buffer: Vec<u8>,
     chunk_counter: u64,
-    _phantom: std::marker::PhantomData<(K, S)>,
+    _phantom: std::marker::PhantomData<(A, S)>,
 }
 
-impl<W: Write, K, S> HybridStreamingEncryptor<W, K, S>
+impl<W: Write, A, S> Encryptor<W, A, S>
 where
-    K: Kem<EncapsulatedKey = Vec<u8>>,
-    S: SymmetricEncryptor<Key = SharedSecret>,
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
+    A::Scheme: Kem<EncapsulatedKey = Vec<u8>>,
 {
     /// Creates a new streaming encryptor.
     ///
@@ -36,14 +37,11 @@ where
     /// and write the complete header to the underlying writer.
     pub fn new(
         mut writer: W,
-        pk: &K::PublicKey,
-        // Metadata
+        pk: &A::PublicKey,
         kek_id: String,
-        kek_algorithm: AsymmetricAlgorithm,
-        dek_algorithm: SymmetricAlgorithm,
     ) -> Result<Self> {
         // 1. KEM Encapsulate: Generate DEK and wrap it.
-        let (shared_secret, encapsulated_key) = K::encapsulate(pk)?;
+        let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(pk)?;
 
         // 2. Prepare streaming parameters.
         let mut base_nonce = [0u8; 12];
@@ -55,8 +53,8 @@ where
             mode: SealMode::Hybrid,
             payload: HeaderPayload::Hybrid {
                 kek_id,
-                kek_algorithm,
-                dek_algorithm,
+                kek_algorithm: A::ALGORITHM,
+                dek_algorithm: S::ALGORITHM,
                 encrypted_dek: encapsulated_key,
                 stream_info: Some(StreamInfo {
                     chunk_size: DEFAULT_CHUNK_SIZE,
@@ -82,8 +80,8 @@ where
     }
 }
 
-impl<W: Write, K: Kem, S: SymmetricEncryptor<Key = SharedSecret>> Write
-    for HybridStreamingEncryptor<W, K, S>
+impl<W: Write, A: AsymmetricAlgorithm, S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>> Write
+    for Encryptor<W, A, S>
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.buffer.extend_from_slice(buf);
@@ -96,7 +94,7 @@ impl<W: Write, K: Kem, S: SymmetricEncryptor<Key = SharedSecret>> Write
                 nonce[4 + i] ^= counter_bytes[i];
             }
 
-            let encrypted_chunk = S::encrypt(&self.symmetric_key, &nonce, &chunk, None)
+            let encrypted_chunk = S::Scheme::encrypt(&self.symmetric_key, &nonce, &chunk, None)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
             self.chunk_counter += 1;
@@ -114,7 +112,7 @@ impl<W: Write, K: Kem, S: SymmetricEncryptor<Key = SharedSecret>> Write
                 nonce[4 + i] ^= counter_bytes[i];
             }
 
-            let encrypted_chunk = S::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
+            let encrypted_chunk = S::Scheme::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
             self.chunk_counter += 1;
@@ -124,28 +122,28 @@ impl<W: Write, K: Kem, S: SymmetricEncryptor<Key = SharedSecret>> Write
 }
 
 /// Implements `std::io::Read` for synchronous, streaming hybrid decryption.
-pub struct HybridStreamingDecryptor<R: Read, K: Kem, S: SymmetricDecryptor> {
+pub struct Decryptor<R: Read, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
     reader: R,
-    symmetric_key: S::Key, // The recovered DEK
+    symmetric_key: Zeroizing<Vec<u8>>, // The recovered DEK
     base_nonce: [u8; 12],
     encrypted_chunk_size: usize,
     buffer: io::Cursor<Vec<u8>>,
     chunk_counter: u64,
     is_done: bool,
-    _phantom: std::marker::PhantomData<(K, S)>,
+    _phantom: std::marker::PhantomData<(A, S)>,
 }
 
-impl<R: Read, K, S> HybridStreamingDecryptor<R, K, S>
+impl<R: Read, A, S> Decryptor<R, A, S>
 where
-    K: Kem,
-    S: SymmetricDecryptor<Key = SharedSecret> + SymmetricCipher,
-    <K as Kem>::EncapsulatedKey: From<Vec<u8>>,
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+    <A::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>>,
 {
     /// Creates a new streaming decryptor.
     ///
     /// This will read the header from the underlying reader and perform the KEM
     /// decapsulate operation immediately to recover the DEK.
-    pub fn new(mut reader: R, sk: &K::PrivateKey) -> Result<Self> {
+    pub fn new(mut reader: R, sk: &A::PrivateKey) -> Result<Self> {
         // 1. Read header.
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf)?;
@@ -166,9 +164,9 @@ where
         };
 
         // 3. KEM Decapsulate to recover the DEK.
-        let shared_secret = K::decapsulate(sk, &encapsulated_key)?;
+        let shared_secret = A::Scheme::decapsulate(sk, &encapsulated_key)?;
 
-        let tag_len = S::TAG_SIZE;
+        let tag_len = S::Scheme::TAG_SIZE;
         let encrypted_chunk_size = chunk_size as usize + tag_len;
 
         Ok(Self {
@@ -184,8 +182,10 @@ where
     }
 }
 
-impl<R: Read, K: Kem, S: SymmetricDecryptor<Key = SharedSecret>> Read
-    for HybridStreamingDecryptor<R, K, S>
+impl<R: Read, A, S> Read for Decryptor<R, A, S>
+where
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let bytes_read_from_buf = self.buffer.read(buf)?;
@@ -211,7 +211,7 @@ impl<R: Read, K: Kem, S: SymmetricDecryptor<Key = SharedSecret>> Read
         }
 
         let plaintext_chunk =
-            S::decrypt(&self.symmetric_key, &nonce, final_encrypted_chunk, None)
+            S::Scheme::decrypt(&self.symmetric_key, &nonce, final_encrypted_chunk, None)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "decryption failed"))?;
 
         self.buffer = io::Cursor::new(plaintext_chunk);
@@ -225,24 +225,20 @@ impl<R: Read, K: Kem, S: SymmetricDecryptor<Key = SharedSecret>> Read
 #[cfg(test)]
 mod tests {
     use super::*;
-    use seal_crypto::systems::{
-        asymmetric::rsa::{Rsa2048, RsaScheme},
-        symmetric::aes_gcm::{Aes256, AesGcmScheme},
-    };
+    use crate::algorithms::definitions::{Aes256Gcm, Rsa2048};
+    use seal_crypto::traits::key::KeyGenerator;
     use std::io::{Cursor, Read, Write};
 
     fn test_hybrid_streaming_roundtrip(plaintext: &[u8]) {
-        let (pk, sk) = RsaScheme::<Rsa2048>::generate_keypair().unwrap();
+        let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
 
         // Encrypt
         let mut encrypted_data = Vec::new();
         let mut encryptor =
-            HybridStreamingEncryptor::<_, RsaScheme<Rsa2048>, AesGcmScheme<Aes256>>::new(
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(
                 &mut encrypted_data,
                 &pk,
                 "test_kek_id".to_string(),
-                AsymmetricAlgorithm::Rsa2048,
-                SymmetricAlgorithm::Aes256Gcm,
             )
             .unwrap();
         encryptor.write_all(plaintext).unwrap();
@@ -250,7 +246,7 @@ mod tests {
 
         // Decrypt
         let mut decryptor =
-            HybridStreamingDecryptor::<_, RsaScheme<Rsa2048>, AesGcmScheme<Aes256>>::new(
+            Decryptor::<_, Rsa2048, Aes256Gcm>::new(
                 Cursor::new(&encrypted_data),
                 &sk,
             )
@@ -280,17 +276,15 @@ mod tests {
 
     #[test]
     fn test_tampered_ciphertext_fails() {
-        let (pk, sk) = RsaScheme::<Rsa2048>::generate_keypair().unwrap();
+        let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
         let plaintext = b"some important data";
 
         let mut encrypted_data = Vec::new();
         let mut encryptor =
-            HybridStreamingEncryptor::<_, RsaScheme<Rsa2048>, AesGcmScheme<Aes256>>::new(
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(
                 &mut encrypted_data,
                 &pk,
                 "test_kek_id".to_string(),
-                AsymmetricAlgorithm::Rsa2048,
-                SymmetricAlgorithm::Aes256Gcm,
             )
             .unwrap();
         encryptor.write_all(plaintext).unwrap();
@@ -302,7 +296,7 @@ mod tests {
         }
 
         let mut decryptor =
-            HybridStreamingDecryptor::<_, RsaScheme<Rsa2048>, AesGcmScheme<Aes256>>::new(
+            Decryptor::<_, Rsa2048, Aes256Gcm>::new(
                 Cursor::new(&encrypted_data),
                 &sk,
             )
@@ -315,25 +309,23 @@ mod tests {
 
     #[test]
     fn test_wrong_private_key_fails() {
-        let (pk, _) = RsaScheme::<Rsa2048>::generate_keypair().unwrap();
+        let (pk, _) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
         let mut encryptor =
-            HybridStreamingEncryptor::<_, RsaScheme<Rsa2048>, AesGcmScheme<Aes256>>::new(
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(
                 &mut encrypted_data,
                 &pk,
                 "test_kek_id".to_string(),
-                AsymmetricAlgorithm::Rsa2048,
-                SymmetricAlgorithm::Aes256Gcm,
             )
             .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.flush().unwrap();
 
         // Decrypt with the wrong private key should fail
-        let (_, sk2) = RsaScheme::<Rsa2048>::generate_keypair().unwrap();
-        let result = HybridStreamingDecryptor::<_, RsaScheme<Rsa2048>, AesGcmScheme<Aes256>>::new(
+        let (_, sk2) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
+        let result = Decryptor::<_, Rsa2048, Aes256Gcm>::new(
             Cursor::new(&encrypted_data),
             &sk2,
         );

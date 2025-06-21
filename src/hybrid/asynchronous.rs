@@ -1,7 +1,7 @@
 //! Asynchronous, streaming hybrid encryption and decryption implementation.
 #![cfg(feature = "async")]
 
-use crate::common::algorithms::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
 use crate::error::{Error, Result};
 use futures::ready;
@@ -9,10 +9,10 @@ use pin_project_lite::pin_project;
 use rand::{rngs::OsRng, TryRngCore};
 use seal_crypto::{
     traits::{
-        kem::{Kem, SharedSecret},
-        key::KeyGenerator,
+        kem::Kem,
         symmetric::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor},
     },
+    zeroize::Zeroizing,
 };
 use std::future::Future;
 use std::io;
@@ -32,35 +32,34 @@ enum EncryptorState {
 }
 
 pin_project! {
-    pub struct AsyncHybridStreamingEncryptor<W: AsyncWrite, K: Kem, S: SymmetricEncryptor> {
+    pub struct Encryptor<W: AsyncWrite, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
         #[pin]
         writer: W,
-        symmetric_key: S::Key,
+        symmetric_key: Zeroizing<Vec<u8>>,
         base_nonce: [u8; 12],
         chunk_size: usize,
         buffer: Vec<u8>,
         chunk_counter: u64,
         state: EncryptorState,
-        _phantom: std::marker::PhantomData<(K, S)>,
+        _phantom: std::marker::PhantomData<(A, S)>,
     }
 }
 
-impl<W: AsyncWrite + Unpin, K, S> AsyncHybridStreamingEncryptor<W, K, S>
+impl<W: AsyncWrite + Unpin, A, S> Encryptor<W, A, S>
 where
-    K: Kem<EncapsulatedKey = Vec<u8>> + Send + Sync + 'static,
-    K::PublicKey: Send + Sync,
-    S: SymmetricEncryptor<Key = SharedSecret> + Send + Sync + 'static,
+    A: AsymmetricAlgorithm,
+    A::PublicKey: Send + Sync,
+    A::Scheme: Kem<EncapsulatedKey = Vec<u8>> + Send + Sync + 'static,
+    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
     S::Key: Clone + Send + Sync,
 {
     pub async fn new(
         mut writer: W,
-        pk: K::PublicKey,
+        pk: A::PublicKey,
         kek_id: String,
-        kek_algorithm: AsymmetricAlgorithm,
-        dek_algorithm: SymmetricAlgorithm,
     ) -> Result<Self> {
         let (shared_secret, encapsulated_key) =
-            tokio::task::spawn_blocking(move || K::encapsulate(&pk)).await??;
+            tokio::task::spawn_blocking(move || A::Scheme::encapsulate(&pk)).await??;
 
         let mut base_nonce = [0u8; 12];
         OsRng.try_fill_bytes(&mut base_nonce)?;
@@ -70,8 +69,8 @@ where
             mode: SealMode::Hybrid,
             payload: HeaderPayload::Hybrid {
                 kek_id,
-                kek_algorithm,
-                dek_algorithm,
+                kek_algorithm: A::ALGORITHM,
+                dek_algorithm: S::ALGORITHM,
                 encrypted_dek: encapsulated_key,
                 stream_info: Some(StreamInfo {
                     chunk_size: DEFAULT_CHUNK_SIZE,
@@ -100,10 +99,10 @@ where
     }
 }
 
-impl<W: AsyncWrite + Unpin, K, S> AsyncWrite for AsyncHybridStreamingEncryptor<W, K, S>
+impl<W: AsyncWrite + Unpin, A, S> AsyncWrite for Encryptor<W, A, S>
 where
-    K: Kem + Send + Sync + 'static,
-    S: SymmetricEncryptor<Key = SharedSecret> + Send + Sync + 'static,
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
     S::Key: Clone + Send + Sync,
 {
     fn poll_write(
@@ -133,7 +132,7 @@ where
                     }
                     let key = this.symmetric_key.clone();
                     let handle =
-                        tokio::task::spawn_blocking(move || S::encrypt(&key, &nonce, &chunk, None).map_err(Error::from));
+                        tokio::task::spawn_blocking(move || S::Scheme::encrypt(&key, &nonce, &chunk, None).map_err(Error::from));
                     *this.state = EncryptorState::Encrypting(handle);
                 }
                 EncryptorState::Encrypting(handle) => {
@@ -180,29 +179,30 @@ enum DecryptorState {
 }
 
 pin_project! {
-    pub struct AsyncHybridStreamingDecryptor<R: AsyncRead, K: Kem, S: SymmetricDecryptor> {
+    pub struct Decryptor<R: AsyncRead, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
         #[pin]
         reader: R,
-        symmetric_key: S::Key,
+        symmetric_key: Zeroizing<Vec<u8>>,
         base_nonce: [u8; 12],
         encrypted_chunk_size: usize,
         buffer: io::Cursor<Vec<u8>>,
         chunk_counter: u64,
         is_done: bool,
         state: DecryptorState,
-        _phantom: std::marker::PhantomData<(K, S)>,
+        _phantom: std::marker::PhantomData<(A, S)>,
     }
 }
 
-impl<R: AsyncRead + Unpin, K, S> AsyncHybridStreamingDecryptor<R, K, S>
+impl<R: AsyncRead + Unpin, A, S> Decryptor<R, A, S>
 where
-    K: Kem + Send + Sync + 'static,
-    K::PrivateKey: Send + Sync,
-    <K as Kem>::EncapsulatedKey: From<Vec<u8>> + Send,
-    S: SymmetricDecryptor<Key = SharedSecret> + SymmetricCipher + Send + Sync + 'static,
+    A: AsymmetricAlgorithm,
+    A::PrivateKey: Send + Sync,
+    <A::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>> + Send,
+    A::Scheme: Send + Sync + 'static,
+    S: SymmetricAlgorithm,
     S::Key: Clone + Send + Sync,
 {
-    pub async fn new(mut reader: R, sk: K::PrivateKey) -> Result<Self> {
+    pub async fn new(mut reader: R, sk: A::PrivateKey) -> Result<Self> {
         use tokio::io::AsyncReadExt;
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf).await?;
@@ -221,9 +221,9 @@ where
             _ => return Err(Error::InvalidHeader),
         };
 
-        let shared_secret = tokio::task::spawn_blocking(move || K::decapsulate(&sk, &encapsulated_key)).await??;
+        let shared_secret = tokio::task::spawn_blocking(move || A::Scheme::decapsulate(&sk, &encapsulated_key)).await??;
 
-        let tag_len = S::TAG_SIZE;
+        let tag_len = S::Scheme::TAG_SIZE;
         let encrypted_chunk_size = chunk_size as usize + tag_len;
 
         Ok(Self {
@@ -240,10 +240,10 @@ where
     }
 }
 
-impl<R: AsyncRead + Unpin, K, S> AsyncRead for AsyncHybridStreamingDecryptor<R, K, S>
+impl<R: AsyncRead + Unpin, A, S> AsyncRead for Decryptor<R, A, S>
 where
-    K: Kem + Send + Sync + 'static,
-    S: SymmetricDecryptor<Key = SharedSecret> + SymmetricCipher + Send + Sync + 'static,
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
     S::Key: Clone + Send + Sync,
 {
     fn poll_read(
@@ -291,7 +291,7 @@ where
                     let key = this.symmetric_key.clone();
                     let final_encrypted_chunk = final_encrypted_chunk.to_vec();
                     let handle = tokio::task::spawn_blocking(move || {
-                        S::decrypt(&key, &nonce, &final_encrypted_chunk, None).map_err(Error::from)
+                        S::Scheme::decrypt(&key, &nonce, &final_encrypted_chunk, None).map_err(Error::from)
                     });
 
                     *this.state = DecryptorState::Decrypting(handle);
@@ -314,24 +314,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use seal_crypto::systems::{
-        asymmetric::rsa::{Rsa2048, RsaScheme},
-        symmetric::aes_gcm::{Aes256, AesGcmScheme},
-    };
+    use crate::algorithms::definitions::{Aes256Gcm, Rsa2048};
+    use crate::algorithms::traits::AsymmetricAlgorithm;
+    use seal_crypto::traits::key::KeyGenerator;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     async fn test_hybrid_async_streaming_roundtrip(plaintext: &[u8]) {
-        let (pk, sk) = RsaScheme::<Rsa2048>::generate_keypair().unwrap();
+        let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
 
         // Encrypt
         let mut encrypted_data = Vec::new();
         let mut encryptor =
-            AsyncHybridStreamingEncryptor::<_, RsaScheme<Rsa2048>, AesGcmScheme<Aes256>>::new(
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(
                 &mut encrypted_data,
                 pk,
                 "test_kek_id".to_string(),
-                AsymmetricAlgorithm::Rsa2048,
-                SymmetricAlgorithm::Aes256Gcm,
             )
             .await
             .unwrap();
@@ -340,7 +337,7 @@ mod tests {
 
         // Decrypt
         let mut decryptor =
-            AsyncHybridStreamingDecryptor::<_, RsaScheme<Rsa2048>, AesGcmScheme<Aes256>>::new(
+            Decryptor::<_, Rsa2048, Aes256Gcm>::new(
                 encrypted_data.as_slice(),
                 sk,
             )
@@ -371,17 +368,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_tampered_ciphertext_fails_async() {
-        let (pk, sk) = RsaScheme::<Rsa2048>::generate_keypair().unwrap();
+        let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
         let plaintext = b"some important data";
 
         let mut encrypted_data = Vec::new();
         let mut encryptor =
-            AsyncHybridStreamingEncryptor::<_, RsaScheme<Rsa2048>, AesGcmScheme<Aes256>>::new(
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(
                 &mut encrypted_data,
                 pk,
                 "test_kek_id".to_string(),
-                AsymmetricAlgorithm::Rsa2048,
-                SymmetricAlgorithm::Aes256Gcm,
             )
             .await
             .unwrap();
@@ -394,7 +389,7 @@ mod tests {
         }
 
         let mut decryptor =
-            AsyncHybridStreamingDecryptor::<_, RsaScheme<Rsa2048>, AesGcmScheme<Aes256>>::new(
+            Decryptor::<_, Rsa2048, Aes256Gcm>::new(
                 encrypted_data.as_slice(),
                 sk,
             )
@@ -408,17 +403,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_wrong_private_key_fails_async() {
-        let (pk, _) = RsaScheme::<Rsa2048>::generate_keypair().unwrap();
+        let (pk, _) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
         let mut encryptor =
-            AsyncHybridStreamingEncryptor::<_, RsaScheme<Rsa2048>, AesGcmScheme<Aes256>>::new(
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(
                 &mut encrypted_data,
                 pk,
                 "test_kek_id".to_string(),
-                AsymmetricAlgorithm::Rsa2048,
-                SymmetricAlgorithm::Aes256Gcm,
             )
             .await
             .unwrap();
@@ -426,8 +419,8 @@ mod tests {
         encryptor.shutdown().await.unwrap();
 
         // Decrypt with the wrong private key should fail
-        let (_, sk2) = RsaScheme::<Rsa2048>::generate_keypair().unwrap();
-        let result = AsyncHybridStreamingDecryptor::<_, RsaScheme<Rsa2048>, AesGcmScheme<Aes256>>::new(
+        let (_, sk2) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
+        let result = Decryptor::<_, Rsa2048, Aes256Gcm>::new(
             encrypted_data.as_slice(),
             sk2,
         )
