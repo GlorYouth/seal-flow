@@ -28,18 +28,14 @@ pub struct Encryptor<W: Write, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
 impl<W: Write, A, S> Encryptor<W, A, S>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
-    A::Scheme: Kem<EncapsulatedKey = Vec<u8>>,
+    S: SymmetricAlgorithm<Key = A::PrivateKey>,
+    Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
 {
     /// Creates a new streaming encryptor.
     ///
     /// This will perform the KEM encapsulate operation immediately to generate the DEK,
     /// and write the complete header to the underlying writer.
-    pub fn new(
-        mut writer: W,
-        pk: &A::PublicKey,
-        kek_id: String,
-    ) -> Result<Self> {
+    pub fn new(mut writer: W, pk: &A::PublicKey, kek_id: String) -> Result<Self> {
         // 1. KEM Encapsulate: Generate DEK and wrap it.
         let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(pk)?;
 
@@ -55,7 +51,7 @@ where
                 kek_id,
                 kek_algorithm: A::ALGORITHM,
                 dek_algorithm: S::ALGORITHM,
-                encrypted_dek: encapsulated_key,
+                encrypted_dek: encapsulated_key.into(),
                 stream_info: Some(StreamInfo {
                     chunk_size: DEFAULT_CHUNK_SIZE,
                     base_nonce,
@@ -112,8 +108,9 @@ impl<W: Write, A: AsymmetricAlgorithm, S: SymmetricAlgorithm<Key = Zeroizing<Vec
                 nonce[4 + i] ^= counter_bytes[i];
             }
 
-            let encrypted_chunk = S::Scheme::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let encrypted_chunk =
+                S::Scheme::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
             self.chunk_counter += 1;
         }
@@ -200,7 +197,7 @@ where
             self.is_done = true;
             return Ok(0);
         }
-        
+
         // Handle cases where the last chunk is smaller than the full chunk size.
         let final_encrypted_chunk = &encrypted_chunk[..bytes_read];
 
@@ -234,23 +231,18 @@ mod tests {
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-                &mut encrypted_data,
-                &pk,
-                "test_kek_id".to_string(),
-            )
-            .unwrap();
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
+            &mut encrypted_data,
+            &pk,
+            "test_kek_id".to_string(),
+        )
+        .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.flush().unwrap();
 
         // Decrypt
         let mut decryptor =
-            Decryptor::<_, Rsa2048, Aes256Gcm>::new(
-                Cursor::new(&encrypted_data),
-                &sk,
-            )
-            .unwrap();
+            Decryptor::<_, Rsa2048, Aes256Gcm>::new(Cursor::new(&encrypted_data), &sk).unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
 
@@ -280,13 +272,12 @@ mod tests {
         let plaintext = b"some important data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-                &mut encrypted_data,
-                &pk,
-                "test_kek_id".to_string(),
-            )
-            .unwrap();
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
+            &mut encrypted_data,
+            &pk,
+            "test_kek_id".to_string(),
+        )
+        .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.flush().unwrap();
 
@@ -296,11 +287,7 @@ mod tests {
         }
 
         let mut decryptor =
-            Decryptor::<_, Rsa2048, Aes256Gcm>::new(
-                Cursor::new(&encrypted_data),
-                &sk,
-            )
-            .unwrap();
+            Decryptor::<_, Rsa2048, Aes256Gcm>::new(Cursor::new(&encrypted_data), &sk).unwrap();
         let mut decrypted_data = Vec::new();
         let result = decryptor.read_to_end(&mut decrypted_data);
 
@@ -313,23 +300,19 @@ mod tests {
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-                &mut encrypted_data,
-                &pk,
-                "test_kek_id".to_string(),
-            )
-            .unwrap();
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
+            &mut encrypted_data,
+            &pk,
+            "test_kek_id".to_string(),
+        )
+        .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.flush().unwrap();
 
         // Decrypt with the wrong private key should fail
         let (_, sk2) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
-        let result = Decryptor::<_, Rsa2048, Aes256Gcm>::new(
-            Cursor::new(&encrypted_data),
-            &sk2,
-        );
+        let result = Decryptor::<_, Rsa2048, Aes256Gcm>::new(Cursor::new(&encrypted_data), &sk2);
 
         assert!(result.is_err());
     }
-} 
+}

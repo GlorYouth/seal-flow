@@ -1,13 +1,9 @@
 //! Defines the core traits for type-safe algorithm specification.
 
 use crate::common;
-use seal_crypto::{
-    traits::{
-        kem::Kem,
-        symmetric::{
-            SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor, SymmetricKeyGenerator,
-        },
-    },
+use seal_crypto::traits::{
+    kem::Kem,
+    symmetric::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor, SymmetricKeyGenerator},
 };
 
 /// A marker trait representing a specific symmetric encryption algorithm.
@@ -25,7 +21,7 @@ pub trait SymmetricAlgorithm: 'static + Send + Sync {
         + SymmetricCipher
         + Send
         + Sync;
-    
+
     /// The corresponding enum variant for this algorithm, used for serialization
     /// and header creation.
     const ALGORITHM: common::algorithms::SymmetricAlgorithm;
@@ -42,11 +38,9 @@ pub trait AsymmetricAlgorithm: 'static + Send + Sync {
     type PrivateKey;
 
     /// The associated `Scheme` from `seal-crypto` that implements KEM and key-pair generation.
-    type Scheme: Kem<PublicKey = Self::PublicKey, PrivateKey = Self::PrivateKey>
-        + Send
-        + Sync;
-    
+    type Scheme: Kem<PublicKey = Self::PublicKey, PrivateKey = Self::PrivateKey> + Send + Sync;
+
     /// The corresponding enum variant for this algorithm, used for serialization
     /// and header creation.
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm;
-} 
+}

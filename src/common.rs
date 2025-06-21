@@ -1,3 +1,2 @@
-
-pub mod header;
 pub mod algorithms;
+pub mod header;

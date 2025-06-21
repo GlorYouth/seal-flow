@@ -11,11 +11,11 @@ use seal_crypto::traits::{
     kem::Kem,
     symmetric::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor},
 };
+use seal_crypto::zeroize::Zeroizing;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::thread;
-use seal_crypto::zeroize::Zeroizing;
 
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 const CHANNEL_BOUND: usize = 16;
@@ -38,9 +38,7 @@ pub fn encrypt<A, S, R, W>(
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
-    A::Scheme: Kem<EncapsulatedKey = Vec<u8>>,
-    A::PublicKey: Sync,
-    S::Key: Sync,
+    Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
     R: Read + Send,
     W: Write,
 {
@@ -56,7 +54,7 @@ where
             kek_id,
             kek_algorithm: A::ALGORITHM,
             dek_algorithm: S::ALGORITHM,
-            encrypted_dek: encapsulated_key,
+            encrypted_dek: encapsulated_key.into(),
             stream_info: Some(StreamInfo {
                 chunk_size: DEFAULT_CHUNK_SIZE,
                 base_nonce,
@@ -108,8 +106,8 @@ where
                 .par_bridge()
                 .for_each(|(index, chunk)| {
                     let nonce = derive_nonce(&base_nonce, index);
-                    let encrypted =
-                        S::Scheme::encrypt(&shared_secret, &nonce, &chunk, None).map_err(Error::from);
+                    let encrypted = S::Scheme::encrypt(&shared_secret, &nonce, &chunk, None)
+                        .map_err(Error::from);
                     if enc_chunk_tx_clone.send((index, encrypted)).is_err() {
                         return;
                     }
@@ -146,18 +144,14 @@ where
     })
 }
 
-pub fn decrypt<A, S, R, W>(
-    private_key: &A::PrivateKey,
-    mut reader: R,
-    mut writer: W,
-) -> Result<()>
+pub fn decrypt<A, S, R, W>(private_key: &A::PrivateKey, mut reader: R, mut writer: W) -> Result<()>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
-    <A::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>>,
     S::Key: Sync,
     R: Read + Send,
     W: Write,
+    <<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>>,
 {
     let mut header_len_bytes = [0u8; 4];
     reader.read_exact(&mut header_len_bytes)?;
@@ -220,8 +214,8 @@ where
                 .par_bridge()
                 .for_each(|(index, chunk)| {
                     let nonce = derive_nonce(&base_nonce, index);
-                    let decrypted =
-                        S::Scheme::decrypt(&shared_secret, &nonce, &chunk, None).map_err(Error::from);
+                    let decrypted = S::Scheme::decrypt(&shared_secret, &nonce, &chunk, None)
+                        .map_err(Error::from);
                     if dec_chunk_tx_clone.send((index, decrypted)).is_err() {
                         return;
                     }
@@ -289,12 +283,8 @@ mod tests {
 
         let mut encrypted_source = Cursor::new(&encrypted_dest);
         let mut decrypted_dest = Vec::new();
-        decrypt::<Rsa2048, Aes256Gcm, _, _>(
-            &sk,
-            &mut encrypted_source,
-            &mut decrypted_dest,
-        )
-        .unwrap();
+        decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk, &mut encrypted_source, &mut decrypted_dest)
+            .unwrap();
 
         assert_eq!(plaintext, decrypted_dest);
     }
@@ -316,12 +306,8 @@ mod tests {
 
         let mut encrypted_source = Cursor::new(&encrypted_dest);
         let mut decrypted_dest = Vec::new();
-        decrypt::<Rsa2048, Aes256Gcm, _, _>(
-            &sk,
-            &mut encrypted_source,
-            &mut decrypted_dest,
-        )
-        .unwrap();
+        decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk, &mut encrypted_source, &mut decrypted_dest)
+            .unwrap();
 
         assert_eq!(plaintext, decrypted_dest);
     }
@@ -349,11 +335,8 @@ mod tests {
 
         let mut encrypted_source = Cursor::new(&encrypted_dest);
         let mut decrypted_dest = Vec::new();
-        let result = decrypt::<Rsa2048, Aes256Gcm, _, _>(
-            &sk,
-            &mut encrypted_source,
-            &mut decrypted_dest,
-        );
+        let result =
+            decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk, &mut encrypted_source, &mut decrypted_dest);
         assert!(result.is_err());
     }
 
@@ -375,11 +358,8 @@ mod tests {
 
         let mut encrypted_source = Cursor::new(&encrypted_dest);
         let mut decrypted_dest = Vec::new();
-        let result = decrypt::<Rsa2048, Aes256Gcm, _, _>(
-            &sk2,
-            &mut encrypted_source,
-            &mut decrypted_dest,
-        );
+        let result =
+            decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk2, &mut encrypted_source, &mut decrypted_dest);
         assert!(result.is_err());
     }
 }

@@ -48,16 +48,13 @@ pin_project! {
 impl<W: AsyncWrite + Unpin, A, S> Encryptor<W, A, S>
 where
     A: AsymmetricAlgorithm,
-    A::PublicKey: Send + Sync,
-    A::Scheme: Kem<EncapsulatedKey = Vec<u8>> + Send + Sync + 'static,
-    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
-    S::Key: Clone + Send + Sync,
+    S: SymmetricAlgorithm,
 {
-    pub async fn new(
-        mut writer: W,
-        pk: A::PublicKey,
-        kek_id: String,
-    ) -> Result<Self> {
+    pub async fn new(mut writer: W, pk: A::PublicKey, kek_id: String) -> Result<Self>
+    where
+        <<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey: Into<Vec<u8>> + Send,
+        <A as AsymmetricAlgorithm>::PublicKey: Send,
+    {
         let (shared_secret, encapsulated_key) =
             tokio::task::spawn_blocking(move || A::Scheme::encapsulate(&pk)).await??;
 
@@ -71,7 +68,7 @@ where
                 kek_id,
                 kek_algorithm: A::ALGORITHM,
                 dek_algorithm: S::ALGORITHM,
-                encrypted_dek: encapsulated_key,
+                encrypted_dek: encapsulated_key.into(),
                 stream_info: Some(StreamInfo {
                     chunk_size: DEFAULT_CHUNK_SIZE,
                     base_nonce,
@@ -102,8 +99,8 @@ where
 impl<W: AsyncWrite + Unpin, A, S> AsyncWrite for Encryptor<W, A, S>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
-    S::Key: Clone + Send + Sync,
+    S: SymmetricAlgorithm,
+    <S as SymmetricAlgorithm>::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -130,15 +127,18 @@ where
                     for i in 0..8 {
                         nonce[4 + i] ^= counter_bytes[i];
                     }
-                    let key = this.symmetric_key.clone();
-                    let handle =
-                        tokio::task::spawn_blocking(move || S::Scheme::encrypt(&key, &nonce, &chunk, None).map_err(Error::from));
+                    let key = this.symmetric_key.clone().into();
+                    let handle = tokio::task::spawn_blocking(move || {
+                        S::Scheme::encrypt(&key, &nonce, &chunk, None).map_err(Error::from)
+                    });
                     *this.state = EncryptorState::Encrypting(handle);
                 }
                 EncryptorState::Encrypting(handle) => {
                     let encrypted_chunk = match ready!(Pin::new(handle).poll(cx)) {
                         Ok(Ok(chunk)) => chunk,
-                        Ok(Err(e)) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
+                        Ok(Err(e)) => {
+                            return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)))
+                        }
                         Err(e) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
                     };
                     *this.state = EncryptorState::Writing {
@@ -196,13 +196,13 @@ pin_project! {
 impl<R: AsyncRead + Unpin, A, S> Decryptor<R, A, S>
 where
     A: AsymmetricAlgorithm,
-    A::PrivateKey: Send + Sync,
-    <A::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>> + Send,
-    A::Scheme: Send + Sync + 'static,
     S: SymmetricAlgorithm,
-    S::Key: Clone + Send + Sync,
 {
-    pub async fn new(mut reader: R, sk: A::PrivateKey) -> Result<Self> {
+    pub async fn new(mut reader: R, sk: A::PrivateKey) -> Result<Self>
+    where
+        <<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>> + Send,
+        <A as AsymmetricAlgorithm>::PrivateKey: Send,
+    {
         use tokio::io::AsyncReadExt;
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf).await?;
@@ -221,7 +221,9 @@ where
             _ => return Err(Error::InvalidHeader),
         };
 
-        let shared_secret = tokio::task::spawn_blocking(move || A::Scheme::decapsulate(&sk, &encapsulated_key)).await??;
+        let shared_secret =
+            tokio::task::spawn_blocking(move || A::Scheme::decapsulate(&sk, &encapsulated_key))
+                .await??;
 
         let tag_len = S::Scheme::TAG_SIZE;
         let encrypted_chunk_size = chunk_size as usize + tag_len;
@@ -243,22 +245,25 @@ where
 impl<R: AsyncRead + Unpin, A, S> AsyncRead for Decryptor<R, A, S>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
-    S::Key: Clone + Send + Sync,
+    S: SymmetricAlgorithm,
+    <S as SymmetricAlgorithm>::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+    ) -> Poll<io::Result<()>>
+where {
         loop {
             let this = self.as_mut().project();
-            let bytes_in_internal_buffer = this.buffer.get_ref().len() - this.buffer.position() as usize;
+            let bytes_in_internal_buffer =
+                this.buffer.get_ref().len() - this.buffer.position() as usize;
             if bytes_in_internal_buffer > 0 {
                 let to_copy = std::cmp::min(bytes_in_internal_buffer, buf.remaining());
                 let current_pos = this.buffer.position() as usize;
                 buf.put_slice(&this.buffer.get_ref()[current_pos..current_pos + to_copy]);
-                this.buffer.set_position(this.buffer.position() + to_copy as u64);
+                this.buffer
+                    .set_position(this.buffer.position() + to_copy as u64);
                 return Poll::Ready(Ok(()));
             }
 
@@ -288,10 +293,11 @@ where
                         nonce[4 + i] ^= counter_bytes[i];
                     }
 
-                    let key = this.symmetric_key.clone();
+                    let key = this.symmetric_key.clone().into();
                     let final_encrypted_chunk = final_encrypted_chunk.to_vec();
                     let handle = tokio::task::spawn_blocking(move || {
-                        S::Scheme::decrypt(&key, &nonce, &final_encrypted_chunk, None).map_err(Error::from)
+                        S::Scheme::decrypt(&key, &nonce, &final_encrypted_chunk, None)
+                            .map_err(Error::from)
                     });
 
                     *this.state = DecryptorState::Decrypting(handle);
@@ -299,7 +305,9 @@ where
                 DecryptorState::Decrypting(handle) => {
                     let plaintext_chunk = match ready!(Pin::new(handle).poll(cx)) {
                         Ok(Ok(data)) => data,
-                        Ok(Err(e)) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::InvalidData, e))),
+                        Ok(Err(e)) => {
+                            return Poll::Ready(Err(io::Error::new(io::ErrorKind::InvalidData, e)))
+                        }
                         Err(e) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
                     };
                     *this.buffer = io::Cursor::new(plaintext_chunk);
@@ -324,23 +332,18 @@ mod tests {
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-                &mut encrypted_data,
-                pk,
-                "test_kek_id".to_string(),
-            )
-            .await
-            .unwrap();
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
+            &mut encrypted_data,
+            pk,
+            "test_kek_id".to_string(),
+        )
+        .await
+        .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
         // Decrypt
-        let mut decryptor =
-            Decryptor::<_, Rsa2048, Aes256Gcm>::new(
-                encrypted_data.as_slice(),
-                sk,
-            )
+        let mut decryptor = Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -372,14 +375,13 @@ mod tests {
         let plaintext = b"some important data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-                &mut encrypted_data,
-                pk,
-                "test_kek_id".to_string(),
-            )
-            .await
-            .unwrap();
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
+            &mut encrypted_data,
+            pk,
+            "test_kek_id".to_string(),
+        )
+        .await
+        .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
@@ -388,11 +390,7 @@ mod tests {
             encrypted_data[300] ^= 1;
         }
 
-        let mut decryptor =
-            Decryptor::<_, Rsa2048, Aes256Gcm>::new(
-                encrypted_data.as_slice(),
-                sk,
-            )
+        let mut decryptor = Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -407,25 +405,20 @@ mod tests {
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-                &mut encrypted_data,
-                pk,
-                "test_kek_id".to_string(),
-            )
-            .await
-            .unwrap();
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
+            &mut encrypted_data,
+            pk,
+            "test_kek_id".to_string(),
+        )
+        .await
+        .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
         // Decrypt with the wrong private key should fail
         let (_, sk2) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
-        let result = Decryptor::<_, Rsa2048, Aes256Gcm>::new(
-            encrypted_data.as_slice(),
-            sk2,
-        )
-        .await;
+        let result = Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk2).await;
 
         assert!(result.is_err());
     }
-} 
+}

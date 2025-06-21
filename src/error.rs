@@ -1,5 +1,5 @@
-use thiserror::Error;
 use rand::rand_core::OsError;
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum BincodeError {
@@ -25,10 +25,10 @@ impl From<bincode::error::DecodeError> for BincodeError {
 pub enum Error {
     #[error("OS-level random number generation failed: {0}")]
     OsRngError(#[from] OsError),
-    
+
     #[error("Infallible Error: {0:?}")]
     Infallible(#[from] core::convert::Infallible),
-    
+
     #[error("底层I/O操作失败: {0}")]
     Io(#[from] std::io::Error),
 
@@ -43,13 +43,13 @@ pub enum Error {
 
     #[error("密文格式不正确或不完整")]
     InvalidCiphertextFormat,
-    
+
     #[error("解密失败：数据可能已被篡改或密钥不匹配")]
     DecryptionFailed,
-    
+
     #[error("不支持的操作或算法组合")]
     UnsupportedOperation,
-    
+
     #[error("异步任务错误")]
     AsyncTaskError(#[from] tokio::task::JoinError),
 }

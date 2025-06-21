@@ -40,11 +40,7 @@ impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> Encryptor<W, S>
 where
     S::Key: Clone + Send + Sync,
 {
-    pub async fn new(
-        mut writer: W,
-        key: S::Key,
-        key_id: String,
-    ) -> Result<Self> {
+    pub async fn new(mut writer: W, key: S::Key, key_id: String) -> Result<Self> {
         let mut base_nonce = [0u8; 12];
         OsRng.try_fill_bytes(&mut base_nonce)?;
 
@@ -123,14 +119,20 @@ where
                 EncryptorState::Encrypting(handle) => {
                     let encrypted_chunk = match ready!(Pin::new(handle).poll(cx)) {
                         Ok(Ok(chunk)) => chunk,
-                        Ok(Err(e)) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
+                        Ok(Err(e)) => {
+                            return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)))
+                        }
                         Err(e) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
                     };
-                    *this.state = EncryptorState::Writing { chunk: encrypted_chunk, pos: 0 };
+                    *this.state = EncryptorState::Writing {
+                        chunk: encrypted_chunk,
+                        pos: 0,
+                    };
                 }
                 EncryptorState::Writing { chunk, pos } => {
                     while *pos < chunk.len() {
-                        let bytes_written = ready!(this.writer.as_mut().poll_write(cx, &chunk[*pos..]))?;
+                        let bytes_written =
+                            ready!(this.writer.as_mut().poll_write(cx, &chunk[*pos..]))?;
                         if bytes_written == 0 {
                             return Poll::Ready(Err(io::Error::new(
                                 io::ErrorKind::WriteZero,
@@ -187,7 +189,10 @@ where
         let (header, _) = Header::decode_from_slice(&header_bytes)?;
 
         let (chunk_size, base_nonce) = match header.payload {
-            HeaderPayload::Symmetric { stream_info: Some(info), .. } => (info.chunk_size, info.base_nonce),
+            HeaderPayload::Symmetric {
+                stream_info: Some(info),
+                ..
+            } => (info.chunk_size, info.base_nonce),
             _ => return Err(Error::InvalidHeader),
         };
 
@@ -221,9 +226,16 @@ where
         loop {
             let this = self.as_mut().project();
             if this.buffer.get_ref().len() > this.buffer.position() as usize {
-                let to_copy = std::cmp::min(this.buffer.get_ref().len() - this.buffer.position() as usize, buf.remaining());
-                buf.put_slice(&this.buffer.get_ref()[this.buffer.position() as usize..this.buffer.position() as usize + to_copy]);
-                this.buffer.set_position(this.buffer.position() + to_copy as u64);
+                let to_copy = std::cmp::min(
+                    this.buffer.get_ref().len() - this.buffer.position() as usize,
+                    buf.remaining(),
+                );
+                buf.put_slice(
+                    &this.buffer.get_ref()[this.buffer.position() as usize
+                        ..this.buffer.position() as usize + to_copy],
+                );
+                this.buffer
+                    .set_position(this.buffer.position() + to_copy as u64);
                 return Poll::Ready(Ok(()));
             }
 
@@ -252,16 +264,17 @@ where
                     let key = this.symmetric_key.clone();
                     let final_chunk = encrypted_chunk[..n].to_vec();
                     let handle = tokio::task::spawn_blocking(move || {
-                        S::Scheme::decrypt(&key, &nonce, &final_chunk, None)
-                            .map_err(Error::from)
+                        S::Scheme::decrypt(&key, &nonce, &final_chunk, None).map_err(Error::from)
                     });
-                    
+
                     *this.state = DecryptorState::Decrypting(handle);
                 }
                 DecryptorState::Decrypting(handle) => {
                     let decrypted_chunk = match ready!(Pin::new(handle).poll(cx)) {
                         Ok(Ok(data)) => data,
-                        Ok(Err(e)) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::InvalidData, e))),
+                        Ok(Err(e)) => {
+                            return Poll::Ready(Err(io::Error::new(io::ErrorKind::InvalidData, e)))
+                        }
                         Err(e) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
                     };
                     *this.buffer = io::Cursor::new(decrypted_chunk);
@@ -296,12 +309,9 @@ mod tests {
         encryptor.shutdown().await.unwrap();
 
         // Decrypt
-        let mut decryptor = Decryptor::<_, Aes256Gcm>::new(
-            encrypted_data.as_slice(),
-            key.clone(),
-        )
-        .await
-        .unwrap();
+        let mut decryptor = Decryptor::<_, Aes256Gcm>::new(encrypted_data.as_slice(), key.clone())
+            .await
+            .unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();
 
@@ -342,8 +352,7 @@ mod tests {
         encryptor.shutdown().await.unwrap();
 
         // Tamper with the ciphertext body
-        let header_len =
-            u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
+        let header_len = u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
         let ciphertext_start_index = 4 + header_len;
         assert!(
             encrypted_data.len() > ciphertext_start_index,
@@ -351,10 +360,9 @@ mod tests {
         );
         encrypted_data[ciphertext_start_index] ^= 1;
 
-        let mut decryptor =
-            Decryptor::<_, Aes256Gcm>::new(encrypted_data.as_slice(), key)
-                .await
-                .unwrap();
+        let mut decryptor = Decryptor::<_, Aes256Gcm>::new(encrypted_data.as_slice(), key)
+            .await
+            .unwrap();
         let mut decrypted_data = Vec::new();
         let result = decryptor.read_to_end(&mut decrypted_data).await;
 
@@ -368,20 +376,16 @@ mod tests {
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Aes256Gcm>::new(
-            &mut encrypted_data,
-            key1,
-            "test_key_id_1".to_string(),
-        )
-        .await
-        .unwrap();
+        let mut encryptor =
+            Encryptor::<_, Aes256Gcm>::new(&mut encrypted_data, key1, "test_key_id_1".to_string())
+                .await
+                .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
-        let mut decryptor =
-            Decryptor::<_, Aes256Gcm>::new(encrypted_data.as_slice(), key2)
-                .await
-                .unwrap();
+        let mut decryptor = Decryptor::<_, Aes256Gcm>::new(encrypted_data.as_slice(), key2)
+            .await
+            .unwrap();
         let mut decrypted_data = Vec::new();
         let result = decryptor.read_to_end(&mut decrypted_data).await;
 

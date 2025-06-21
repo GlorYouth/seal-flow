@@ -64,10 +64,7 @@ pub fn encrypt<S: SymmetricAlgorithm>(
 }
 
 /// Decrypts ciphertext that was encrypted with the corresponding `encrypt` function.
-pub fn decrypt<S: SymmetricAlgorithm>(
-    key: &S::Key,
-    ciphertext: &[u8],
-) -> Result<Vec<u8>> {
+pub fn decrypt<S: SymmetricAlgorithm>(key: &S::Key, ciphertext: &[u8]) -> Result<Vec<u8>> {
     if ciphertext.len() < 4 {
         return Err(Error::InvalidCiphertextFormat);
     }
@@ -130,12 +127,7 @@ mod tests {
         let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
         let plaintext = b"This is a test message that is longer than one chunk to ensure the chunking logic works correctly. Let's add some more data to be sure.";
 
-        let encrypted = encrypt::<Aes256Gcm>(
-            &key,
-            plaintext,
-            "test_key_id".to_string(),
-        )
-        .unwrap();
+        let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
         let decrypted = decrypt::<Aes256Gcm>(&key, &encrypted).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
@@ -146,12 +138,7 @@ mod tests {
         let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
         let plaintext = b"";
 
-        let encrypted = encrypt::<Aes256Gcm>(
-            &key,
-            plaintext,
-            "test_key_id".to_string(),
-        )
-        .unwrap();
+        let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
         let decrypted = decrypt::<Aes256Gcm>(&key, &encrypted).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
@@ -162,12 +149,7 @@ mod tests {
         let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
-        let encrypted = encrypt::<Aes256Gcm>(
-            &key,
-            &plaintext,
-            "test_key_id".to_string(),
-        )
-        .unwrap();
+        let encrypted = encrypt::<Aes256Gcm>(&key, &plaintext, "test_key_id".to_string()).unwrap();
         let decrypted = decrypt::<Aes256Gcm>(&key, &encrypted).unwrap();
 
         assert_eq!(plaintext, decrypted);
@@ -178,12 +160,8 @@ mod tests {
         let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
         let plaintext = b"some important data";
 
-        let mut encrypted = encrypt::<Aes256Gcm>(
-            &key,
-            plaintext,
-            "test_key_id".to_string(),
-        )
-        .unwrap();
+        let mut encrypted =
+            encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
 
         // Tamper with the ciphertext body
         if !encrypted.is_empty() {
@@ -201,12 +179,8 @@ mod tests {
         let key2 = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
         let plaintext = b"some data";
 
-        let encrypted = encrypt::<Aes256Gcm>(
-            &key1,
-            plaintext,
-            "test_key_id_1".to_string(),
-        )
-        .unwrap();
+        let encrypted =
+            encrypt::<Aes256Gcm>(&key1, plaintext, "test_key_id_1".to_string()).unwrap();
         let result = decrypt::<Aes256Gcm>(&key2, &encrypted);
         assert!(result.is_err());
     }
@@ -216,15 +190,12 @@ mod tests {
         let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
         let plaintext = b"some data";
 
-        let mut encrypted = encrypt::<Aes256Gcm>(
-            &key,
-            plaintext,
-            "test_key_id".to_string(),
-        )
-        .unwrap();
-        
+        let mut encrypted =
+            encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
+
         // Tamper with the nonce in the header
-        if encrypted.len() > 20 { // Ensure there's a header to tamper with
+        if encrypted.len() > 20 {
+            // Ensure there's a header to tamper with
             encrypted[20] ^= 1;
         }
 

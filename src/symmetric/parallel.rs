@@ -8,11 +8,7 @@ use seal_crypto::traits::symmetric::{SymmetricCipher, SymmetricDecryptor, Symmet
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Encrypts in-memory data using parallel processing.
-pub fn encrypt<S>(
-    key: &S::Key,
-    plaintext: &[u8],
-    key_id: String,
-) -> Result<Vec<u8>>
+pub fn encrypt<S>(key: &S::Key, plaintext: &[u8], key_id: String) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
     S::Key: Sync,
@@ -53,7 +49,9 @@ where
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     // 5. Assemble the final output
-    let mut final_output = Vec::with_capacity(4 + header_bytes.len() + encrypted_chunks.iter().map(Vec::len).sum::<usize>());
+    let mut final_output = Vec::with_capacity(
+        4 + header_bytes.len() + encrypted_chunks.iter().map(Vec::len).sum::<usize>(),
+    );
     final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
     final_output.extend_from_slice(&header_bytes);
     final_output.extend_from_slice(&encrypted_chunks.concat());
@@ -62,10 +60,7 @@ where
 }
 
 /// Decrypts in-memory data using parallel processing.
-pub fn decrypt<S>(
-    key: &S::Key,
-    ciphertext: &[u8],
-) -> Result<Vec<u8>>
+pub fn decrypt<S>(key: &S::Key, ciphertext: &[u8]) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
     S::Key: Sync,
@@ -127,12 +122,7 @@ mod tests {
         let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
         let plaintext = b"This is a test message that is longer than one chunk to ensure the chunking logic works correctly. Let's add some more data to be sure.";
 
-        let encrypted = encrypt::<Aes256Gcm>(
-            &key,
-            plaintext,
-            "test_key_id".to_string(),
-        )
-        .unwrap();
+        let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
 
         let decrypted = decrypt::<Aes256Gcm>(&key, &encrypted).unwrap();
 
@@ -158,12 +148,7 @@ mod tests {
         let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
         let plaintext = b"";
 
-        let encrypted = encrypt::<Aes256Gcm>(
-            &key,
-            plaintext,
-            "test_key_id".to_string(),
-        )
-        .unwrap();
+        let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
 
         let decrypted = decrypt::<Aes256Gcm>(&key, &encrypted).unwrap();
 
@@ -175,12 +160,7 @@ mod tests {
         let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
-        let encrypted = encrypt::<Aes256Gcm>(
-            &key,
-            &plaintext,
-            "test_key_id".to_string(),
-        )
-        .unwrap();
+        let encrypted = encrypt::<Aes256Gcm>(&key, &plaintext, "test_key_id".to_string()).unwrap();
 
         let decrypted = decrypt::<Aes256Gcm>(&key, &encrypted).unwrap();
 
@@ -193,12 +173,8 @@ mod tests {
         let key2 = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
         let plaintext = b"some data";
 
-        let encrypted = encrypt::<Aes256Gcm>(
-            &key1,
-            plaintext,
-            "test_key_id_1".to_string(),
-        )
-        .unwrap();
+        let encrypted =
+            encrypt::<Aes256Gcm>(&key1, plaintext, "test_key_id_1".to_string()).unwrap();
 
         let result = decrypt::<Aes256Gcm>(&key2, &encrypted);
         assert!(result.is_err());
@@ -208,4 +184,3 @@ mod tests {
         ));
     }
 }
-

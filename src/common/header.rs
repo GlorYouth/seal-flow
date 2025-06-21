@@ -1,5 +1,4 @@
-
-use bincode::{Encode, Decode};
+use bincode::{Decode, Encode};
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享
 use crate::common::algorithms::{AsymmetricAlgorithm, SymmetricAlgorithm};
 
@@ -18,7 +17,7 @@ pub struct StreamInfo {
 }
 
 /// HeaderPayload 包含了特定于加密模式的元数据
-#[derive(Debug, Clone, PartialEq, Eq,  Decode, Encode)]
+#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
 pub enum HeaderPayload {
     Symmetric {
         key_id: String, // 用于密钥管理的标识符

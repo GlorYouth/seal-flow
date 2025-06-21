@@ -14,11 +14,7 @@ use seal_crypto::{
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Performs parallel, in-memory hybrid encryption.
-pub fn encrypt<A, S>(
-    pk: &A::PublicKey,
-    plaintext: &[u8],
-    kek_id: String,
-) -> Result<Vec<u8>>
+pub fn encrypt<A, S>(pk: &A::PublicKey, plaintext: &[u8], kek_id: String) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
@@ -79,10 +75,7 @@ where
 }
 
 /// Performs parallel, in-memory hybrid decryption.
-pub fn decrypt<A, S>(
-    sk: &A::PrivateKey,
-    ciphertext: &[u8],
-) -> Result<Vec<u8>>
+pub fn decrypt<A, S>(sk: &A::PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
@@ -147,12 +140,8 @@ mod tests {
         let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
         let plaintext = b"This is a test message for hybrid parallel encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
-        let encrypted = encrypt::<Rsa2048, Aes256Gcm>(
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-        )
-        .unwrap();
+        let encrypted =
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
         let decrypted = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted).unwrap();
 
@@ -164,12 +153,8 @@ mod tests {
         let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
         let plaintext = b"";
 
-        let encrypted = encrypt::<Rsa2048, Aes256Gcm>(
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-        )
-        .unwrap();
+        let encrypted =
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
         let decrypted = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted).unwrap();
 
@@ -181,12 +166,8 @@ mod tests {
         let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
-        let encrypted = encrypt::<Rsa2048, Aes256Gcm>(
-            &pk,
-            &plaintext,
-            "test_kek_id".to_string(),
-        )
-        .unwrap();
+        let encrypted =
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string()).unwrap();
 
         let decrypted = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted).unwrap();
 
@@ -198,12 +179,8 @@ mod tests {
         let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
         let plaintext = b"some important data";
 
-        let mut encrypted = encrypt::<Rsa2048, Aes256Gcm>(
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-        )
-        .unwrap();
+        let mut encrypted =
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
         if encrypted.len() > 300 {
             encrypted[300] ^= 1;
@@ -220,12 +197,8 @@ mod tests {
         let (_, sk2) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
         let plaintext = b"some data";
 
-        let encrypted = encrypt::<Rsa2048, Aes256Gcm>(
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-        )
-        .unwrap();
+        let encrypted =
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
         let result = decrypt::<Rsa2048, Aes256Gcm>(&sk2, &encrypted);
         assert!(result.is_err());

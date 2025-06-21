@@ -21,11 +21,7 @@ pub struct Encryptor<W: Write, S: SymmetricAlgorithm> {
 }
 
 impl<W: Write, S: SymmetricAlgorithm> Encryptor<W, S> {
-    pub fn new(
-        mut writer: W,
-        key: S::Key,
-        key_id: String,
-    ) -> Result<Self> {
+    pub fn new(mut writer: W, key: S::Key, key_id: String) -> Result<Self> {
         let mut base_nonce = [0u8; 12];
         OsRng.try_fill_bytes(&mut base_nonce)?;
 
@@ -88,8 +84,9 @@ impl<W: Write, S: SymmetricAlgorithm> Write for Encryptor<W, S> {
                 nonce[4 + i] ^= counter_bytes[i];
             }
 
-            let encrypted_chunk = S::Scheme::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let encrypted_chunk =
+                S::Scheme::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
             self.chunk_counter += 1;
         }
@@ -120,7 +117,10 @@ impl<R: Read, S: SymmetricAlgorithm> Decryptor<R, S> {
         let (header, _) = Header::decode_from_slice(&header_bytes)?;
 
         let (chunk_size, base_nonce) = match header.payload {
-            HeaderPayload::Symmetric { stream_info: Some(info), .. } => (info.chunk_size, info.base_nonce),
+            HeaderPayload::Symmetric {
+                stream_info: Some(info),
+                ..
+            } => (info.chunk_size, info.base_nonce),
             _ => return Err(Error::InvalidHeader),
         };
 
@@ -153,14 +153,20 @@ impl<R: Read, S: SymmetricAlgorithm> Read for Decryptor<R, S> {
             self.is_done = true;
             return Ok(0);
         }
-        
+
         let mut nonce = self.base_nonce;
         let counter_bytes = self.chunk_counter.to_le_bytes();
-        for i in 0..8 { nonce[4 + i] ^= counter_bytes[i]; }
+        for i in 0..8 {
+            nonce[4 + i] ^= counter_bytes[i];
+        }
 
-        let decrypted_chunk =
-            S::Scheme::decrypt(&self.symmetric_key, &nonce, &encrypted_chunk[..bytes_read], None)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let decrypted_chunk = S::Scheme::decrypt(
+            &self.symmetric_key,
+            &nonce,
+            &encrypted_chunk[..bytes_read],
+            None,
+        )
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         self.buffer = io::Cursor::new(decrypted_chunk);
         self.chunk_counter += 1;
@@ -192,11 +198,8 @@ mod tests {
         encryptor.flush().unwrap();
 
         // Decrypt
-        let mut decryptor = Decryptor::<_, Aes256Gcm>::new(
-            Cursor::new(&encrypted_data),
-            key.clone(),
-        )
-        .unwrap();
+        let mut decryptor =
+            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), key.clone()).unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
 
@@ -249,8 +252,7 @@ mod tests {
         encrypted_data[ciphertext_start_index] ^= 1;
 
         let mut decryptor =
-            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), key)
-                .unwrap();
+            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), key).unwrap();
         let mut decrypted_data = Vec::new();
         let result = decryptor.read_to_end(&mut decrypted_data);
 
@@ -264,18 +266,14 @@ mod tests {
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Aes256Gcm>::new(
-            &mut encrypted_data,
-            key1,
-            "test_key_id_1".to_string(),
-        )
-        .unwrap();
+        let mut encryptor =
+            Encryptor::<_, Aes256Gcm>::new(&mut encrypted_data, key1, "test_key_id_1".to_string())
+                .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.flush().unwrap();
 
         let mut decryptor =
-            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), key2)
-                .unwrap();
+            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), key2).unwrap();
         let mut decrypted_data = Vec::new();
         let result = decryptor.read_to_end(&mut decrypted_data);
 

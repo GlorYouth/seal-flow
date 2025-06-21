@@ -27,12 +27,7 @@ fn derive_nonce(base_nonce: &[u8; 12], i: u64) -> [u8; 12] {
 }
 
 /// Encrypts data from a reader and writes to a writer using a parallel streaming approach.
-pub fn encrypt<S, R, W>(
-    key: &S::Key,
-    mut reader: R,
-    mut writer: W,
-    key_id: String,
-) -> Result<()>
+pub fn encrypt<S, R, W>(key: &S::Key, mut reader: R, mut writer: W, key_id: String) -> Result<()>
 where
     S: SymmetricAlgorithm,
     S::Key: Sync + Clone + Send,
@@ -106,7 +101,8 @@ where
                 .par_bridge()
                 .for_each(|(index, chunk)| {
                     let nonce = derive_nonce(&base_nonce, index);
-                    let encrypted = S::Scheme::encrypt(&key_clone, &nonce, &chunk, None).map_err(Error::from);
+                    let encrypted =
+                        S::Scheme::encrypt(&key_clone, &nonce, &chunk, None).map_err(Error::from);
                     if enc_chunk_tx_clone.send((index, encrypted)).is_err() {
                         return;
                     }
@@ -128,7 +124,9 @@ where
                     let encrypted_chunk = encrypted_result?;
                     out_of_order_buffer.insert(index, encrypted_chunk);
 
-                    while let Some(chunk_to_write) = out_of_order_buffer.remove(&next_chunk_to_write) {
+                    while let Some(chunk_to_write) =
+                        out_of_order_buffer.remove(&next_chunk_to_write)
+                    {
                         writer.write_all(&chunk_to_write)?;
                         next_chunk_to_write += 1;
                     }
@@ -136,7 +134,7 @@ where
                 Err(_) => break, // Channel closed
             }
         }
-        
+
         while let Some(chunk_to_write) = out_of_order_buffer.remove(&next_chunk_to_write) {
             writer.write_all(&chunk_to_write)?;
             next_chunk_to_write += 1;
@@ -156,7 +154,9 @@ where
 {
     // 1. Read and parse header
     let mut header_len_bytes = [0u8; 4];
-    reader.read_exact(&mut header_len_bytes).map_err(Error::Io)?;
+    reader
+        .read_exact(&mut header_len_bytes)
+        .map_err(Error::Io)?;
     let header_len = u32::from_le_bytes(header_len_bytes);
 
     let mut header_bytes = vec![0; header_len as usize];
@@ -165,11 +165,12 @@ where
 
     let (chunk_size, base_nonce) = match header.payload {
         HeaderPayload::Symmetric {
-            stream_info: Some(info), ..
+            stream_info: Some(info),
+            ..
         } => (info.chunk_size, info.base_nonce),
         _ => return Err(Error::InvalidHeader),
     };
-    
+
     let encrypted_chunk_size = (chunk_size as usize) + S::Scheme::TAG_SIZE;
 
     // 2. Setup channels
@@ -190,16 +191,16 @@ where
                         Ok(0) => break, // EOF
                         Ok(n) => bytes_read += n,
                         Err(e) => {
-                             let _ = io_error_tx.send(e);
-                             return;
+                            let _ = io_error_tx.send(e);
+                            return;
                         }
                     }
                 }
-                
+
                 if bytes_read > 0 {
                     chunk.truncate(bytes_read);
                     if enc_chunk_tx.send((chunk_index, chunk)).is_err() {
-                        break; 
+                        break;
                     }
                     chunk_index += 1;
                 }
@@ -219,7 +220,8 @@ where
                 .par_bridge()
                 .for_each(|(index, chunk)| {
                     let nonce = derive_nonce(&base_nonce, index);
-                    let decrypted = S::Scheme::decrypt(&key_clone, &nonce, &chunk, None).map_err(Error::from);
+                    let decrypted =
+                        S::Scheme::decrypt(&key_clone, &nonce, &chunk, None).map_err(Error::from);
                     if dec_chunk_tx_clone.send((index, decrypted)).is_err() {
                         return;
                     }
@@ -229,8 +231,8 @@ where
         // --- Main Thread: I/O Writer (Re-sequencer) ---
         let mut next_chunk_to_write = 0u64;
         let mut out_of_order_buffer = BTreeMap::new();
-        drop(dec_chunk_tx); 
-        
+        drop(dec_chunk_tx);
+
         loop {
             if let Ok(io_err) = io_error_rx.try_recv() {
                 return Err(Error::Io(io_err));
@@ -240,7 +242,9 @@ where
                 Ok((index, decrypted_result)) => {
                     let decrypted_chunk = decrypted_result?;
                     out_of_order_buffer.insert(index, decrypted_chunk);
-                    while let Some(chunk_to_write) = out_of_order_buffer.remove(&next_chunk_to_write) {
+                    while let Some(chunk_to_write) =
+                        out_of_order_buffer.remove(&next_chunk_to_write)
+                    {
                         writer.write_all(&chunk_to_write).map_err(Error::Io)?;
                         next_chunk_to_write += 1;
                     }
@@ -250,7 +254,7 @@ where
                 }
             }
         }
-        
+
         while let Some(chunk_to_write) = out_of_order_buffer.remove(&next_chunk_to_write) {
             writer.write_all(&chunk_to_write).map_err(Error::Io)?;
             next_chunk_to_write += 1;
@@ -288,8 +292,7 @@ mod tests {
 
         let mut encrypted_source = Cursor::new(&encrypted_dest);
         let mut decrypted_dest = Vec::new();
-        decrypt::<Aes256Gcm, _, _>(&key, &mut encrypted_source, &mut decrypted_dest)
-            .unwrap();
+        decrypt::<Aes256Gcm, _, _>(&key, &mut encrypted_source, &mut decrypted_dest).unwrap();
 
         assert_eq!(plaintext, decrypted_dest);
     }
@@ -311,8 +314,7 @@ mod tests {
 
         let mut encrypted_source = Cursor::new(&encrypted_dest);
         let mut decrypted_dest = Vec::new();
-        decrypt::<Aes256Gcm, _, _>(&key, &mut encrypted_source, &mut decrypted_dest)
-            .unwrap();
+        decrypt::<Aes256Gcm, _, _>(&key, &mut encrypted_source, &mut decrypted_dest).unwrap();
 
         assert_eq!(plaintext, decrypted_dest);
     }
@@ -334,8 +336,7 @@ mod tests {
 
         let mut encrypted_source = Cursor::new(&encrypted_dest);
         let mut decrypted_dest = Vec::new();
-        decrypt::<Aes256Gcm, _, _>(&key, &mut encrypted_source, &mut decrypted_dest)
-            .unwrap();
+        decrypt::<Aes256Gcm, _, _>(&key, &mut encrypted_source, &mut decrypted_dest).unwrap();
 
         assert_eq!(plaintext, decrypted_dest);
     }
@@ -362,8 +363,7 @@ mod tests {
 
         let mut encrypted_source = Cursor::new(&encrypted_dest);
         let mut decrypted_dest = Vec::new();
-        let result =
-            decrypt::<Aes256Gcm, _, _>(&key, &mut encrypted_source, &mut decrypted_dest);
+        let result = decrypt::<Aes256Gcm, _, _>(&key, &mut encrypted_source, &mut decrypted_dest);
         assert!(result.is_err());
     }
 
@@ -382,11 +382,10 @@ mod tests {
             "test_key_id".to_string(),
         )
         .unwrap();
-        
+
         let mut encrypted_source = Cursor::new(&encrypted_dest);
         let mut decrypted_dest = Vec::new();
-        let result =
-            decrypt::<Aes256Gcm, _, _>(&key2, &mut encrypted_source, &mut decrypted_dest);
+        let result = decrypt::<Aes256Gcm, _, _>(&key2, &mut encrypted_source, &mut decrypted_dest);
         assert!(result.is_err());
     }
-} 
+}

@@ -1,3 +1,4 @@
+use seal_crypto::traits::{key::KeyGenerator, symmetric::SymmetricKeyGenerator};
 use seal_flow::{
     algorithms::{
         definitions::{Aes256Gcm, Rsa2048},
@@ -6,7 +7,6 @@ use seal_flow::{
     error::Result,
     hybrid, symmetric,
 };
-use seal_crypto::traits::{key::KeyGenerator, symmetric::SymmetricKeyGenerator};
 use std::io::{Cursor, Read, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -89,11 +89,17 @@ impl SymmetricDecryptorMode {
         ciphertext: &[u8],
     ) -> Result<Vec<u8>> {
         match self {
-            SymmetricDecryptorMode::Ordinary => symmetric::ordinary::decrypt::<Aes256Gcm>(key, ciphertext),
-            SymmetricDecryptorMode::Parallel => symmetric::parallel::decrypt::<Aes256Gcm>(key, ciphertext),
+            SymmetricDecryptorMode::Ordinary => {
+                symmetric::ordinary::decrypt::<Aes256Gcm>(key, ciphertext)
+            }
+            SymmetricDecryptorMode::Parallel => {
+                symmetric::parallel::decrypt::<Aes256Gcm>(key, ciphertext)
+            }
             SymmetricDecryptorMode::Streaming => {
-                let mut decryptor =
-                    symmetric::streaming::Decryptor::<_, Aes256Gcm>::new(Cursor::new(ciphertext), key.clone())?;
+                let mut decryptor = symmetric::streaming::Decryptor::<_, Aes256Gcm>::new(
+                    Cursor::new(ciphertext),
+                    key.clone(),
+                )?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data)?;
                 Ok(decrypted_data)
@@ -143,15 +149,12 @@ async fn symmetric_interoperability_matrix() {
     let plaintext = b"This is a test message for interoperability across different modes.";
 
     for enc_mode in &encryptor_modes {
-        let ciphertext = enc_mode
-            .encrypt(&key, plaintext)
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Encryption failed for mode: {:?} with error: {:?}",
-                    enc_mode, e
-                )
-            });
+        let ciphertext = enc_mode.encrypt(&key, plaintext).await.unwrap_or_else(|e| {
+            panic!(
+                "Encryption failed for mode: {:?} with error: {:?}",
+                enc_mode, e
+            )
+        });
 
         for dec_mode in &decryptor_modes {
             let decrypted = dec_mode
@@ -253,11 +256,17 @@ impl HybridDecryptorMode {
         ciphertext: &[u8],
     ) -> Result<Vec<u8>> {
         match self {
-            HybridDecryptorMode::Ordinary => hybrid::ordinary::decrypt::<Rsa2048, Aes256Gcm>(sk, ciphertext),
-            HybridDecryptorMode::Parallel => hybrid::parallel::decrypt::<Rsa2048, Aes256Gcm>(sk, ciphertext),
+            HybridDecryptorMode::Ordinary => {
+                hybrid::ordinary::decrypt::<Rsa2048, Aes256Gcm>(sk, ciphertext)
+            }
+            HybridDecryptorMode::Parallel => {
+                hybrid::parallel::decrypt::<Rsa2048, Aes256Gcm>(sk, ciphertext)
+            }
             HybridDecryptorMode::Streaming => {
-                let mut decryptor =
-                    hybrid::streaming::Decryptor::<_, Rsa2048, Aes256Gcm>::new(Cursor::new(ciphertext), sk)?;
+                let mut decryptor = hybrid::streaming::Decryptor::<_, Rsa2048, Aes256Gcm>::new(
+                    Cursor::new(ciphertext),
+                    sk,
+                )?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data)?;
                 Ok(decrypted_data)
@@ -307,15 +316,12 @@ async fn hybrid_interoperability_matrix() {
     let plaintext = b"This is a test message for hybrid interoperability across different modes.";
 
     for enc_mode in &encryptor_modes {
-        let ciphertext = enc_mode
-            .encrypt(&pk, plaintext)
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Encryption failed for hybrid mode: {:?} with error: {:?}",
-                    enc_mode, e
-                )
-            });
+        let ciphertext = enc_mode.encrypt(&pk, plaintext).await.unwrap_or_else(|e| {
+            panic!(
+                "Encryption failed for hybrid mode: {:?} with error: {:?}",
+                enc_mode, e
+            )
+        });
 
         for dec_mode in &decryptor_modes {
             let decrypted = dec_mode
@@ -336,4 +342,4 @@ async fn hybrid_interoperability_matrix() {
             );
         }
     }
-} 
+}
