@@ -1,0 +1,39 @@
+ [package]
+name = "seal-flow"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# --- 核心密码学特性 ---
+# 提供了所有密码学操作的 Trait 和基础实现
+seal-crypto = "0.1.0"
+
+# --- 序列化与错误处理 ---
+# 用于将 Header 结构体序列化为字节流
+bincode = "2.0.1"
+# 提供了方便的宏来创建自定义错误类型
+thiserror = "2.0.12"
+
+# --- 数据处理与运行时 ---
+# 用于实现并行加密/解密
+rayon = "1.10.0"
+# 用于生成随机的 base_nonce
+rand = "0.9.1"
+
+# --- 异步支持 (可选，通过 feature gate 控制) ---
+# 异步运行时和 I/O Trait
+tokio = { version = "1.45.1", features = ["io-util", "macros", "rt-multi-thread", "sync"], optional = true }
+# 异步编程的辅助工具
+futures = { version = "0.3", optional = true }
+pin-project-lite = "0.2.16"
+
+ [features]
+# 默认启用所有功能
+default = ["async"]
+# 单独的 feature gate 用于启用异步 API
+async = ["dep:tokio", "dep:futures"]
+
+[[test]]
+name = "interoperability_matrix"
+path = "tests/interoperability_matrix.rs"
+required-features = ["async"]
