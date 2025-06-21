@@ -7,6 +7,10 @@ use seal_flow::{
         asynchronous::{AsyncStreamingDecryptor, AsyncStreamingEncryptor},
         ordinary::{decrypt as symmetric_ordinary_decrypt, encrypt as symmetric_ordinary_encrypt},
         parallel::{symmetric_parallel_decrypt, symmetric_parallel_encrypt},
+        parallel_streaming::{
+            decrypt as symmetric_parallel_streaming_decrypt,
+            encrypt as symmetric_parallel_streaming_encrypt,
+        },
         streaming::{StreamingDecryptor, StreamingEncryptor},
     },
 };
@@ -24,6 +28,7 @@ enum SymmetricEncryptorMode {
     Parallel,
     Streaming,
     AsyncStreaming,
+    ParallelStreaming,
 }
 
 #[derive(Debug)]
@@ -32,6 +37,7 @@ enum SymmetricDecryptorMode {
     Parallel,
     Streaming,
     AsyncStreaming,
+    ParallelStreaming,
 }
 
 impl SymmetricEncryptorMode {
@@ -75,6 +81,17 @@ impl SymmetricEncryptorMode {
                 encryptor.shutdown().await?;
                 Ok(encrypted_data)
             }
+            SymmetricEncryptorMode::ParallelStreaming => {
+                let mut encrypted_data = Vec::new();
+                symmetric_parallel_streaming_encrypt::<AesGcmScheme<Aes256>, _, _>(
+                    key,
+                    Cursor::new(plaintext),
+                    &mut encrypted_data,
+                    key_id,
+                    algorithm,
+                )?;
+                Ok(encrypted_data)
+            }
         }
     }
 }
@@ -109,6 +126,15 @@ impl SymmetricDecryptorMode {
                 decryptor.read_to_end(&mut decrypted_data).await?;
                 Ok(decrypted_data)
             }
+            SymmetricDecryptorMode::ParallelStreaming => {
+                let mut decrypted_data = Vec::new();
+                symmetric_parallel_streaming_decrypt::<AesGcmScheme<Aes256>, _, _>(
+                    key,
+                    Cursor::new(ciphertext),
+                    &mut decrypted_data,
+                )?;
+                Ok(decrypted_data)
+            }
         }
     }
 }
@@ -120,6 +146,7 @@ async fn symmetric_interoperability_matrix() {
         SymmetricEncryptorMode::Parallel,
         SymmetricEncryptorMode::Streaming,
         SymmetricEncryptorMode::AsyncStreaming,
+        SymmetricEncryptorMode::ParallelStreaming,
     ];
 
     let decryptor_modes = [
@@ -127,6 +154,7 @@ async fn symmetric_interoperability_matrix() {
         SymmetricDecryptorMode::Parallel,
         SymmetricDecryptorMode::Streaming,
         SymmetricDecryptorMode::AsyncStreaming,
+        SymmetricDecryptorMode::ParallelStreaming,
     ];
 
     let key = AesGcmScheme::<Aes256>::generate_key().unwrap();
@@ -173,6 +201,10 @@ use seal_flow::{
         asynchronous::AsyncHybridStreamingEncryptor,
         ordinary::{hybrid_ordinary_decrypt, hybrid_ordinary_encrypt},
         parallel::{hybrid_parallel_decrypt, hybrid_parallel_encrypt},
+        parallel_streaming::{
+            decrypt as hybrid_parallel_streaming_decrypt,
+            encrypt as hybrid_parallel_streaming_encrypt,
+        },
         streaming::{HybridStreamingDecryptor, HybridStreamingEncryptor},
     },
 };
@@ -186,6 +218,7 @@ enum HybridEncryptorMode {
     Parallel,
     Streaming,
     AsyncStreaming,
+    ParallelStreaming,
 }
 
 #[derive(Debug)]
@@ -194,6 +227,7 @@ enum HybridDecryptorMode {
     Parallel,
     Streaming,
     AsyncStreaming,
+    ParallelStreaming,
 }
 
 impl HybridEncryptorMode {
@@ -250,6 +284,23 @@ impl HybridEncryptorMode {
                 encryptor.shutdown().await?;
                 Ok(encrypted_data)
             }
+            HybridEncryptorMode::ParallelStreaming => {
+                let mut encrypted_data = Vec::new();
+                hybrid_parallel_streaming_encrypt::<
+                    AesGcmScheme<Aes256>,
+                    RsaScheme<Rsa2048>,
+                    _,
+                    _,
+                >(
+                    pk,
+                    Cursor::new(plaintext),
+                    &mut encrypted_data,
+                    kek_id,
+                    kek_algorithm,
+                    dek_algorithm,
+                )?;
+                Ok(encrypted_data)
+            }
         }
     }
 }
@@ -288,6 +339,20 @@ impl HybridDecryptorMode {
                 decryptor.read_to_end(&mut decrypted_data).await?;
                 Ok(decrypted_data)
             }
+            HybridDecryptorMode::ParallelStreaming => {
+                let mut decrypted_data = Vec::new();
+                hybrid_parallel_streaming_decrypt::<
+                    AesGcmScheme<Aes256>,
+                    RsaScheme<Rsa2048>,
+                    _,
+                    _,
+                >(
+                    sk,
+                    Cursor::new(ciphertext),
+                    &mut decrypted_data,
+                )?;
+                Ok(decrypted_data)
+            }
         }
     }
 }
@@ -299,6 +364,7 @@ async fn hybrid_interoperability_matrix() {
         HybridEncryptorMode::Parallel,
         HybridEncryptorMode::Streaming,
         HybridEncryptorMode::AsyncStreaming,
+        HybridEncryptorMode::ParallelStreaming,
     ];
 
     let decryptor_modes = [
@@ -306,6 +372,7 @@ async fn hybrid_interoperability_matrix() {
         HybridDecryptorMode::Parallel,
         HybridDecryptorMode::Streaming,
         HybridDecryptorMode::AsyncStreaming,
+        HybridDecryptorMode::ParallelStreaming,
     ];
 
     let (pk, sk) = RsaScheme::<Rsa2048>::generate_keypair().unwrap();

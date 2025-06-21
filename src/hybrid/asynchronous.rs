@@ -266,7 +266,7 @@ where
                 return Poll::Ready(Ok(()));
             }
 
-            let mut this = self.as_mut().project();
+            let this = self.as_mut().project();
             match this.state {
                 DecryptorState::Idle => {
                     let mut encrypted_chunk = vec![0u8; *this.encrypted_chunk_size];
