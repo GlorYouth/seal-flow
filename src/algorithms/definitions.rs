@@ -2,6 +2,7 @@
 
 use super::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common;
+use std::marker::PhantomData;
 
 use seal_crypto::{
     prelude::*,
@@ -43,22 +44,26 @@ impl SymmetricAlgorithm for Aes256Gcm {
 
 /// Marker type for RSA-2048 with SHA-256.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Rsa2048;
-impl AsymmetricAlgorithm for Rsa2048 {
+pub struct Rsa2048<Hash = Sha256> {
+    _sha: PhantomData<Hash>,
+}
+impl<Hash: 'static + Hasher> AsymmetricAlgorithm for Rsa2048<Hash> {
     type PublicKey = <Self::Scheme as Kem>::PublicKey;
     type PrivateKey = <Self::Scheme as Kem>::PrivateKey;
-    type Scheme = RsaScheme<Rsa<Rsa2048Params, Sha256>>;
+    type Scheme = RsaScheme<Rsa<Rsa2048Params, Hash>>;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Rsa2048;
 }
 
 /// Marker type for RSA-4096 with SHA-256.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Rsa4096;
-impl AsymmetricAlgorithm for Rsa4096 {
+pub struct Rsa4096<Hash = Sha256> {
+    _sha: PhantomData<Hash>,
+}
+impl<Hash: 'static + Hasher> AsymmetricAlgorithm for Rsa4096<Hash> {
     type PublicKey = <Self::Scheme as Kem>::PublicKey;
     type PrivateKey = <Self::Scheme as Kem>::PrivateKey;
-    type Scheme = RsaScheme<Rsa<Rsa4096Params, Sha256>>;
+    type Scheme = RsaScheme<Rsa<Rsa4096Params, Hash>>;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Rsa4096;
 }
