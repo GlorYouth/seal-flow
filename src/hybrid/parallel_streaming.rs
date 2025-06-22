@@ -35,7 +35,7 @@ pub fn encrypt<A, S, R, W>(
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <S::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Sync + Send,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>> + Sync + Send,
     Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
     R: Read + Send,
     W: Write,
@@ -155,7 +155,7 @@ pub fn decrypt<A, S, R, W>(
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <S::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Sync + Send,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>> + Sync + Send,
     R: Read + Send,
     W: Write,
     <A::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>>,

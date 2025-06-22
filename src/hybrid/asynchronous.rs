@@ -99,7 +99,7 @@ impl<W: AsyncWrite + Unpin, A, S> AsyncWrite for Encryptor<W, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Send,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>> + Send,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -197,8 +197,8 @@ impl<R: AsyncRead + Unpin, A, S> Decryptor<R, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>>,
-    <A::Scheme as Algorithm>::PrivateKey: Send + Sync,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>>,
+    <A::Scheme as AsymmetricKeySet>::PrivateKey: Send + Sync,
 {
     pub async fn new(mut reader: R, sk: A::PrivateKey) -> Result<Self>
     where
@@ -247,7 +247,7 @@ impl<R: AsyncRead + Unpin, A, S> AsyncRead for Decryptor<R, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Send
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>> + Send
 {
     fn poll_read(
         mut self: Pin<&mut Self>,

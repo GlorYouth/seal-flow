@@ -9,8 +9,8 @@ pub trait SymmetricAlgorithm: 'static + Send + Sync {
     type Scheme: AeadScheme;
 
     /// The underlying key type for this algorithm.
-    type Key: From<<Self::Scheme as SymmetricKeyGenerator>::Key>
-        + Into<<Self::Scheme as SymmetricKeyGenerator>::Key>
+    type Key: From<<Self::Scheme as SymmetricKeySet>::Key>
+        + Into<<Self::Scheme as SymmetricKeySet>::Key>
         + Clone
         + Send
         + Sync;
@@ -28,15 +28,15 @@ pub trait AsymmetricAlgorithm: 'static + Send + Sync {
     type PublicKey: Clone
         + Send
         + Sync
-        + From<<Self::Scheme as Algorithm>::PublicKey>
-        + Into<<Self::Scheme as Algorithm>::PublicKey>;
+        + From<<Self::Scheme as AsymmetricKeySet>::PublicKey>
+        + Into<<Self::Scheme as AsymmetricKeySet>::PublicKey>;
 
     /// The private key type.
     type PrivateKey: Clone
         + Send
         + Sync
-        + From<<Self::Scheme as Algorithm>::PrivateKey>
-        + Into<<Self::Scheme as Algorithm>::PrivateKey>;
+        + From<<Self::Scheme as AsymmetricKeySet>::PrivateKey>
+        + Into<<Self::Scheme as AsymmetricKeySet>::PrivateKey>;
 
     /// 对应的算法枚举。
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm;

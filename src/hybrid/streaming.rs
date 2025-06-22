@@ -75,7 +75,7 @@ impl<W: Write, A, S> Write for Encryptor<W, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>>,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>>,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.buffer.extend_from_slice(buf);
@@ -182,7 +182,7 @@ impl<R: Read, A, S> Read for Decryptor<R, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>>,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>>,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let bytes_read_from_buf = self.buffer.read(buf)?;

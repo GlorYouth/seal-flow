@@ -13,7 +13,7 @@ pub fn encrypt<A, S>(pk: &A::PublicKey, plaintext: &[u8], kek_id: String) -> Res
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <S::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Sync,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>> + Sync,
     Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
 {
     // 1. KEM Encapsulate: Generate DEK and wrap it with the public key.
@@ -74,7 +74,7 @@ pub fn decrypt<A, S>(sk: &A::PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <S::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Sync,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>> + Sync,
     <A::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>>,
 {
     // 1. Parse the header.
