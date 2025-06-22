@@ -8,14 +8,10 @@ use seal_crypto::prelude::*;
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Encrypts in-memory data using parallel processing.
-pub fn encrypt<S>(
-    key: &S::Key,
-    plaintext: &[u8],
-    key_id: String,
-) -> Result<Vec<u8>>
+pub fn encrypt<'a, S>(key: &S::Key, plaintext: &[u8], key_id: String) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
-    S::Key: Sync,
+    S::Key: Send + Sync + Clone,
 {
     // 1. Generate base_nonce, construct Header with chunk_size
     let mut base_nonce = [0u8; 12];
@@ -48,7 +44,7 @@ where
             }
 
             // 4. Encrypt the chunk
-            S::Scheme::encrypt(&key.clone().into(), &nonce, chunk, None)
+            S::encrypt(&key.clone().into(), &nonce, chunk, None)
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
@@ -64,13 +60,10 @@ where
 }
 
 /// Decrypts in-memory data using parallel processing.
-pub fn decrypt<S>(
-    key: &S::Key,
-    ciphertext: &[u8],
-) -> Result<Vec<u8>>
+pub fn decrypt<S>(key: &S::Key, ciphertext: &[u8]) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
-    S::Key: Sync,
+    S::Key: Send + Sync + Clone,
 {
     // 1. Parse Header
     if ciphertext.len() < 4 {
@@ -93,7 +86,7 @@ where
         _ => return Err(Error::InvalidHeader),
     };
 
-    let tag_len = S::Scheme::TAG_SIZE;
+    let tag_len = S::TAG_SIZE;
     let encrypted_chunk_size = chunk_size as usize + tag_len;
 
     // 3. Decrypt in parallel
@@ -109,7 +102,7 @@ where
             }
 
             // 5. Decrypt the chunk
-            S::Scheme::decrypt(&key.clone().into(), &nonce, encrypted_chunk, None)
+            S::decrypt(&key.clone().into(), &nonce, encrypted_chunk, None)
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
@@ -119,13 +112,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::{definitions::Aes256Gcm, traits::SymmetricAlgorithm};
+    use crate::algorithms::definitions::Aes256Gcm;
     use crate::error::Error as FlowError;
     use seal_crypto::errors::Error as CryptoError;
 
     #[test]
     fn test_symmetric_parallel_roundtrip() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"This is a test message that is longer than one chunk to ensure the chunking logic works correctly. Let's add some more data to be sure.";
 
         let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
@@ -151,7 +144,7 @@ mod tests {
 
     #[test]
     fn test_empty_plaintext() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"";
 
         let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
@@ -163,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_exact_chunk_size() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted = encrypt::<Aes256Gcm>(&key, &plaintext, "test_key_id".to_string()).unwrap();
@@ -175,8 +168,8 @@ mod tests {
 
     #[test]
     fn test_wrong_key_fails() {
-        let key1 = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
-        let key2 = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key1 = Aes256Gcm::generate_key().unwrap();
+        let key2 = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"some data";
 
         let encrypted =

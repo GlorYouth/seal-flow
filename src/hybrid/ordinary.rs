@@ -4,25 +4,20 @@ use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
 use crate::error::{Error, Result};
 use rand::{rngs::OsRng, TryRngCore};
-use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
 
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Performs hybrid encryption on in-memory data.
-pub fn encrypt<A, S>(
-    pk: &A::PublicKey,
-    plaintext: &[u8],
-    kek_id: String,
-) -> Result<Vec<u8>>
+pub fn encrypt<A, S>(pk: &A::PublicKey, plaintext: &[u8], kek_id: String) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
+    A::EncapsulatedKey: Into<Vec<u8>> + Send,
     S: SymmetricAlgorithm,
-    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>>,
-    Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
+    S::Key: From<Zeroizing<Vec<u8>>>,
 {
     // 1. KEM Encapsulate: Generate DEK and wrap it with the public key.
-    let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(&pk.clone().into())?;
+    let (shared_secret, encapsulated_key) = A::encapsulate(pk)?;
 
     // 2. Generate a base_nonce for deterministic nonce derivation for each chunk.
     let mut base_nonce = [0u8; 12];
@@ -55,8 +50,7 @@ where
         for j in 0..8 {
             nonce[4 + j] ^= counter_bytes[j];
         }
-        let encrypted_chunk =
-            S::Scheme::encrypt(&shared_secret.clone().into(), &nonce, chunk, None)?;
+        let encrypted_chunk = S::encrypt(&shared_secret.clone().into(), &nonce, chunk, None)?;
         encrypted_chunks.push(encrypted_chunk);
     }
 
@@ -72,15 +66,12 @@ where
 }
 
 /// Performs hybrid decryption on in-memory data.
-pub fn decrypt<A, S>(
-    sk: &A::PrivateKey,
-    ciphertext: &[u8],
-) -> Result<Vec<u8>>
+pub fn decrypt<A, S>(sk: &A::PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
+    A::EncapsulatedKey: From<Vec<u8>> + Send,
     S: SymmetricAlgorithm,
-    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>>,
-    <A::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>>,
+    S::Key: From<Zeroizing<Vec<u8>>>,
 {
     // 1. Parse the header.
     if ciphertext.len() < 4 {
@@ -106,9 +97,9 @@ where
     };
 
     // 3. KEM Decapsulate to recover the DEK.
-    let shared_secret = A::Scheme::decapsulate(&sk.clone().into(), &encapsulated_key)?;
+    let shared_secret = A::decapsulate(sk, &encapsulated_key)?;
 
-    let tag_len = S::Scheme::TAG_SIZE;
+    let tag_len = S::TAG_SIZE;
     let encrypted_chunk_size = chunk_size as usize + tag_len;
 
     // 4. Decrypt data chunks sequentially.
@@ -120,7 +111,7 @@ where
             nonce[4 + j] ^= counter_bytes[j];
         }
         let decrypted_chunk =
-            S::Scheme::decrypt(&shared_secret.clone().into(), &nonce, encrypted_chunk, None)?;
+            S::decrypt(&shared_secret.clone().into(), &nonce, encrypted_chunk, None)?;
         decrypted_chunks.push(decrypted_chunk);
     }
 
@@ -130,74 +121,81 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::{Aes256Gcm, Rsa2048};
-    use crate::algorithms::traits::AsymmetricAlgorithm;
+    use crate::algorithms::definitions::{Aes256GcmScheme, Rsa2048};
+    use seal_crypto::prelude::*;
+    use seal_crypto::schemes::hash::Sha256;
+
     #[test]
     fn test_hybrid_ordinary_roundtrip() {
-        let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
+        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"This is a test message for hybrid ordinary encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
+            encrypt::<Rsa2048<Sha256>, Aes256GcmScheme>(&pk, plaintext, "test_kek_id".to_string())
+                .unwrap();
 
-        let decrypted = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted).unwrap();
+        let decrypted = decrypt::<Rsa2048, Aes256GcmScheme>(&sk, &encrypted).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
 
     #[test]
     fn test_empty_plaintext() {
-        let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
+        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"";
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
+            encrypt::<Rsa2048, Aes256GcmScheme>(&pk, plaintext, "test_kek_id".to_string())
+                .unwrap();
 
-        let decrypted = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted).unwrap();
+        let decrypted = decrypt::<Rsa2048, Aes256GcmScheme>(&sk, &encrypted).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
 
     #[test]
     fn test_exact_chunk_size() {
-        let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
+        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string()).unwrap();
+            encrypt::<Rsa2048, Aes256GcmScheme>(&pk, &plaintext, "test_kek_id".to_string())
+                .unwrap();
 
-        let decrypted = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted).unwrap();
+        let decrypted = decrypt::<Rsa2048, Aes256GcmScheme>(&sk, &encrypted).unwrap();
 
         assert_eq!(plaintext, decrypted);
     }
 
     #[test]
     fn test_tampered_ciphertext_fails() {
-        let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
+        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"some important data";
 
         let mut encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
+            encrypt::<Rsa2048, Aes256GcmScheme>(&pk, plaintext, "test_kek_id".to_string())
+                .unwrap();
 
         // Tamper with the ciphertext body
         if encrypted.len() > 300 {
             encrypted[300] ^= 1; // Tamper after the header
         }
 
-        let result = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted);
+        let result = decrypt::<Rsa2048, Aes256GcmScheme>(&sk, &encrypted);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_wrong_private_key_fails() {
-        let (pk, _) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
-        let (_, sk2) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
+        let (pk, _) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"some data";
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
+            encrypt::<Rsa2048, Aes256GcmScheme>(&pk, plaintext, "test_kek_id".to_string())
+                .unwrap();
 
-        let result = decrypt::<Rsa2048, Aes256Gcm>(&sk2, &encrypted);
+        let result = decrypt::<Rsa2048, Aes256GcmScheme>(&sk2, &encrypted);
         assert!(result.is_err());
     }
 }

@@ -26,7 +26,10 @@ pub fn encrypt<S: SymmetricAlgorithm>(
     key: &S::Key,
     plaintext: &[u8],
     key_id: String,
-) -> Result<Vec<u8>> {
+) -> Result<Vec<u8>>
+where
+    S::Key: Clone + Send + Sync,
+{
     let mut base_nonce_bytes = [0u8; 12];
     OsRng.try_fill_bytes(&mut base_nonce_bytes)?;
 
@@ -46,12 +49,12 @@ pub fn encrypt<S: SymmetricAlgorithm>(
     let header_bytes = header.encode_to_vec()?;
 
     let mut encrypted_body = Vec::with_capacity(
-        plaintext.len() + (plaintext.len() / DEFAULT_CHUNK_SIZE as usize + 1) * S::Scheme::TAG_SIZE,
+        plaintext.len() + (plaintext.len() / DEFAULT_CHUNK_SIZE as usize + 1) * S::TAG_SIZE,
     );
 
     for (i, chunk) in plaintext.chunks(DEFAULT_CHUNK_SIZE as usize).enumerate() {
         let nonce = derive_nonce(&base_nonce_bytes, i as u64);
-        let encrypted_chunk = S::Scheme::encrypt(&key.clone().into(), &nonce, chunk, None)?;
+        let encrypted_chunk = S::encrypt(&key.clone().into(), &nonce, chunk, None)?;
         encrypted_body.extend_from_slice(&encrypted_chunk);
     }
 
@@ -64,10 +67,10 @@ pub fn encrypt<S: SymmetricAlgorithm>(
 }
 
 /// Decrypts ciphertext that was encrypted with the corresponding `encrypt` function.
-pub fn decrypt<S: SymmetricAlgorithm>(
-    key: &S::Key,
-    ciphertext: &[u8],
-) -> Result<Vec<u8>> {
+pub fn decrypt<S: SymmetricAlgorithm>(key: &S::Key, ciphertext: &[u8]) -> Result<Vec<u8>>
+where
+    S::Key: Clone + Send + Sync,
+{
     if ciphertext.len() < 4 {
         return Err(Error::InvalidCiphertextFormat);
     }
@@ -89,7 +92,7 @@ pub fn decrypt<S: SymmetricAlgorithm>(
     };
 
     let mut plaintext = Vec::with_capacity(ciphertext_body.len());
-    let chunk_size_with_tag = chunk_size as usize + S::Scheme::TAG_SIZE;
+    let chunk_size_with_tag = chunk_size as usize + S::TAG_SIZE;
     let mut chunk_index = 0;
 
     let mut cursor = 0;
@@ -108,7 +111,7 @@ pub fn decrypt<S: SymmetricAlgorithm>(
         let encrypted_chunk = &ciphertext_body[cursor..cursor + current_chunk_len];
 
         let nonce = derive_nonce(&base_nonce_array, chunk_index as u64);
-        let decrypted_chunk = S::Scheme::decrypt(&key.clone().into(), &nonce, encrypted_chunk, None)?;
+        let decrypted_chunk = S::decrypt(&key.clone().into(), &nonce, encrypted_chunk, None)?;
 
         plaintext.extend_from_slice(&decrypted_chunk);
 
@@ -126,7 +129,7 @@ mod tests {
 
     #[test]
     fn test_symmetric_ordinary_roundtrip() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"This is a test message that is longer than one chunk to ensure the chunking logic works correctly. Let's add some more data to be sure.";
 
         let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
@@ -137,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_empty_plaintext() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"";
 
         let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
@@ -148,7 +151,7 @@ mod tests {
 
     #[test]
     fn test_exact_chunk_size() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted = encrypt::<Aes256Gcm>(&key, &plaintext, "test_key_id".to_string()).unwrap();
@@ -159,7 +162,7 @@ mod tests {
 
     #[test]
     fn test_tampered_ciphertext_fails() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"some important data";
 
         let mut encrypted =
@@ -177,8 +180,8 @@ mod tests {
 
     #[test]
     fn test_wrong_key_fails() {
-        let key1 = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
-        let key2 = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key1 = Aes256Gcm::generate_key().unwrap();
+        let key2 = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"some data";
 
         let encrypted =
@@ -189,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_wrong_nonce_fails() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"some data";
 
         let mut encrypted =

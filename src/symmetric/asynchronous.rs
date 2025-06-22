@@ -6,7 +6,6 @@ use crate::error::{Error, Result};
 use futures::ready;
 use pin_project_lite::pin_project;
 use rand::{rngs::OsRng, TryRngCore};
-use seal_crypto::prelude::*;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
@@ -36,7 +35,11 @@ pin_project! {
     }
 }
 
-impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> Encryptor<W, S> {
+impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> Encryptor<W, S>
+where
+    S: SymmetricAlgorithm,
+    S::Key: Clone + Send + Sync,
+{
     pub async fn new(mut writer: W, key: S::Key, key_id: String) -> Result<Self> {
         let mut base_nonce = [0u8; 12];
         OsRng.try_fill_bytes(&mut base_nonce)?;
@@ -76,7 +79,8 @@ impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> Encryptor<W, S> {
 
 impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> AsyncWrite for Encryptor<W, S>
 where
-    S: Send + Sync,
+    S: SymmetricAlgorithm,
+    S::Key: Clone + Send + Sync,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -108,7 +112,7 @@ where
 
                     let key = this.symmetric_key.clone();
                     let handle = tokio::task::spawn_blocking(move || {
-                        S::Scheme::encrypt(&key.into(), &nonce, &chunk, None).map_err(Error::from)
+                        S::encrypt(&key.into(), &nonce, &chunk, None).map_err(Error::from)
                     });
                     *this.state = EncryptorState::Encrypting(handle);
                 }
@@ -170,8 +174,12 @@ pin_project! {
     }
 }
 
-impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> Decryptor<R, S> {
-    pub async fn new(mut reader: R, key: S::Key) -> Result<Self> {
+impl<R: AsyncRead + Unpin, S> Decryptor<R, S>
+where
+    S: SymmetricAlgorithm,
+    S::Key: Send + Sync + Clone,
+{
+    pub async fn new(mut reader: R, key: &S::Key) -> Result<Self> {
         use tokio::io::AsyncReadExt;
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf).await?;
@@ -189,12 +197,12 @@ impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> Decryptor<R, S> {
             _ => return Err(Error::InvalidHeader),
         };
 
-        let tag_len = S::Scheme::TAG_SIZE;
+        let tag_len = S::TAG_SIZE;
         let encrypted_chunk_size = chunk_size as usize + tag_len;
 
         Ok(Self {
             reader,
-            symmetric_key: key,
+            symmetric_key: key.clone(),
             base_nonce,
             encrypted_chunk_size,
             buffer: io::Cursor::new(Vec::new()),
@@ -208,7 +216,8 @@ impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> Decryptor<R, S> {
 
 impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> AsyncRead for Decryptor<R, S>
 where
-    S: Send + Sync + 'static,
+    S: SymmetricAlgorithm,
+    S::Key: Send + Sync + Clone,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -256,8 +265,7 @@ where
                     let key = this.symmetric_key.clone();
                     let final_chunk = encrypted_chunk[..n].to_vec();
                     let handle = tokio::task::spawn_blocking(move || {
-                        S::Scheme::decrypt(&key.into(), &nonce, &final_chunk, None)
-                            .map_err(Error::from)
+                        S::decrypt(&key.into(), &nonce, &final_chunk, None).map_err(Error::from)
                     });
 
                     *this.state = DecryptorState::Decrypting(handle);
@@ -282,11 +290,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::{definitions::Aes256Gcm, traits::SymmetricAlgorithm};
+    use crate::algorithms::definitions::Aes256Gcm;
+    use seal_crypto::prelude::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     async fn test_async_streaming_roundtrip(plaintext: &[u8]) {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
 
         // Encrypt
         let mut encrypted_data = Vec::new();
@@ -301,7 +310,7 @@ mod tests {
         encryptor.shutdown().await.unwrap();
 
         // Decrypt
-        let mut decryptor = Decryptor::<_, Aes256Gcm>::new(encrypted_data.as_slice(), key.clone())
+        let mut decryptor = Decryptor::<_, Aes256Gcm>::new(encrypted_data.as_slice(), &key)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -329,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tampered_ciphertext_fails_async() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"some important data";
 
         let mut encrypted_data = Vec::new();
@@ -352,7 +361,7 @@ mod tests {
         );
         encrypted_data[ciphertext_start_index] ^= 1;
 
-        let mut decryptor = Decryptor::<_, Aes256Gcm>::new(encrypted_data.as_slice(), key)
+        let mut decryptor = Decryptor::<_, Aes256Gcm>::new(encrypted_data.as_slice(), &key)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -363,8 +372,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_wrong_key_fails_async() {
-        let key1 = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
-        let key2 = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key1 = Aes256Gcm::generate_key().unwrap();
+        let key2 = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
@@ -375,7 +384,7 @@ mod tests {
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
-        let mut decryptor = Decryptor::<_, Aes256Gcm>::new(encrypted_data.as_slice(), key2)
+        let mut decryptor = Decryptor::<_, Aes256Gcm>::new(encrypted_data.as_slice(), &key2)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();

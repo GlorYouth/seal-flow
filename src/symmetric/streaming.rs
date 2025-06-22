@@ -10,7 +10,10 @@ use std::io::{self, Read, Write};
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Implements `std::io::Write` for synchronous, streaming symmetric encryption.
-pub struct Encryptor<W: Write, S: SymmetricAlgorithm> {
+pub struct Encryptor<W: Write, S: SymmetricAlgorithm>
+where
+    S::Key: Send + Sync + Clone,
+{
     writer: W,
     symmetric_key: S::Key,
     base_nonce: [u8; 12],
@@ -20,12 +23,11 @@ pub struct Encryptor<W: Write, S: SymmetricAlgorithm> {
     _phantom: std::marker::PhantomData<S>,
 }
 
-impl<W: Write, S: SymmetricAlgorithm> Encryptor<W, S> {
-    pub fn new(
-        mut writer: W,
-        key: S::Key,
-        key_id: String,
-    ) -> Result<Self> {
+impl<W: Write, S: SymmetricAlgorithm> Encryptor<W, S>
+where
+    S::Key: Send + Sync + Clone,
+{
+    pub fn new(mut writer: W, key: S::Key, key_id: String) -> Result<Self> {
         let mut base_nonce = [0u8; 12];
         OsRng.try_fill_bytes(&mut base_nonce)?;
 
@@ -58,7 +60,10 @@ impl<W: Write, S: SymmetricAlgorithm> Encryptor<W, S> {
     }
 }
 
-impl<W: Write, S: SymmetricAlgorithm> Write for Encryptor<W, S> {
+impl<W: Write, S: SymmetricAlgorithm> Write for Encryptor<W, S>
+where
+    S::Key: Send + Sync + Clone,
+{
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.buffer.extend_from_slice(buf);
 
@@ -71,7 +76,7 @@ impl<W: Write, S: SymmetricAlgorithm> Write for Encryptor<W, S> {
             }
 
             let encrypted_chunk =
-                S::Scheme::encrypt(&self.symmetric_key.clone().into(), &nonce, &chunk, None)
+                S::encrypt(&self.symmetric_key.clone().into(), &nonce, &chunk, None)
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
             self.chunk_counter += 1;
@@ -89,9 +94,13 @@ impl<W: Write, S: SymmetricAlgorithm> Write for Encryptor<W, S> {
                 nonce[4 + i] ^= counter_bytes[i];
             }
 
-            let encrypted_chunk =
-                S::Scheme::encrypt(&self.symmetric_key.clone().into(), &nonce, &final_chunk, None)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let encrypted_chunk = S::encrypt(
+                &self.symmetric_key.clone().into(),
+                &nonce,
+                &final_chunk,
+                None,
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
             self.chunk_counter += 1;
         }
@@ -100,7 +109,10 @@ impl<W: Write, S: SymmetricAlgorithm> Write for Encryptor<W, S> {
 }
 
 /// Implements `std::io::Read` for synchronous, streaming symmetric decryption.
-pub struct Decryptor<R: Read, S: SymmetricAlgorithm> {
+pub struct Decryptor<R: Read, S: SymmetricAlgorithm>
+where
+    S::Key: Send + Sync + Clone,
+{
     reader: R,
     symmetric_key: S::Key,
     base_nonce: [u8; 12],
@@ -111,8 +123,11 @@ pub struct Decryptor<R: Read, S: SymmetricAlgorithm> {
     _phantom: std::marker::PhantomData<S>,
 }
 
-impl<R: Read, S: SymmetricAlgorithm> Decryptor<R, S> {
-    pub fn new(mut reader: R, key: S::Key) -> Result<Self> {
+impl<R: Read, S: SymmetricAlgorithm> Decryptor<R, S>
+where
+    S::Key: Send + Sync + Clone,
+{
+    pub fn new(mut reader: R, key: &S::Key) -> Result<Self> {
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf)?;
         let header_len = u32::from_le_bytes(len_buf) as usize;
@@ -129,12 +144,12 @@ impl<R: Read, S: SymmetricAlgorithm> Decryptor<R, S> {
             _ => return Err(Error::InvalidHeader),
         };
 
-        let tag_len = S::Scheme::TAG_SIZE;
+        let tag_len = S::TAG_SIZE;
         let encrypted_chunk_size = chunk_size as usize + tag_len;
 
         Ok(Self {
             reader,
-            symmetric_key: key,
+            symmetric_key: key.clone(),
             base_nonce,
             encrypted_chunk_size,
             buffer: io::Cursor::new(Vec::new()),
@@ -145,7 +160,10 @@ impl<R: Read, S: SymmetricAlgorithm> Decryptor<R, S> {
     }
 }
 
-impl<R: Read, S: SymmetricAlgorithm> Read for Decryptor<R, S> {
+impl<R: Read, S: SymmetricAlgorithm> Read for Decryptor<R, S>
+where
+    S::Key: Send + Sync + Clone,
+{
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let bytes_read_from_buf = self.buffer.read(buf)?;
         if bytes_read_from_buf > 0 || self.is_done {
@@ -165,7 +183,7 @@ impl<R: Read, S: SymmetricAlgorithm> Read for Decryptor<R, S> {
             nonce[4 + i] ^= counter_bytes[i];
         }
 
-        let decrypted_chunk = S::Scheme::decrypt(
+        let decrypted_chunk = S::decrypt(
             &self.symmetric_key.clone().into(),
             &nonce,
             &encrypted_chunk[..bytes_read],
@@ -184,11 +202,10 @@ impl<R: Read, S: SymmetricAlgorithm> Read for Decryptor<R, S> {
 mod tests {
     use super::*;
     use crate::algorithms::definitions::Aes256Gcm;
-    use crate::algorithms::traits::SymmetricAlgorithm;
     use std::io::{Cursor, Read, Write};
 
     fn test_streaming_roundtrip(plaintext: &[u8]) {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
 
         // Encrypt
         let mut encrypted_data = Vec::new();
@@ -203,7 +220,7 @@ mod tests {
 
         // Decrypt
         let mut decryptor =
-            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), key.clone()).unwrap();
+            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), &key).unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
 
@@ -229,7 +246,7 @@ mod tests {
 
     #[test]
     fn test_tampered_ciphertext_fails() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"some important data";
 
         let mut encrypted_data = Vec::new();
@@ -256,7 +273,7 @@ mod tests {
         encrypted_data[ciphertext_start_index] ^= 1;
 
         let mut decryptor =
-            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), key).unwrap();
+            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), &key).unwrap();
         let mut decrypted_data = Vec::new();
         let result = decryptor.read_to_end(&mut decrypted_data);
 
@@ -265,8 +282,8 @@ mod tests {
 
     #[test]
     fn test_wrong_key_fails() {
-        let key1 = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
-        let key2 = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key1 = Aes256Gcm::generate_key().unwrap();
+        let key2 = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
@@ -277,7 +294,7 @@ mod tests {
         encryptor.flush().unwrap();
 
         let mut decryptor =
-            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), key2).unwrap();
+            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), &key2).unwrap();
         let mut decrypted_data = Vec::new();
         let result = decryptor.read_to_end(&mut decrypted_data);
 

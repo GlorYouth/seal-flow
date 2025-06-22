@@ -7,7 +7,6 @@ use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
 use crate::error::{Error, Result};
 use rand::{rngs::OsRng, TryRngCore};
 use rayon::prelude::*;
-use seal_crypto::prelude::*;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::mpsc;
@@ -101,9 +100,8 @@ where
                 .par_bridge()
                 .for_each(|(index, chunk)| {
                     let nonce = derive_nonce(&base_nonce, index);
-                    let encrypted =
-                        S::Scheme::encrypt(&key_clone.clone().into(), &nonce, &chunk, None)
-                            .map_err(Error::from);
+                    let encrypted = S::encrypt(&key_clone.clone().into(), &nonce, &chunk, None)
+                        .map_err(Error::from);
                     if enc_chunk_tx_clone.send((index, encrypted)).is_err() {
                         return;
                     }
@@ -172,7 +170,7 @@ where
         _ => return Err(Error::InvalidHeader),
     };
 
-    let encrypted_chunk_size = (chunk_size as usize) + S::Scheme::TAG_SIZE;
+    let encrypted_chunk_size = (chunk_size as usize) + S::TAG_SIZE;
 
     // 2. Setup channels
     let (enc_chunk_tx, enc_chunk_rx) = mpsc::sync_channel::<(u64, Vec<u8>)>(CHANNEL_BOUND);
@@ -221,9 +219,8 @@ where
                 .par_bridge()
                 .for_each(|(index, chunk)| {
                     let nonce = derive_nonce(&base_nonce, index);
-                    let decrypted =
-                        S::Scheme::decrypt(&key_clone.clone().into(), &nonce, &chunk, None)
-                            .map_err(Error::from);
+                    let decrypted = S::decrypt(&key_clone.clone().into(), &nonce, &chunk, None)
+                        .map_err(Error::from);
                     if dec_chunk_tx_clone.send((index, decrypted)).is_err() {
                         return;
                     }
@@ -269,7 +266,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::{definitions::Aes256Gcm, traits::SymmetricAlgorithm};
+    use crate::algorithms::definitions::Aes256Gcm;
+    use seal_crypto::prelude::*;
     use std::io::Cursor;
 
     fn get_test_data(size: usize) -> Vec<u8> {
@@ -278,7 +276,7 @@ mod tests {
 
     #[test]
     fn test_parallel_streaming_roundtrip() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = get_test_data(DEFAULT_CHUNK_SIZE as usize * 3 + 100);
         let mut source = Cursor::new(&plaintext);
         let mut encrypted_dest = Vec::new();
@@ -300,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_empty_input() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext: Vec<u8> = Vec::new();
         let mut source = Cursor::new(&plaintext);
         let mut encrypted_dest = Vec::new();
@@ -322,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_exact_chunk_multiple() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize * 2];
         let mut source = Cursor::new(&plaintext);
         let mut encrypted_dest = Vec::new();
@@ -344,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_tampered_ciphertext_fails() {
-        let key = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"some important data";
         let mut source = Cursor::new(plaintext);
         let mut encrypted_dest = Vec::new();
@@ -370,8 +368,8 @@ mod tests {
 
     #[test]
     fn test_wrong_key_fails() {
-        let key1 = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
-        let key2 = <Aes256Gcm as SymmetricAlgorithm>::Scheme::generate_key().unwrap();
+        let key1 = Aes256Gcm::generate_key().unwrap();
+        let key2 = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"some data";
         let mut source = Cursor::new(plaintext);
         let mut encrypted_dest = Vec::new();

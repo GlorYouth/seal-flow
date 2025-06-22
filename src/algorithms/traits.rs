@@ -3,41 +3,28 @@
 use crate::common;
 use seal_crypto::prelude::*;
 
-/// 代表一个具体的对称加密算法。
-pub trait SymmetricAlgorithm: 'static + Send + Sync {
-    /// 关联的 `seal-crypto` 方案，实现了所有核心加密操作。
-    type Scheme: AeadScheme;
-
-    /// The underlying key type for this algorithm.
-    type Key: From<<Self::Scheme as SymmetricKeySet>::Key>
-        + Into<<Self::Scheme as SymmetricKeySet>::Key>
-        + Clone
-        + Send
-        + Sync;
-
-    /// 对应的算法枚举，用于序列化等目的。
+/// Trait to provide the details for a specific symmetric algorithm.
+/// The implementor of this trait is the scheme itself.
+pub trait SymmetricAlgorithmDetails: AeadScheme + 'static {
+    /// The corresponding algorithm enum.
     const ALGORITHM: common::algorithms::SymmetricAlgorithm;
 }
 
-/// 代表一个具体的非对称密钥封装机制 (KEM)。
-pub trait AsymmetricAlgorithm: 'static + Send + Sync {
-    /// 关联的 `seal-crypto` 方案，实现了 KEM 和密钥生成。
-    type Scheme: Kem + KeyGenerator;
+/// Represents a concrete symmetric encryption algorithm.
+/// This is a marker trait that bundles `SymmetricAlgorithmDetails` with key bounds.
+pub trait SymmetricAlgorithm: SymmetricAlgorithmDetails {}
 
-    /// The public key type.
-    type PublicKey: Clone
-        + Send
-        + Sync
-        + From<<Self::Scheme as AsymmetricKeySet>::PublicKey>
-        + Into<<Self::Scheme as AsymmetricKeySet>::PublicKey>;
+impl<T: SymmetricAlgorithmDetails> SymmetricAlgorithm for T where {}
 
-    /// The private key type.
-    type PrivateKey: Clone
-        + Send
-        + Sync
-        + From<<Self::Scheme as AsymmetricKeySet>::PrivateKey>
-        + Into<<Self::Scheme as AsymmetricKeySet>::PrivateKey>;
-
-    /// 对应的算法枚举。
+/// Trait to provide the details for a specific asymmetric algorithm.
+/// The implementor of this trait is the scheme itself.
+pub trait AsymmetricAlgorithmDetails: Kem + KeyGenerator + 'static {
+    /// The corresponding algorithm enum.
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm;
 }
+
+/// Represents a concrete asymmetric key encapsulation mechanism (KEM).
+/// This is a marker trait that bundles `AsymmetricAlgorithmDetails` with key bounds.
+pub trait AsymmetricAlgorithm: AsymmetricAlgorithmDetails {}
+
+impl<T: AsymmetricAlgorithmDetails> AsymmetricAlgorithm for T {}

@@ -27,7 +27,7 @@ enum EncryptorState {
 }
 
 pin_project! {
-    pub struct Encryptor<W: AsyncWrite, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
+    pub struct Encryptor<W: AsyncWrite, A, S> {
         #[pin]
         writer: W,
         symmetric_key: Zeroizing<Vec<u8>>,
@@ -43,19 +43,12 @@ pin_project! {
 impl<W: AsyncWrite + Unpin, A, S> Encryptor<W, A, S>
 where
     A: AsymmetricAlgorithm,
+    A::EncapsulatedKey: Into<Vec<u8>> + Send,
     S: SymmetricAlgorithm,
-    Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
 {
-    pub async fn new(
-        mut writer: W,
-        pk: A::PublicKey,
-        kek_id: String,
-    ) -> Result<Self>
-    where
-        <<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey: Send,
-    {
+    pub async fn new(mut writer: W, pk: A::PublicKey, kek_id: String) -> Result<Self> {
         let (shared_secret, encapsulated_key) =
-            tokio::task::spawn_blocking(move || A::Scheme::encapsulate(&pk.into())).await??;
+            tokio::task::spawn_blocking(move || A::encapsulate(&pk.into())).await??;
 
         let mut base_nonce = [0u8; 12];
         OsRng.try_fill_bytes(&mut base_nonce)?;
@@ -99,7 +92,7 @@ impl<W: AsyncWrite + Unpin, A, S> AsyncWrite for Encryptor<W, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>> + Send,
+    S::Key: Clone + Send + Sync + From<Zeroizing<Vec<u8>>>,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -111,8 +104,7 @@ where
         Poll::Ready(Ok(buf.len()))
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> 
-    {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         loop {
             let mut this = self.as_mut().project();
             match this.state {
@@ -129,7 +121,7 @@ where
                     }
                     let key = this.symmetric_key.clone().into();
                     let handle = tokio::task::spawn_blocking(move || {
-                        S::Scheme::encrypt(&key, &nonce, &chunk, None).map_err(Error::from)
+                        S::encrypt(&key, &nonce, &chunk, None).map_err(Error::from)
                     });
                     *this.state = EncryptorState::Encrypting(handle);
                 }
@@ -179,7 +171,7 @@ enum DecryptorState {
 }
 
 pin_project! {
-    pub struct Decryptor<R: AsyncRead, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
+    pub struct Decryptor<R: AsyncRead, A, S> {
         #[pin]
         reader: R,
         symmetric_key: Zeroizing<Vec<u8>>,
@@ -197,12 +189,10 @@ impl<R: AsyncRead + Unpin, A, S> Decryptor<R, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>>,
-    <A::Scheme as AsymmetricKeySet>::PrivateKey: Send + Sync,
 {
-    pub async fn new(mut reader: R, sk: A::PrivateKey) -> Result<Self>
+    pub async fn new(mut reader: R, sk: <A as AsymmetricKeySet>::PrivateKey) -> Result<Self>
     where
-        <<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>> + Send,
+        A::EncapsulatedKey: From<Vec<u8>> + Send,
     {
         use tokio::io::AsyncReadExt;
         let mut len_buf = [0u8; 4];
@@ -223,10 +213,10 @@ where
         };
 
         let shared_secret =
-            tokio::task::spawn_blocking(move || A::Scheme::decapsulate(&sk.into(), &encapsulated_key))
+            tokio::task::spawn_blocking(move || A::decapsulate(&sk.into(), &encapsulated_key))
                 .await??;
 
-        let tag_len = S::Scheme::TAG_SIZE;
+        let tag_len = S::TAG_SIZE;
         let encrypted_chunk_size = chunk_size as usize + tag_len;
 
         Ok(Self {
@@ -247,7 +237,7 @@ impl<R: AsyncRead + Unpin, A, S> AsyncRead for Decryptor<R, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>> + Send
+    S::Key: Clone + Send + Sync + From<Zeroizing<Vec<u8>>>,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -296,8 +286,7 @@ where
                     let key = this.symmetric_key.clone().into();
                     let final_encrypted_chunk = final_encrypted_chunk.to_vec();
                     let handle = tokio::task::spawn_blocking(move || {
-                        S::Scheme::decrypt(&key, &nonce, &final_encrypted_chunk, None)
-                            .map_err(Error::from)
+                        S::decrypt(&key, &nonce, &final_encrypted_chunk, None).map_err(Error::from)
                     });
 
                     *this.state = DecryptorState::Decrypting(handle);
@@ -322,25 +311,28 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::{Aes256Gcm, Rsa2048};
-    use crate::algorithms::traits::{AsymmetricAlgorithm};
+    use crate::algorithms::definitions::{Aes256GcmScheme, Rsa2048};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use seal_crypto::schemes::hash::Sha256;
 
     async fn test_hybrid_async_streaming_roundtrip(plaintext: &[u8]) {
-        let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
+        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::<_, Rsa2048, Aes256Gcm>::new(&mut encrypted_data, pk, "test_kek_id".to_string())
-                .await
-                .unwrap();
+        let mut encryptor = Encryptor::<_, Rsa2048::<Sha256>, Aes256GcmScheme>::new(
+            &mut encrypted_data,
+            pk,
+            "test_kek_id".to_string(),
+        )
+        .await
+        .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
         // Decrypt
         let mut decryptor =
-            Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk)
+            Decryptor::<_, Rsa2048::<Sha256>, Aes256GcmScheme>::new(encrypted_data.as_slice(), sk)
                 .await
                 .unwrap();
         let mut decrypted_data = Vec::new();
@@ -368,14 +360,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_tampered_ciphertext_fails_async() {
-        let (pk, sk) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
+        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"some important data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::<_, Rsa2048, Aes256Gcm>::new(&mut encrypted_data, pk, "test_kek_id".to_string())
-                .await
-                .unwrap();
+        let mut encryptor = Encryptor::<_, Rsa2048::<Sha256>, Aes256GcmScheme>::new(
+            &mut encrypted_data,
+            pk,
+            "test_kek_id".to_string(),
+        )
+        .await
+        .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
@@ -385,7 +380,7 @@ mod tests {
         }
 
         let mut decryptor =
-            Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk)
+            Decryptor::<_, Rsa2048, Aes256GcmScheme>::new(encrypted_data.as_slice(), sk)
                 .await
                 .unwrap();
         let mut decrypted_data = Vec::new();
@@ -396,20 +391,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_wrong_private_key_fails_async() {
-        let (pk, _) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
+        let (pk, _) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::<_, Rsa2048, Aes256Gcm>::new(&mut encrypted_data, pk, "test_kek_id".to_string())
-                .await
-                .unwrap();
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256GcmScheme>::new(
+            &mut encrypted_data,
+            pk,
+            "test_kek_id".to_string(),
+        )
+        .await
+        .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
         // Decrypt with the wrong private key should fail
-        let (_, sk2) = <Rsa2048 as AsymmetricAlgorithm>::Scheme::generate_keypair().unwrap();
-        let result = Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk2).await;
+        let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let result =
+            Decryptor::<_, Rsa2048, Aes256GcmScheme>::new(encrypted_data.as_slice(), sk2)
+                .await;
 
         assert!(result.is_err());
     }

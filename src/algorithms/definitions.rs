@@ -1,103 +1,66 @@
 //! Defines the concrete algorithm types and implements the corresponding traits.
 
-use super::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use super::traits::{AsymmetricAlgorithmDetails, SymmetricAlgorithmDetails};
 use crate::common;
-use std::marker::PhantomData;
 
-use seal_crypto::{
+pub(crate) use seal_crypto::{
     prelude::*,
     schemes::{
-        symmetric::aes_gcm::{Aes128Gcm as Aes128, Aes256Gcm as Aes256},
         asymmetric::{
-            kyber::{
-                Kyber1024 as Kyber1024Params, Kyber512 as Kyber512Params,
-                Kyber768 as Kyber768Params, KyberScheme
-            },
-            rsa::{Rsa2048 as Rsa2048Params, Rsa4096 as Rsa4096Params, RsaScheme},
+            kyber::{Kyber1024, Kyber512, Kyber768, KyberScheme},
+            rsa::{Rsa2048 as Rsa2048Crypto, Rsa4096 as Rsa4096Crypto, RsaScheme},
         },
         hash::Sha256,
+        symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm},
     },
 };
+
 // --- Symmetric Algorithms ---
 
-/// Marker type for AES-128-GCM.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Aes128Gcm;
-impl SymmetricAlgorithm for Aes128Gcm {
-    type Scheme = Aes128;
-    type Key = <Aes128 as SymmetricKeySet>::Key;
+pub type Aes128GcmScheme = Aes128Gcm;
+pub type Aes256GcmScheme = Aes256Gcm;
+
+impl SymmetricAlgorithmDetails for Aes128Gcm {
     const ALGORITHM: common::algorithms::SymmetricAlgorithm =
         common::algorithms::SymmetricAlgorithm::Aes128Gcm;
 }
 
-/// Marker type for AES-256-GCM.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Aes256Gcm;
-impl SymmetricAlgorithm for Aes256Gcm {
-    type Scheme = Aes256;
-    type Key = <Aes256 as SymmetricKeySet>::Key;
+impl SymmetricAlgorithmDetails for Aes256Gcm {
     const ALGORITHM: common::algorithms::SymmetricAlgorithm =
         common::algorithms::SymmetricAlgorithm::Aes256Gcm;
 }
 
-
 // --- Asymmetric Algorithms ---
 
-/// Marker type for RSA-2048 with SHA-256.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Rsa2048<Hash = Sha256> {
-    _sha: PhantomData<Hash>,
-}
-impl<Hash: 'static + Hasher> AsymmetricAlgorithm for Rsa2048<Hash> {
-    type Scheme = RsaScheme<Rsa2048Params, Hash>;
-    type PublicKey = <Self::Scheme as AsymmetricKeySet>::PublicKey;
-    type PrivateKey = <Self::Scheme as AsymmetricKeySet>::PrivateKey;
+// --- Type aliases for convenience ---
+pub type Rsa2048<Sha = Sha256> = RsaScheme<Rsa2048Crypto, Sha>;
+pub type Rsa4096Sha256<Sha = Sha256> = RsaScheme<Rsa4096Crypto, Sha>;
+
+pub type Kyber512Scheme = KyberScheme<Kyber512>;
+pub type Kyber768Scheme = KyberScheme<Kyber768>;
+pub type Kyber1024Scheme = KyberScheme<Kyber1024>;
+
+impl<H: 'static + Hasher> AsymmetricAlgorithmDetails for RsaScheme<Rsa2048Crypto, H> {
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Rsa2048;
 }
 
-/// Marker type for RSA-4096 with SHA-256.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Rsa4096<Hash = Sha256> {
-    _sha: PhantomData<Hash>,
-}
-impl<Hash: 'static + Hasher> AsymmetricAlgorithm for Rsa4096<Hash> {
-    type Scheme = RsaScheme<Rsa4096Params, Hash>;
-    type PublicKey = <Self::Scheme as AsymmetricKeySet>::PublicKey;
-    type PrivateKey = <Self::Scheme as AsymmetricKeySet>::PrivateKey;
+impl<H: 'static + Hasher> AsymmetricAlgorithmDetails for RsaScheme<Rsa4096Crypto, H> {
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Rsa4096;
 }
 
-/// Marker type for Kyber-512 with SHA-256.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Kyber512;
-impl AsymmetricAlgorithm for Kyber512 {
-    type Scheme = KyberScheme<Kyber512Params>;
-    type PublicKey = <Self::Scheme as AsymmetricKeySet>::PublicKey;
-    type PrivateKey = <Self::Scheme as AsymmetricKeySet>::PrivateKey;
+impl AsymmetricAlgorithmDetails for KyberScheme<Kyber512> {
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Kyber512;
 }
 
-/// Marker type for Kyber-768 with SHA-256.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Kyber768;
-impl AsymmetricAlgorithm for Kyber768 {
-    type Scheme = KyberScheme<Kyber768Params>;
-    type PublicKey = <Self::Scheme as AsymmetricKeySet>::PublicKey;
-    type PrivateKey = <Self::Scheme as AsymmetricKeySet>::PrivateKey;
+impl AsymmetricAlgorithmDetails for KyberScheme<Kyber768> {
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Kyber768;
 }
 
-/// Marker type for Kyber-1024 with SHA-256.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Kyber1024;
-impl AsymmetricAlgorithm for Kyber1024 {
-    type Scheme = KyberScheme<Kyber1024Params>;
-    type PublicKey = <Self::Scheme as AsymmetricKeySet>::PublicKey;
-    type PrivateKey = <Self::Scheme as AsymmetricKeySet>::PrivateKey;
+impl AsymmetricAlgorithmDetails for KyberScheme<Kyber1024> {
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Kyber1024;
 }
