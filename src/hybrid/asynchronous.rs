@@ -323,7 +323,7 @@ where
 mod tests {
     use super::*;
     use crate::algorithms::definitions::{Aes256Gcm, Rsa2048};
-    use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+    use crate::algorithms::traits::{AsymmetricAlgorithm};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     async fn test_hybrid_async_streaming_roundtrip(plaintext: &[u8]) {
