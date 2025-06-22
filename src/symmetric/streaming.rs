@@ -12,7 +12,7 @@ const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 /// Implements `std::io::Write` for synchronous, streaming symmetric encryption.
 pub struct Encryptor<W: Write, S: SymmetricAlgorithm> {
     writer: W,
-    symmetric_key: <S::Scheme as SymmetricKeyGenerator>::Key,
+    symmetric_key: S::Key,
     base_nonce: [u8; 12],
     chunk_size: usize,
     buffer: Vec<u8>,
@@ -23,7 +23,7 @@ pub struct Encryptor<W: Write, S: SymmetricAlgorithm> {
 impl<W: Write, S: SymmetricAlgorithm> Encryptor<W, S> {
     pub fn new(
         mut writer: W,
-        key: <S::Scheme as SymmetricKeyGenerator>::Key,
+        key: S::Key,
         key_id: String,
     ) -> Result<Self> {
         let mut base_nonce = [0u8; 12];
@@ -70,8 +70,9 @@ impl<W: Write, S: SymmetricAlgorithm> Write for Encryptor<W, S> {
                 nonce[4 + i] ^= counter_bytes[i];
             }
 
-            let encrypted_chunk = S::Scheme::encrypt(&self.symmetric_key, &nonce, &chunk, None)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let encrypted_chunk =
+                S::Scheme::encrypt(&self.symmetric_key.clone().into(), &nonce, &chunk, None)
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
             self.chunk_counter += 1;
         }
@@ -89,7 +90,7 @@ impl<W: Write, S: SymmetricAlgorithm> Write for Encryptor<W, S> {
             }
 
             let encrypted_chunk =
-                S::Scheme::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
+                S::Scheme::encrypt(&self.symmetric_key.clone().into(), &nonce, &final_chunk, None)
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
             self.chunk_counter += 1;
@@ -101,7 +102,7 @@ impl<W: Write, S: SymmetricAlgorithm> Write for Encryptor<W, S> {
 /// Implements `std::io::Read` for synchronous, streaming symmetric decryption.
 pub struct Decryptor<R: Read, S: SymmetricAlgorithm> {
     reader: R,
-    symmetric_key: <S::Scheme as SymmetricKeyGenerator>::Key,
+    symmetric_key: S::Key,
     base_nonce: [u8; 12],
     encrypted_chunk_size: usize,
     buffer: io::Cursor<Vec<u8>>,
@@ -111,7 +112,7 @@ pub struct Decryptor<R: Read, S: SymmetricAlgorithm> {
 }
 
 impl<R: Read, S: SymmetricAlgorithm> Decryptor<R, S> {
-    pub fn new(mut reader: R, key: <S::Scheme as SymmetricKeyGenerator>::Key) -> Result<Self> {
+    pub fn new(mut reader: R, key: S::Key) -> Result<Self> {
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf)?;
         let header_len = u32::from_le_bytes(len_buf) as usize;
@@ -165,7 +166,7 @@ impl<R: Read, S: SymmetricAlgorithm> Read for Decryptor<R, S> {
         }
 
         let decrypted_chunk = S::Scheme::decrypt(
-            &self.symmetric_key,
+            &self.symmetric_key.clone().into(),
             &nonce,
             &encrypted_chunk[..bytes_read],
             None,

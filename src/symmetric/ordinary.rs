@@ -23,7 +23,7 @@ fn derive_nonce(base_nonce: &[u8; 12], i: u64) -> [u8; 12] {
 
 /// Encrypts plaintext using a chunking mechanism.
 pub fn encrypt<S: SymmetricAlgorithm>(
-    key: &<S::Scheme as SymmetricKeyGenerator>::Key,
+    key: &S::Key,
     plaintext: &[u8],
     key_id: String,
 ) -> Result<Vec<u8>> {
@@ -51,7 +51,7 @@ pub fn encrypt<S: SymmetricAlgorithm>(
 
     for (i, chunk) in plaintext.chunks(DEFAULT_CHUNK_SIZE as usize).enumerate() {
         let nonce = derive_nonce(&base_nonce_bytes, i as u64);
-        let encrypted_chunk = S::Scheme::encrypt(key, &nonce, chunk, None)?;
+        let encrypted_chunk = S::Scheme::encrypt(&key.clone().into(), &nonce, chunk, None)?;
         encrypted_body.extend_from_slice(&encrypted_chunk);
     }
 
@@ -65,7 +65,7 @@ pub fn encrypt<S: SymmetricAlgorithm>(
 
 /// Decrypts ciphertext that was encrypted with the corresponding `encrypt` function.
 pub fn decrypt<S: SymmetricAlgorithm>(
-    key: &<S::Scheme as SymmetricKeyGenerator>::Key,
+    key: &S::Key,
     ciphertext: &[u8],
 ) -> Result<Vec<u8>> {
     if ciphertext.len() < 4 {
@@ -108,7 +108,7 @@ pub fn decrypt<S: SymmetricAlgorithm>(
         let encrypted_chunk = &ciphertext_body[cursor..cursor + current_chunk_len];
 
         let nonce = derive_nonce(&base_nonce_array, chunk_index as u64);
-        let decrypted_chunk = S::Scheme::decrypt(key, &nonce, encrypted_chunk, None)?;
+        let decrypted_chunk = S::Scheme::decrypt(&key.clone().into(), &nonce, encrypted_chunk, None)?;
 
         plaintext.extend_from_slice(&decrypted_chunk);
 

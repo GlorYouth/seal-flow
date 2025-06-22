@@ -43,14 +43,19 @@ pin_project! {
 impl<W: AsyncWrite + Unpin, A, S> Encryptor<W, A, S>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm, 
-    Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>
+    S: SymmetricAlgorithm,
+    Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
 {
-    pub async fn new(mut writer: W, pk: <A::Scheme as Algorithm>::PublicKey, kek_id: String) -> Result<Self> 
-    where <<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey: Send
+    pub async fn new(
+        mut writer: W,
+        pk: A::PublicKey,
+        kek_id: String,
+    ) -> Result<Self>
+    where
+        <<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey: Send,
     {
         let (shared_secret, encapsulated_key) =
-            tokio::task::spawn_blocking(move || A::Scheme::encapsulate(&pk)).await??;
+            tokio::task::spawn_blocking(move || A::Scheme::encapsulate(&pk.into())).await??;
 
         let mut base_nonce = [0u8; 12];
         OsRng.try_fill_bytes(&mut base_nonce)?;
@@ -195,10 +200,7 @@ where
     <<S as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>>,
     <A::Scheme as Algorithm>::PrivateKey: Send + Sync,
 {
-    pub async fn new(
-        mut reader: R,
-        sk: <A::Scheme as Algorithm>::PrivateKey,
-    ) -> Result<Self>
+    pub async fn new(mut reader: R, sk: A::PrivateKey) -> Result<Self>
     where
         <<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>> + Send,
     {
@@ -221,7 +223,7 @@ where
         };
 
         let shared_secret =
-            tokio::task::spawn_blocking(move || A::Scheme::decapsulate(&sk, &encapsulated_key))
+            tokio::task::spawn_blocking(move || A::Scheme::decapsulate(&sk.into(), &encapsulated_key))
                 .await??;
 
         let tag_len = S::Scheme::TAG_SIZE;
@@ -321,7 +323,7 @@ where
 mod tests {
     use super::*;
     use crate::algorithms::definitions::{Aes256Gcm, Rsa2048};
-    use crate::algorithms::traits::AsymmetricAlgorithm;
+    use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     async fn test_hybrid_async_streaming_roundtrip(plaintext: &[u8]) {
@@ -329,20 +331,18 @@ mod tests {
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-            &mut encrypted_data,
-            pk,
-            "test_kek_id".to_string(),
-        )
-        .await
-        .unwrap();
+        let mut encryptor =
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(&mut encrypted_data, pk, "test_kek_id".to_string())
+                .await
+                .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
         // Decrypt
-        let mut decryptor = Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk)
-            .await
-            .unwrap();
+        let mut decryptor =
+            Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk)
+                .await
+                .unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();
 
@@ -372,13 +372,10 @@ mod tests {
         let plaintext = b"some important data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-            &mut encrypted_data,
-            pk,
-            "test_kek_id".to_string(),
-        )
-        .await
-        .unwrap();
+        let mut encryptor =
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(&mut encrypted_data, pk, "test_kek_id".to_string())
+                .await
+                .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
@@ -387,9 +384,10 @@ mod tests {
             encrypted_data[300] ^= 1;
         }
 
-        let mut decryptor = Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk)
-            .await
-            .unwrap();
+        let mut decryptor =
+            Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk)
+                .await
+                .unwrap();
         let mut decrypted_data = Vec::new();
         let result = decryptor.read_to_end(&mut decrypted_data).await;
 
@@ -402,13 +400,10 @@ mod tests {
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-            &mut encrypted_data,
-            pk,
-            "test_kek_id".to_string(),
-        )
-        .await
-        .unwrap();
+        let mut encryptor =
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(&mut encrypted_data, pk, "test_kek_id".to_string())
+                .await
+                .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 

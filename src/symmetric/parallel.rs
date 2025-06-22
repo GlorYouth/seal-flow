@@ -9,13 +9,13 @@ const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Encrypts in-memory data using parallel processing.
 pub fn encrypt<S>(
-    key: &<S::Scheme as SymmetricKeyGenerator>::Key,
+    key: &S::Key,
     plaintext: &[u8],
     key_id: String,
 ) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
-    <S::Scheme as SymmetricKeyGenerator>::Key: Sync,
+    S::Key: Sync,
 {
     // 1. Generate base_nonce, construct Header with chunk_size
     let mut base_nonce = [0u8; 12];
@@ -48,7 +48,7 @@ where
             }
 
             // 4. Encrypt the chunk
-            S::Scheme::encrypt(key, &nonce, chunk, None)
+            S::Scheme::encrypt(&key.clone().into(), &nonce, chunk, None)
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
@@ -65,12 +65,12 @@ where
 
 /// Decrypts in-memory data using parallel processing.
 pub fn decrypt<S>(
-    key: &<S::Scheme as SymmetricKeyGenerator>::Key,
+    key: &S::Key,
     ciphertext: &[u8],
 ) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
-    <S::Scheme as SymmetricKeyGenerator>::Key: Sync,
+    S::Key: Sync,
 {
     // 1. Parse Header
     if ciphertext.len() < 4 {
@@ -109,7 +109,7 @@ where
             }
 
             // 5. Decrypt the chunk
-            S::Scheme::decrypt(key, &nonce, encrypted_chunk, None)
+            S::Scheme::decrypt(&key.clone().into(), &nonce, encrypted_chunk, None)
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
 

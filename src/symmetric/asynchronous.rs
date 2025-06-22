@@ -26,7 +26,7 @@ pin_project! {
     pub struct Encryptor<W: AsyncWrite, S: SymmetricAlgorithm> {
         #[pin]
         writer: W,
-        symmetric_key: <S::Scheme as SymmetricKeyGenerator>::Key,
+        symmetric_key: S::Key,
         base_nonce: [u8; 12],
         chunk_size: usize,
         buffer: Vec<u8>,
@@ -36,11 +36,8 @@ pin_project! {
     }
 }
 
-impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> Encryptor<W, S>
-where
-    <S::Scheme as SymmetricKeyGenerator>::Key: Clone + Send + Sync,
-{
-    pub async fn new(mut writer: W, key: <S::Scheme as SymmetricKeyGenerator>::Key, key_id: String) -> Result<Self> {
+impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> Encryptor<W, S> {
+    pub async fn new(mut writer: W, key: S::Key, key_id: String) -> Result<Self> {
         let mut base_nonce = [0u8; 12];
         OsRng.try_fill_bytes(&mut base_nonce)?;
 
@@ -80,7 +77,6 @@ where
 impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> AsyncWrite for Encryptor<W, S>
 where
     S: Send + Sync,
-    <S::Scheme as SymmetricKeyGenerator>::Key: Clone + Send + Sync,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -112,7 +108,7 @@ where
 
                     let key = this.symmetric_key.clone();
                     let handle = tokio::task::spawn_blocking(move || {
-                        S::Scheme::encrypt(&key, &nonce, &chunk, None).map_err(Error::from)
+                        S::Scheme::encrypt(&key.into(), &nonce, &chunk, None).map_err(Error::from)
                     });
                     *this.state = EncryptorState::Encrypting(handle);
                 }
@@ -163,7 +159,7 @@ pin_project! {
     pub struct Decryptor<R: AsyncRead, S: SymmetricAlgorithm> {
         #[pin]
         reader: R,
-        symmetric_key: <S::Scheme as SymmetricKeyGenerator>::Key,
+        symmetric_key: S::Key,
         base_nonce: [u8; 12],
         encrypted_chunk_size: usize,
         buffer: io::Cursor<Vec<u8>>,
@@ -174,11 +170,8 @@ pin_project! {
     }
 }
 
-impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> Decryptor<R, S>
-where
-    <S::Scheme as SymmetricKeyGenerator>::Key: Clone + Send + Sync,
-{
-    pub async fn new(mut reader: R, key: <S::Scheme as SymmetricKeyGenerator>::Key) -> Result<Self> {
+impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> Decryptor<R, S> {
+    pub async fn new(mut reader: R, key: S::Key) -> Result<Self> {
         use tokio::io::AsyncReadExt;
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf).await?;
@@ -216,7 +209,6 @@ where
 impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> AsyncRead for Decryptor<R, S>
 where
     S: Send + Sync + 'static,
-    <S::Scheme as SymmetricKeyGenerator>::Key: Clone + Send + Sync,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -264,7 +256,8 @@ where
                     let key = this.symmetric_key.clone();
                     let final_chunk = encrypted_chunk[..n].to_vec();
                     let handle = tokio::task::spawn_blocking(move || {
-                        S::Scheme::decrypt(&key, &nonce, &final_chunk, None).map_err(Error::from)
+                        S::Scheme::decrypt(&key.into(), &nonce, &final_chunk, None)
+                            .map_err(Error::from)
                     });
 
                     *this.state = DecryptorState::Decrypting(handle);

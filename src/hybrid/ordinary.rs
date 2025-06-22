@@ -11,7 +11,7 @@ const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Performs hybrid encryption on in-memory data.
 pub fn encrypt<A, S>(
-    pk: &<A::Scheme as Algorithm>::PublicKey,
+    pk: &A::PublicKey,
     plaintext: &[u8],
     kek_id: String,
 ) -> Result<Vec<u8>>
@@ -22,7 +22,7 @@ where
     Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
 {
     // 1. KEM Encapsulate: Generate DEK and wrap it with the public key.
-    let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(pk)?;
+    let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(&pk.clone().into())?;
 
     // 2. Generate a base_nonce for deterministic nonce derivation for each chunk.
     let mut base_nonce = [0u8; 12];
@@ -73,7 +73,7 @@ where
 
 /// Performs hybrid decryption on in-memory data.
 pub fn decrypt<A, S>(
-    sk: &<A::Scheme as Algorithm>::PrivateKey,
+    sk: &A::PrivateKey,
     ciphertext: &[u8],
 ) -> Result<Vec<u8>>
 where
@@ -106,7 +106,7 @@ where
     };
 
     // 3. KEM Decapsulate to recover the DEK.
-    let shared_secret = A::Scheme::decapsulate(sk, &encapsulated_key)?;
+    let shared_secret = A::Scheme::decapsulate(&sk.clone().into(), &encapsulated_key)?;
 
     let tag_len = S::Scheme::TAG_SIZE;
     let encrypted_chunk_size = chunk_size as usize + tag_len;

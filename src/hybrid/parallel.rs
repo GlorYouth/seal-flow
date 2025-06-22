@@ -9,19 +9,15 @@ use seal_crypto::zeroize::Zeroizing;
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Performs parallel, in-memory hybrid encryption.
-pub fn encrypt<A, S>(
-    pk: &<A::Scheme as Algorithm>::PublicKey,
-    plaintext: &[u8],
-    kek_id: String,
-) -> Result<Vec<u8>>
+pub fn encrypt<A, S>(pk: &A::PublicKey, plaintext: &[u8], kek_id: String) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
     <S::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Sync,
+    Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
 {
     // 1. KEM Encapsulate: Generate DEK and wrap it with the public key.
-    let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(pk)?;
+    let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(&pk.clone().into())?;
 
     // 2. Generate a base_nonce for deterministic nonce derivation.
     let mut base_nonce = [0u8; 12];
@@ -74,15 +70,12 @@ where
 }
 
 /// Performs parallel, in-memory hybrid decryption.
-pub fn decrypt<A, S>(
-    sk: &<A::Scheme as Algorithm>::PrivateKey,
-    ciphertext: &[u8],
-) -> Result<Vec<u8>>
+pub fn decrypt<A, S>(sk: &A::PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <A::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>>,
     <S::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Sync,
+    <A::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>>,
 {
     // 1. Parse the header.
     if ciphertext.len() < 4 {
@@ -108,7 +101,7 @@ where
     };
 
     // 3. KEM Decapsulate to recover the DEK.
-    let shared_secret = A::Scheme::decapsulate(sk, &encapsulated_key)?;
+    let shared_secret = A::Scheme::decapsulate(&sk.clone().into(), &encapsulated_key)?;
 
     let tag_len = S::Scheme::TAG_SIZE;
     let encrypted_chunk_size = chunk_size as usize + tag_len;

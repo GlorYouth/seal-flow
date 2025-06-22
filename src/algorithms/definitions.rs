@@ -25,6 +25,7 @@ use seal_crypto::{
 pub struct Aes128Gcm;
 impl SymmetricAlgorithm for Aes128Gcm {
     type Scheme = Aes128;
+    type Key = <Aes128 as SymmetricKeyGenerator>::Key;
     const ALGORITHM: common::algorithms::SymmetricAlgorithm =
         common::algorithms::SymmetricAlgorithm::Aes128Gcm;
 }
@@ -34,6 +35,7 @@ impl SymmetricAlgorithm for Aes128Gcm {
 pub struct Aes256Gcm;
 impl SymmetricAlgorithm for Aes256Gcm {
     type Scheme = Aes256;
+    type Key = <Aes256 as SymmetricKeyGenerator>::Key;
     const ALGORITHM: common::algorithms::SymmetricAlgorithm =
         common::algorithms::SymmetricAlgorithm::Aes256Gcm;
 }
@@ -48,6 +50,8 @@ pub struct Rsa2048<Hash = Sha256> {
 }
 impl<Hash: 'static + Hasher> AsymmetricAlgorithm for Rsa2048<Hash> {
     type Scheme = RsaScheme<Rsa2048Params, Hash>;
+    type PublicKey = <Self::Scheme as Algorithm>::PublicKey;
+    type PrivateKey = <Self::Scheme as Algorithm>::PrivateKey;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Rsa2048;
 }
@@ -59,6 +63,8 @@ pub struct Rsa4096<Hash = Sha256> {
 }
 impl<Hash: 'static + Hasher> AsymmetricAlgorithm for Rsa4096<Hash> {
     type Scheme = RsaScheme<Rsa4096Params, Hash>;
+    type PublicKey = <Self::Scheme as Algorithm>::PublicKey;
+    type PrivateKey = <Self::Scheme as Algorithm>::PrivateKey;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Rsa4096;
 }
@@ -68,6 +74,8 @@ impl<Hash: 'static + Hasher> AsymmetricAlgorithm for Rsa4096<Hash> {
 pub struct Kyber512;
 impl AsymmetricAlgorithm for Kyber512 {
     type Scheme = KyberScheme<Kyber512Params>;
+    type PublicKey = <Self::Scheme as Algorithm>::PublicKey;
+    type PrivateKey = <Self::Scheme as Algorithm>::PrivateKey;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Kyber512;
 }
@@ -77,6 +85,8 @@ impl AsymmetricAlgorithm for Kyber512 {
 pub struct Kyber768;
 impl AsymmetricAlgorithm for Kyber768 {
     type Scheme = KyberScheme<Kyber768Params>;
+    type PublicKey = <Self::Scheme as Algorithm>::PublicKey;
+    type PrivateKey = <Self::Scheme as Algorithm>::PrivateKey;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Kyber768;
 }
@@ -86,6 +96,8 @@ impl AsymmetricAlgorithm for Kyber768 {
 pub struct Kyber1024;
 impl AsymmetricAlgorithm for Kyber1024 {
     type Scheme = KyberScheme<Kyber1024Params>;
+    type PublicKey = <Self::Scheme as Algorithm>::PublicKey;
+    type PrivateKey = <Self::Scheme as Algorithm>::PrivateKey;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Kyber1024;
 }

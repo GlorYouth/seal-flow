@@ -30,13 +30,9 @@ where
     ///
     /// This will perform the KEM encapsulate operation immediately to generate the DEK,
     /// and write the complete header to the underlying writer.
-    pub fn new(
-        mut writer: W,
-        pk: &<A::Scheme as Algorithm>::PublicKey,
-        kek_id: String,
-    ) -> Result<Self> {
+    pub fn new(mut writer: W, pk: &A::PublicKey, kek_id: String) -> Result<Self> {
         // 1. KEM Encapsulate: Generate DEK and wrap it.
-        let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(pk)?;
+        let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(&pk.clone().into())?;
 
         // 2. Prepare streaming parameters.
         let mut base_nonce = [0u8; 12];
@@ -143,7 +139,7 @@ where
     ///
     /// This will read the header from the underlying reader and perform the KEM
     /// decapsulate operation immediately to recover the DEK.
-    pub fn new(mut reader: R, sk: &<A::Scheme as Algorithm>::PrivateKey) -> Result<Self> {
+    pub fn new(mut reader: R, sk: &A::PrivateKey) -> Result<Self> {
         // 1. Read header.
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf)?;
@@ -164,7 +160,7 @@ where
         };
 
         // 3. KEM Decapsulate to recover the DEK.
-        let shared_secret = A::Scheme::decapsulate(sk, &encapsulated_key)?;
+        let shared_secret = A::Scheme::decapsulate(&sk.clone().into(), &encapsulated_key)?;
 
         let tag_len = S::Scheme::TAG_SIZE;
         let encrypted_chunk_size = chunk_size as usize + tag_len;
@@ -227,6 +223,7 @@ where
 mod tests {
     use super::*;
     use crate::algorithms::definitions::{Aes256Gcm, Rsa2048};
+    use crate::algorithms::traits::AsymmetricAlgorithm;
     use std::io::{Cursor, Read, Write};
 
     fn test_hybrid_streaming_roundtrip(plaintext: &[u8]) {
@@ -234,12 +231,9 @@ mod tests {
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-            &mut encrypted_data,
-            &pk,
-            "test_kek_id".to_string(),
-        )
-        .unwrap();
+        let mut encryptor =
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(&mut encrypted_data, &pk, "test_kek_id".to_string())
+                .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.flush().unwrap();
 
@@ -275,12 +269,9 @@ mod tests {
         let plaintext = b"some important data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-            &mut encrypted_data,
-            &pk,
-            "test_kek_id".to_string(),
-        )
-        .unwrap();
+        let mut encryptor =
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(&mut encrypted_data, &pk, "test_kek_id".to_string())
+                .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.flush().unwrap();
 
@@ -303,12 +294,9 @@ mod tests {
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-            &mut encrypted_data,
-            &pk,
-            "test_kek_id".to_string(),
-        )
-        .unwrap();
+        let mut encryptor =
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(&mut encrypted_data, &pk, "test_kek_id".to_string())
+                .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.flush().unwrap();
 

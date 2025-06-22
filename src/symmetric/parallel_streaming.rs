@@ -27,15 +27,10 @@ fn derive_nonce(base_nonce: &[u8; 12], i: u64) -> [u8; 12] {
 }
 
 /// Encrypts data from a reader and writes to a writer using a parallel streaming approach.
-pub fn encrypt<S, R, W>(
-    key: &<S::Scheme as SymmetricKeyGenerator>::Key,
-    mut reader: R,
-    mut writer: W,
-    key_id: String,
-) -> Result<()>
+pub fn encrypt<S, R, W>(key: &S::Key, mut reader: R, mut writer: W, key_id: String) -> Result<()>
 where
     S: SymmetricAlgorithm,
-    <S::Scheme as SymmetricKeyGenerator>::Key: Sync + Clone + Send,
+    S::Key: Sync + Clone + Send,
     R: Read + Send,
     W: Write,
 {
@@ -107,7 +102,8 @@ where
                 .for_each(|(index, chunk)| {
                     let nonce = derive_nonce(&base_nonce, index);
                     let encrypted =
-                        S::Scheme::encrypt(&key_clone, &nonce, &chunk, None).map_err(Error::from);
+                        S::Scheme::encrypt(&key_clone.clone().into(), &nonce, &chunk, None)
+                            .map_err(Error::from);
                     if enc_chunk_tx_clone.send((index, encrypted)).is_err() {
                         return;
                     }
@@ -150,14 +146,10 @@ where
 }
 
 /// Decrypts data from a reader and writes to a writer using a parallel streaming approach.
-pub fn decrypt<S, R, W>(
-    key: &<S::Scheme as SymmetricKeyGenerator>::Key,
-    mut reader: R,
-    mut writer: W,
-) -> Result<()>
+pub fn decrypt<S, R, W>(key: &S::Key, mut reader: R, mut writer: W) -> Result<()>
 where
     S: SymmetricAlgorithm,
-    <S::Scheme as SymmetricKeyGenerator>::Key: Sync + Clone + Send,
+    S::Key: Sync + Clone + Send,
     R: Read + Send,
     W: Write,
 {
@@ -230,7 +222,8 @@ where
                 .for_each(|(index, chunk)| {
                     let nonce = derive_nonce(&base_nonce, index);
                     let decrypted =
-                        S::Scheme::decrypt(&key_clone, &nonce, &chunk, None).map_err(Error::from);
+                        S::Scheme::decrypt(&key_clone.clone().into(), &nonce, &chunk, None)
+                            .map_err(Error::from);
                     if dec_chunk_tx_clone.send((index, decrypted)).is_err() {
                         return;
                     }

@@ -27,7 +27,7 @@ fn derive_nonce(base_nonce: &[u8; 12], i: u64) -> [u8; 12] {
 }
 
 pub fn encrypt<A, S, R, W>(
-    public_key: &<A::Scheme as Algorithm>::PublicKey,
+    public_key: &A::PublicKey,
     mut reader: R,
     mut writer: W,
     kek_id: String,
@@ -40,7 +40,7 @@ where
     R: Read + Send,
     W: Write,
 {
-    let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(public_key)?;
+    let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(&public_key.clone().into())?;
 
     let mut base_nonce = [0u8; 12];
     OsRng.try_fill_bytes(&mut base_nonce)?;
@@ -148,7 +148,7 @@ where
 }
 
 pub fn decrypt<A, S, R, W>(
-    private_key: &<A::Scheme as Algorithm>::PrivateKey,
+    private_key: &A::PrivateKey,
     mut reader: R,
     mut writer: W,
 ) -> Result<()>
@@ -158,7 +158,7 @@ where
     <S::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Sync + Send,
     R: Read + Send,
     W: Write,
-    <<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>>,
+    <A::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>>,
 {
     let mut header_len_bytes = [0u8; 4];
     reader.read_exact(&mut header_len_bytes)?;
@@ -177,7 +177,7 @@ where
         _ => return Err(Error::InvalidHeader),
     };
 
-    let shared_secret = A::Scheme::decapsulate(private_key, &encapsulated_key)?;
+    let shared_secret = A::Scheme::decapsulate(&private_key.clone().into(), &encapsulated_key)?;
 
     let encrypted_chunk_size = (chunk_size as usize) + S::Scheme::TAG_SIZE;
 
@@ -284,18 +284,12 @@ mod tests {
         let mut source = Cursor::new(&plaintext);
         let mut encrypted_dest = Vec::new();
 
-        encrypt::<Rsa2048, Aes256Gcm, _, _>(
-            &pk,
-            &mut source,
-            &mut encrypted_dest,
-            "test_kek_id".to_string(),
-        )
-        .unwrap();
+        encrypt::<Rsa2048, Aes256Gcm, _, _>(&pk, &mut source, &mut encrypted_dest, "test_kek_id".to_string())
+            .unwrap();
 
         let mut encrypted_source = Cursor::new(&encrypted_dest);
         let mut decrypted_dest = Vec::new();
-        decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk, &mut encrypted_source, &mut decrypted_dest)
-            .unwrap();
+        decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk, &mut encrypted_source, &mut decrypted_dest).unwrap();
 
         assert_eq!(plaintext, decrypted_dest);
     }
@@ -307,18 +301,12 @@ mod tests {
         let mut source = Cursor::new(&plaintext);
         let mut encrypted_dest = Vec::new();
 
-        encrypt::<Rsa2048, Aes256Gcm, _, _>(
-            &pk,
-            &mut source,
-            &mut encrypted_dest,
-            "test_kek_id".to_string(),
-        )
-        .unwrap();
+        encrypt::<Rsa2048, Aes256Gcm, _, _>(&pk, &mut source, &mut encrypted_dest, "test_kek_id".to_string())
+            .unwrap();
 
         let mut encrypted_source = Cursor::new(&encrypted_dest);
         let mut decrypted_dest = Vec::new();
-        decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk, &mut encrypted_source, &mut decrypted_dest)
-            .unwrap();
+        decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk, &mut encrypted_source, &mut decrypted_dest).unwrap();
 
         assert_eq!(plaintext, decrypted_dest);
     }
@@ -330,13 +318,8 @@ mod tests {
         let mut source = Cursor::new(plaintext);
         let mut encrypted_dest = Vec::new();
 
-        encrypt::<Rsa2048, Aes256Gcm, _, _>(
-            &pk,
-            &mut source,
-            &mut encrypted_dest,
-            "test_kek_id".to_string(),
-        )
-        .unwrap();
+        encrypt::<Rsa2048, Aes256Gcm, _, _>(&pk, &mut source, &mut encrypted_dest, "test_kek_id".to_string())
+            .unwrap();
 
         // Tamper with the ciphertext body
         if encrypted_dest.len() > 100 {
