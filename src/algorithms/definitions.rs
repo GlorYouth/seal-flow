@@ -8,12 +8,13 @@ use seal_crypto::{
     prelude::*,
     schemes::{
         aead::{aes_gcm::Aes128 as Aes128Params, aes_gcm::Aes256 as Aes256Params, AesGcmScheme},
+        hash::Sha256,
         kem::{
             kyber::{
                 Kyber1024 as Kyber1024Params, Kyber512 as Kyber512Params,
                 Kyber768 as Kyber768Params,
             },
-            rsa::{Rsa, Rsa2048 as Rsa2048Params, Rsa4096 as Rsa4096Params, Sha256},
+            rsa::{Rsa2048 as Rsa2048Params, Rsa4096 as Rsa4096Params},
             KyberScheme, RsaScheme,
         },
     },
@@ -50,7 +51,7 @@ pub struct Rsa2048<Hash = Sha256> {
 impl<Hash: 'static + Hasher> AsymmetricAlgorithm for Rsa2048<Hash> {
     type PublicKey = <Self::Scheme as Kem>::PublicKey;
     type PrivateKey = <Self::Scheme as Kem>::PrivateKey;
-    type Scheme = RsaScheme<Rsa<Rsa2048Params, Hash>>;
+    type Scheme = RsaScheme<Rsa2048Params, Hash>;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Rsa2048;
 }
@@ -63,7 +64,7 @@ pub struct Rsa4096<Hash = Sha256> {
 impl<Hash: 'static + Hasher> AsymmetricAlgorithm for Rsa4096<Hash> {
     type PublicKey = <Self::Scheme as Kem>::PublicKey;
     type PrivateKey = <Self::Scheme as Kem>::PrivateKey;
-    type Scheme = RsaScheme<Rsa<Rsa4096Params, Hash>>;
+    type Scheme = RsaScheme<Rsa4096Params, Hash>;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Rsa4096;
 }
