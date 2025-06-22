@@ -7,16 +7,15 @@ use std::marker::PhantomData;
 use seal_crypto::{
     prelude::*,
     schemes::{
-        aead::{aes_gcm::Aes128 as Aes128Params, aes_gcm::Aes256 as Aes256Params, AesGcmScheme},
-        hash::Sha256,
-        kem::{
+        symmetric::aes_gcm::{Aes128Gcm as Aes128, Aes256Gcm as Aes256},
+        asymmetric::{
             kyber::{
                 Kyber1024 as Kyber1024Params, Kyber512 as Kyber512Params,
-                Kyber768 as Kyber768Params,
+                Kyber768 as Kyber768Params, KyberScheme
             },
-            rsa::{Rsa2048 as Rsa2048Params, Rsa4096 as Rsa4096Params},
-            KyberScheme, RsaScheme,
+            rsa::{Rsa2048 as Rsa2048Params, Rsa4096 as Rsa4096Params, RsaScheme},
         },
+        hash::Sha256,
     },
 };
 // --- Symmetric Algorithms ---
@@ -25,8 +24,7 @@ use seal_crypto::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Aes128Gcm;
 impl SymmetricAlgorithm for Aes128Gcm {
-    type Key = <Self::Scheme as SymmetricKeyGenerator>::Key;
-    type Scheme = AesGcmScheme<Aes128Params>;
+    type Scheme = Aes128;
     const ALGORITHM: common::algorithms::SymmetricAlgorithm =
         common::algorithms::SymmetricAlgorithm::Aes128Gcm;
 }
@@ -35,11 +33,11 @@ impl SymmetricAlgorithm for Aes128Gcm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Aes256Gcm;
 impl SymmetricAlgorithm for Aes256Gcm {
-    type Key = <Self::Scheme as SymmetricKeyGenerator>::Key;
-    type Scheme = AesGcmScheme<Aes256Params>;
+    type Scheme = Aes256;
     const ALGORITHM: common::algorithms::SymmetricAlgorithm =
         common::algorithms::SymmetricAlgorithm::Aes256Gcm;
 }
+
 
 // --- Asymmetric Algorithms ---
 
@@ -49,8 +47,6 @@ pub struct Rsa2048<Hash = Sha256> {
     _sha: PhantomData<Hash>,
 }
 impl<Hash: 'static + Hasher> AsymmetricAlgorithm for Rsa2048<Hash> {
-    type PublicKey = <Self::Scheme as Kem>::PublicKey;
-    type PrivateKey = <Self::Scheme as Kem>::PrivateKey;
     type Scheme = RsaScheme<Rsa2048Params, Hash>;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Rsa2048;
@@ -62,8 +58,6 @@ pub struct Rsa4096<Hash = Sha256> {
     _sha: PhantomData<Hash>,
 }
 impl<Hash: 'static + Hasher> AsymmetricAlgorithm for Rsa4096<Hash> {
-    type PublicKey = <Self::Scheme as Kem>::PublicKey;
-    type PrivateKey = <Self::Scheme as Kem>::PrivateKey;
     type Scheme = RsaScheme<Rsa4096Params, Hash>;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Rsa4096;
@@ -73,8 +67,6 @@ impl<Hash: 'static + Hasher> AsymmetricAlgorithm for Rsa4096<Hash> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Kyber512;
 impl AsymmetricAlgorithm for Kyber512 {
-    type PublicKey = <Self::Scheme as Kem>::PublicKey;
-    type PrivateKey = <Self::Scheme as Kem>::PrivateKey;
     type Scheme = KyberScheme<Kyber512Params>;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Kyber512;
@@ -84,8 +76,6 @@ impl AsymmetricAlgorithm for Kyber512 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Kyber768;
 impl AsymmetricAlgorithm for Kyber768 {
-    type PublicKey = <Self::Scheme as Kem>::PublicKey;
-    type PrivateKey = <Self::Scheme as Kem>::PrivateKey;
     type Scheme = KyberScheme<Kyber768Params>;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Kyber768;
@@ -95,8 +85,6 @@ impl AsymmetricAlgorithm for Kyber768 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Kyber1024;
 impl AsymmetricAlgorithm for Kyber1024 {
-    type PublicKey = <Self::Scheme as Kem>::PublicKey;
-    type PrivateKey = <Self::Scheme as Kem>::PrivateKey;
     type Scheme = KyberScheme<Kyber1024Params>;
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
         common::algorithms::AsymmetricAlgorithm::Kyber1024;

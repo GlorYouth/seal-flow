@@ -33,7 +33,7 @@ enum SymmetricDecryptorMode {
 impl SymmetricEncryptorMode {
     async fn encrypt(
         &self,
-        key: &<Aes256Gcm as SymmetricAlgorithm>::Key,
+        key: &<<Aes256Gcm as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key,
         plaintext: &[u8],
     ) -> Result<Vec<u8>> {
         let key_id = "test_key_id".to_string();
@@ -85,7 +85,7 @@ impl SymmetricEncryptorMode {
 impl SymmetricDecryptorMode {
     async fn decrypt(
         &self,
-        key: &<Aes256Gcm as SymmetricAlgorithm>::Key,
+        key: &<<Aes256Gcm as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key,
         ciphertext: &[u8],
     ) -> Result<Vec<u8>> {
         match self {
@@ -200,7 +200,7 @@ enum HybridDecryptorMode {
 impl HybridEncryptorMode {
     async fn encrypt(
         &self,
-        pk: &<Rsa2048 as AsymmetricAlgorithm>::PublicKey,
+        pk: &<<Rsa2048 as AsymmetricAlgorithm>::Scheme as Algorithm>::PublicKey,
         plaintext: &[u8],
     ) -> Result<Vec<u8>> {
         let kek_id = "test_kek_id".to_string();
@@ -252,7 +252,7 @@ impl HybridEncryptorMode {
 impl HybridDecryptorMode {
     async fn decrypt(
         &self,
-        sk: &<Rsa2048 as AsymmetricAlgorithm>::PrivateKey,
+        sk: &<<Rsa2048 as AsymmetricAlgorithm>::Scheme as Algorithm>::PrivateKey,
         ciphertext: &[u8],
     ) -> Result<Vec<u8>> {
         match self {

@@ -27,14 +27,15 @@ fn derive_nonce(base_nonce: &[u8; 12], i: u64) -> [u8; 12] {
 }
 
 pub fn encrypt<A, S, R, W>(
-    public_key: &A::PublicKey,
+    public_key: &<A::Scheme as Algorithm>::PublicKey,
     mut reader: R,
     mut writer: W,
     kek_id: String,
 ) -> Result<()>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
+    S: SymmetricAlgorithm,
+    <S::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Sync + Send,
     Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
     R: Read + Send,
     W: Write,
@@ -103,8 +104,13 @@ where
                 .par_bridge()
                 .for_each(|(index, chunk)| {
                     let nonce = derive_nonce(&base_nonce, index);
-                    let encrypted = S::Scheme::encrypt(&shared_secret, &nonce, &chunk, None)
-                        .map_err(Error::from);
+                    let encrypted = S::Scheme::encrypt(
+                        &shared_secret.clone().into(),
+                        &nonce,
+                        &chunk,
+                        None,
+                    )
+                    .map_err(Error::from);
                     if enc_chunk_tx_clone.send((index, encrypted)).is_err() {
                         return;
                     }
@@ -141,11 +147,15 @@ where
     })
 }
 
-pub fn decrypt<A, S, R, W>(private_key: &A::PrivateKey, mut reader: R, mut writer: W) -> Result<()>
+pub fn decrypt<A, S, R, W>(
+    private_key: &<A::Scheme as Algorithm>::PrivateKey,
+    mut reader: R,
+    mut writer: W,
+) -> Result<()>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
-    S::Key: Sync,
+    S: SymmetricAlgorithm,
+    <S::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Sync + Send,
     R: Read + Send,
     W: Write,
     <<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>>,
@@ -211,8 +221,13 @@ where
                 .par_bridge()
                 .for_each(|(index, chunk)| {
                     let nonce = derive_nonce(&base_nonce, index);
-                    let decrypted = S::Scheme::decrypt(&shared_secret, &nonce, &chunk, None)
-                        .map_err(Error::from);
+                    let decrypted = S::Scheme::decrypt(
+                        &shared_secret.clone().into(),
+                        &nonce,
+                        &chunk,
+                        None,
+                    )
+                    .map_err(Error::from);
                     if dec_chunk_tx_clone.send((index, decrypted)).is_err() {
                         return;
                     }

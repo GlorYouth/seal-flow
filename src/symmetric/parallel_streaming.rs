@@ -27,10 +27,15 @@ fn derive_nonce(base_nonce: &[u8; 12], i: u64) -> [u8; 12] {
 }
 
 /// Encrypts data from a reader and writes to a writer using a parallel streaming approach.
-pub fn encrypt<S, R, W>(key: &S::Key, mut reader: R, mut writer: W, key_id: String) -> Result<()>
+pub fn encrypt<S, R, W>(
+    key: &<S::Scheme as SymmetricKeyGenerator>::Key,
+    mut reader: R,
+    mut writer: W,
+    key_id: String,
+) -> Result<()>
 where
     S: SymmetricAlgorithm,
-    S::Key: Sync + Clone + Send,
+    <S::Scheme as SymmetricKeyGenerator>::Key: Sync + Clone + Send,
     R: Read + Send,
     W: Write,
 {
@@ -145,10 +150,14 @@ where
 }
 
 /// Decrypts data from a reader and writes to a writer using a parallel streaming approach.
-pub fn decrypt<S, R, W>(key: &S::Key, mut reader: R, mut writer: W) -> Result<()>
+pub fn decrypt<S, R, W>(
+    key: &<S::Scheme as SymmetricKeyGenerator>::Key,
+    mut reader: R,
+    mut writer: W,
+) -> Result<()>
 where
     S: SymmetricAlgorithm,
-    S::Key: Sync + Clone + Send,
+    <S::Scheme as SymmetricKeyGenerator>::Key: Sync + Clone + Send,
     R: Read + Send,
     W: Write,
 {

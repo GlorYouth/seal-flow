@@ -10,15 +10,19 @@ use seal_crypto::zeroize::Zeroizing;
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Performs hybrid encryption on in-memory data.
-pub fn encrypt<'a, A, S>(pk: &'a Vec<u8>, plaintext: &[u8], kek_id: String) -> Result<Vec<u8>>
+pub fn encrypt<A, S>(
+    pk: &<A::Scheme as Algorithm>::PublicKey,
+    plaintext: &[u8],
+    kek_id: String,
+) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
-    &'a <A as AsymmetricAlgorithm>::PublicKey: From<&'a Vec<u8>>,
+    S: SymmetricAlgorithm,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>>,
     Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
 {
     // 1. KEM Encapsulate: Generate DEK and wrap it with the public key.
-    let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(pk.into())?;
+    let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(pk)?;
 
     // 2. Generate a base_nonce for deterministic nonce derivation for each chunk.
     let mut base_nonce = [0u8; 12];
@@ -51,7 +55,8 @@ where
         for j in 0..8 {
             nonce[4 + j] ^= counter_bytes[j];
         }
-        let encrypted_chunk = S::Scheme::encrypt(&shared_secret, &nonce, chunk, None)?;
+        let encrypted_chunk =
+            S::Scheme::encrypt(&shared_secret.clone().into(), &nonce, chunk, None)?;
         encrypted_chunks.push(encrypted_chunk);
     }
 
@@ -67,10 +72,14 @@ where
 }
 
 /// Performs hybrid decryption on in-memory data.
-pub fn decrypt<A, S>(sk: &A::PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>>
+pub fn decrypt<A, S>(
+    sk: &<A::Scheme as Algorithm>::PrivateKey,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
+    S: SymmetricAlgorithm,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>>,
     <A::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>>,
 {
     // 1. Parse the header.
@@ -111,7 +120,7 @@ where
             nonce[4 + j] ^= counter_bytes[j];
         }
         let decrypted_chunk =
-            S::Scheme::decrypt(&shared_secret.clone(), &nonce, encrypted_chunk, None)?;
+            S::Scheme::decrypt(&shared_secret.clone().into(), &nonce, encrypted_chunk, None)?;
         decrypted_chunks.push(decrypted_chunk);
     }
 

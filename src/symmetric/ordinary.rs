@@ -23,7 +23,7 @@ fn derive_nonce(base_nonce: &[u8; 12], i: u64) -> [u8; 12] {
 
 /// Encrypts plaintext using a chunking mechanism.
 pub fn encrypt<S: SymmetricAlgorithm>(
-    key: &S::Key,
+    key: &<S::Scheme as SymmetricKeyGenerator>::Key,
     plaintext: &[u8],
     key_id: String,
 ) -> Result<Vec<u8>> {
@@ -64,7 +64,10 @@ pub fn encrypt<S: SymmetricAlgorithm>(
 }
 
 /// Decrypts ciphertext that was encrypted with the corresponding `encrypt` function.
-pub fn decrypt<S: SymmetricAlgorithm>(key: &S::Key, ciphertext: &[u8]) -> Result<Vec<u8>> {
+pub fn decrypt<S: SymmetricAlgorithm>(
+    key: &<S::Scheme as SymmetricKeyGenerator>::Key,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>> {
     if ciphertext.len() < 4 {
         return Err(Error::InvalidCiphertextFormat);
     }

@@ -9,12 +9,16 @@ use seal_crypto::zeroize::Zeroizing;
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Performs parallel, in-memory hybrid encryption.
-pub fn encrypt<A, S>(pk: &A::PublicKey, plaintext: &[u8], kek_id: String) -> Result<Vec<u8>>
+pub fn encrypt<A, S>(
+    pk: &<A::Scheme as Algorithm>::PublicKey,
+    plaintext: &[u8],
+    kek_id: String,
+) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
-    A::Scheme: Kem<EncapsulatedKey = Vec<u8>>,
-    S::Key: Sync,
+    S: SymmetricAlgorithm,
+    Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
+    <S::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Sync,
 {
     // 1. KEM Encapsulate: Generate DEK and wrap it with the public key.
     let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(pk)?;
@@ -31,7 +35,7 @@ where
             kek_id,
             kek_algorithm: A::ALGORITHM,
             dek_algorithm: S::ALGORITHM,
-            encrypted_dek: encapsulated_key,
+            encrypted_dek: encapsulated_key.into(),
             stream_info: Some(StreamInfo {
                 chunk_size: DEFAULT_CHUNK_SIZE,
                 base_nonce,
@@ -52,7 +56,7 @@ where
             for j in 0..8 {
                 nonce[4 + j] ^= counter_bytes[j];
             }
-            S::Scheme::encrypt(&shared_secret, &nonce, chunk, None)
+            S::Scheme::encrypt(&shared_secret.clone().into(), &nonce, chunk, None)
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
@@ -70,12 +74,15 @@ where
 }
 
 /// Performs parallel, in-memory hybrid decryption.
-pub fn decrypt<A, S>(sk: &A::PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>>
+pub fn decrypt<A, S>(
+    sk: &<A::Scheme as Algorithm>::PrivateKey,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
+    S: SymmetricAlgorithm,
     <A::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>>,
-    S::Key: Sync,
+    <S::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Sync,
 {
     // 1. Parse the header.
     if ciphertext.len() < 4 {
@@ -116,7 +123,7 @@ where
             for j in 0..8 {
                 nonce[4 + j] ^= counter_bytes[j];
             }
-            S::Scheme::decrypt(&shared_secret, &nonce, encrypted_chunk, None)
+            S::Scheme::decrypt(&shared_secret.clone().into(), &nonce, encrypted_chunk, None)
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
 

@@ -43,12 +43,11 @@ pin_project! {
 impl<W: AsyncWrite + Unpin, A, S> Encryptor<W, A, S>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
+    S: SymmetricAlgorithm, 
+    Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>
 {
-    pub async fn new(mut writer: W, pk: A::PublicKey, kek_id: String) -> Result<Self>
-    where
-        <<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey: Into<Vec<u8>> + Send,
-        <A as AsymmetricAlgorithm>::PublicKey: Send,
+    pub async fn new(mut writer: W, pk: <A::Scheme as Algorithm>::PublicKey, kek_id: String) -> Result<Self> 
+    where <<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey: Send
     {
         let (shared_secret, encapsulated_key) =
             tokio::task::spawn_blocking(move || A::Scheme::encapsulate(&pk)).await??;
@@ -95,7 +94,7 @@ impl<W: AsyncWrite + Unpin, A, S> AsyncWrite for Encryptor<W, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <S as SymmetricAlgorithm>::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Send,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -107,7 +106,8 @@ where
         Poll::Ready(Ok(buf.len()))
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> 
+    {
         loop {
             let mut this = self.as_mut().project();
             match this.state {
@@ -192,11 +192,15 @@ impl<R: AsyncRead + Unpin, A, S> Decryptor<R, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>>,
+    <A::Scheme as Algorithm>::PrivateKey: Send + Sync,
 {
-    pub async fn new(mut reader: R, sk: A::PrivateKey) -> Result<Self>
+    pub async fn new(
+        mut reader: R,
+        sk: <A::Scheme as Algorithm>::PrivateKey,
+    ) -> Result<Self>
     where
         <<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey: From<Vec<u8>> + Send,
-        <A as AsymmetricAlgorithm>::PrivateKey: Send,
     {
         use tokio::io::AsyncReadExt;
         let mut len_buf = [0u8; 4];
@@ -241,14 +245,13 @@ impl<R: AsyncRead + Unpin, A, S> AsyncRead for Decryptor<R, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    <S as SymmetricAlgorithm>::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>> + Send
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>>
-where {
+    ) -> Poll<io::Result<()>> {
         loop {
             let this = self.as_mut().project();
             let bytes_in_internal_buffer =

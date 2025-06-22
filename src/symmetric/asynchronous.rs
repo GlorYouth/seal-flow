@@ -26,7 +26,7 @@ pin_project! {
     pub struct Encryptor<W: AsyncWrite, S: SymmetricAlgorithm> {
         #[pin]
         writer: W,
-        symmetric_key: S::Key,
+        symmetric_key: <S::Scheme as SymmetricKeyGenerator>::Key,
         base_nonce: [u8; 12],
         chunk_size: usize,
         buffer: Vec<u8>,
@@ -38,9 +38,9 @@ pin_project! {
 
 impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> Encryptor<W, S>
 where
-    S::Key: Clone + Send + Sync,
+    <S::Scheme as SymmetricKeyGenerator>::Key: Clone + Send + Sync,
 {
-    pub async fn new(mut writer: W, key: S::Key, key_id: String) -> Result<Self> {
+    pub async fn new(mut writer: W, key: <S::Scheme as SymmetricKeyGenerator>::Key, key_id: String) -> Result<Self> {
         let mut base_nonce = [0u8; 12];
         OsRng.try_fill_bytes(&mut base_nonce)?;
 
@@ -80,7 +80,7 @@ where
 impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> AsyncWrite for Encryptor<W, S>
 where
     S: Send + Sync,
-    S::Key: Clone + Send + Sync,
+    <S::Scheme as SymmetricKeyGenerator>::Key: Clone + Send + Sync,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -163,7 +163,7 @@ pin_project! {
     pub struct Decryptor<R: AsyncRead, S: SymmetricAlgorithm> {
         #[pin]
         reader: R,
-        symmetric_key: S::Key,
+        symmetric_key: <S::Scheme as SymmetricKeyGenerator>::Key,
         base_nonce: [u8; 12],
         encrypted_chunk_size: usize,
         buffer: io::Cursor<Vec<u8>>,
@@ -176,9 +176,9 @@ pin_project! {
 
 impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> Decryptor<R, S>
 where
-    S::Key: Clone + Send + Sync,
+    <S::Scheme as SymmetricKeyGenerator>::Key: Clone + Send + Sync,
 {
-    pub async fn new(mut reader: R, key: S::Key) -> Result<Self> {
+    pub async fn new(mut reader: R, key: <S::Scheme as SymmetricKeyGenerator>::Key) -> Result<Self> {
         use tokio::io::AsyncReadExt;
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf).await?;
@@ -216,7 +216,7 @@ where
 impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> AsyncRead for Decryptor<R, S>
 where
     S: Send + Sync + 'static,
-    S::Key: Clone + Send + Sync,
+    <S::Scheme as SymmetricKeyGenerator>::Key: Clone + Send + Sync,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,

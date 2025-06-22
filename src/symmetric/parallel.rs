@@ -8,10 +8,14 @@ use seal_crypto::prelude::*;
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Encrypts in-memory data using parallel processing.
-pub fn encrypt<S>(key: &S::Key, plaintext: &[u8], key_id: String) -> Result<Vec<u8>>
+pub fn encrypt<S>(
+    key: &<S::Scheme as SymmetricKeyGenerator>::Key,
+    plaintext: &[u8],
+    key_id: String,
+) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
-    S::Key: Sync,
+    <S::Scheme as SymmetricKeyGenerator>::Key: Sync,
 {
     // 1. Generate base_nonce, construct Header with chunk_size
     let mut base_nonce = [0u8; 12];
@@ -60,10 +64,13 @@ where
 }
 
 /// Decrypts in-memory data using parallel processing.
-pub fn decrypt<S>(key: &S::Key, ciphertext: &[u8]) -> Result<Vec<u8>>
+pub fn decrypt<S>(
+    key: &<S::Scheme as SymmetricKeyGenerator>::Key,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
-    S::Key: Sync,
+    <S::Scheme as SymmetricKeyGenerator>::Key: Sync,
 {
     // 1. Parse Header
     if ciphertext.len() < 4 {

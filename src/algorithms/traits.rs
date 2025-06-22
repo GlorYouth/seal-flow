@@ -3,41 +3,20 @@
 use crate::common;
 use seal_crypto::prelude::*;
 
-/// A marker trait representing a specific symmetric encryption algorithm.
-///
-/// This trait connects a high-level algorithm type in `seal-flow` to its
-/// underlying cryptographic implementation (`Scheme`) in `seal-crypto`.
+/// 代表一个具体的对称加密算法。
 pub trait SymmetricAlgorithm: 'static + Send + Sync {
-    /// The key type used by this algorithm.
-    type Key;
+    /// 关联的 `seal-crypto` 方案，实现了所有核心加密操作。
+    type Scheme: AeadScheme;
 
-    /// The associated `Scheme` from `seal-crypto` that implements the core cryptographic operations.
-    type Scheme: SymmetricEncryptor<Key = Self::Key>
-        + SymmetricDecryptor<Key = Self::Key>
-        + SymmetricKeyGenerator
-        + SymmetricCipher
-        + Send
-        + Sync;
-
-    /// The corresponding enum variant for this algorithm, used for serialization
-    /// and header creation.
+    /// 对应的算法枚举，用于序列化等目的。
     const ALGORITHM: common::algorithms::SymmetricAlgorithm;
 }
 
-/// A marker trait representing a specific asymmetric key encapsulation mechanism (KEM).
-///
-/// This trait connects a high-level algorithm type in `seal-flow` to its
-/// underlying KEM implementation (`Scheme`) in `seal-crypto`.
+/// 代表一个具体的非对称密钥封装机制 (KEM)。
 pub trait AsymmetricAlgorithm: 'static + Send + Sync {
-    /// The public key type for this algorithm.
-    type PublicKey;
-    /// The private key type for this algorithm.
-    type PrivateKey;
+    /// 关联的 `seal-crypto` 方案，实现了 KEM 和密钥生成。
+    type Scheme: Kem + KeyGenerator;
 
-    /// The associated `Scheme` from `seal-crypto` that implements KEM and key-pair generation.
-    type Scheme: Kem<PublicKey = Self::PublicKey, PrivateKey = Self::PrivateKey> + Send + Sync;
-
-    /// The corresponding enum variant for this algorithm, used for serialization
-    /// and header creation.
+    /// 对应的算法枚举。
     const ALGORITHM: common::algorithms::AsymmetricAlgorithm;
 }

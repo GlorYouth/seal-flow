@@ -23,14 +23,18 @@ pub struct Encryptor<W: Write, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
 impl<W: Write, A, S> Encryptor<W, A, S>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm<Key = A::PrivateKey>,
+    S: SymmetricAlgorithm,
     Vec<u8>: From<<<A as AsymmetricAlgorithm>::Scheme as Kem>::EncapsulatedKey>,
 {
     /// Creates a new streaming encryptor.
     ///
     /// This will perform the KEM encapsulate operation immediately to generate the DEK,
     /// and write the complete header to the underlying writer.
-    pub fn new(mut writer: W, pk: &A::PublicKey, kek_id: String) -> Result<Self> {
+    pub fn new(
+        mut writer: W,
+        pk: &<A::Scheme as Algorithm>::PublicKey,
+        kek_id: String,
+    ) -> Result<Self> {
         // 1. KEM Encapsulate: Generate DEK and wrap it.
         let (shared_secret, encapsulated_key) = A::Scheme::encapsulate(pk)?;
 
@@ -71,8 +75,11 @@ where
     }
 }
 
-impl<W: Write, A: AsymmetricAlgorithm, S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>> Write
-    for Encryptor<W, A, S>
+impl<W: Write, A, S> Write for Encryptor<W, A, S>
+where
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>>,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.buffer.extend_from_slice(buf);
@@ -85,8 +92,9 @@ impl<W: Write, A: AsymmetricAlgorithm, S: SymmetricAlgorithm<Key = Zeroizing<Vec
                 nonce[4 + i] ^= counter_bytes[i];
             }
 
-            let encrypted_chunk = S::Scheme::encrypt(&self.symmetric_key, &nonce, &chunk, None)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let encrypted_chunk =
+                S::Scheme::encrypt(&self.symmetric_key.clone().into(), &nonce, &chunk, None)
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
             self.chunk_counter += 1;
         }
@@ -104,7 +112,7 @@ impl<W: Write, A: AsymmetricAlgorithm, S: SymmetricAlgorithm<Key = Zeroizing<Vec
             }
 
             let encrypted_chunk =
-                S::Scheme::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
+                S::Scheme::encrypt(&self.symmetric_key.clone().into(), &nonce, &final_chunk, None)
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
             self.chunk_counter += 1;
@@ -135,7 +143,7 @@ where
     ///
     /// This will read the header from the underlying reader and perform the KEM
     /// decapsulate operation immediately to recover the DEK.
-    pub fn new(mut reader: R, sk: &A::PrivateKey) -> Result<Self> {
+    pub fn new(mut reader: R, sk: &<A::Scheme as Algorithm>::PrivateKey) -> Result<Self> {
         // 1. Read header.
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf)?;
@@ -177,7 +185,8 @@ where
 impl<R: Read, A, S> Read for Decryptor<R, A, S>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm<Key = Zeroizing<Vec<u8>>>,
+    S: SymmetricAlgorithm,
+    <<S as SymmetricAlgorithm>::Scheme as SymmetricKeyGenerator>::Key: From<Zeroizing<Vec<u8>>>,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let bytes_read_from_buf = self.buffer.read(buf)?;
@@ -203,7 +212,7 @@ where
         }
 
         let plaintext_chunk =
-            S::Scheme::decrypt(&self.symmetric_key, &nonce, final_encrypted_chunk, None)
+            S::Scheme::decrypt(&self.symmetric_key.clone().into(), &nonce, final_encrypted_chunk, None)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "decryption failed"))?;
 
         self.buffer = io::Cursor::new(plaintext_chunk);
