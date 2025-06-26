@@ -1,6 +1,7 @@
 use seal_crypto::{prelude::*, schemes::asymmetric::traditional::rsa::Rsa2048};
 use seal_crypto::{schemes::hash::Sha256, schemes::symmetric::aes_gcm::Aes256Gcm};
 use seal_flow::prelude::*;
+use seal_flow::seal::{peek_hybrid_kek_id, peek_hybrid_kek_id_async};
 use std::io::{Cursor, Read, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -87,6 +88,22 @@ async fn main() -> Result<()> {
         .decrypt(Cursor::new(&ciphertext5), &mut decrypted5)?;
     assert_eq!(plaintext, &decrypted5[..]);
     println!("Parallel Streaming roundtrip successful!");
+
+    // --- Demonstrate Peeking ---
+    println!("\n--- Testing KEK ID Peeking ---");
+    // We use the ciphertext from the first mode for this demonstration.
+    // Sync peeking
+    let peeked_id_sync = peek_hybrid_kek_id(Cursor::new(&ciphertext1))?;
+    assert_eq!(peeked_id_sync, KEK_ID);
+    println!("Sync peeking successful: found KEK ID '{}'", peeked_id_sync);
+
+    // Async peeking
+    let peeked_id_async = peek_hybrid_kek_id_async(Cursor::new(&ciphertext1)).await?;
+    assert_eq!(peeked_id_async, KEK_ID);
+    println!(
+        "Async peeking successful: found KEK ID '{}'",
+        peeked_id_async
+    );
 
     println!("\nAll high-level hybrid modes are interoperable and successful.");
     Ok(())

@@ -67,6 +67,53 @@ fn main() -> Result<()> {
 }
 ```
 
+### 从流中窥探密钥ID (Peeking Key IDs)
+
+在解密之前，你通常需要知道该使用哪个密钥。`seal-flow` 允许你"窥探"加密数据流的头部以提取密钥ID，而无需处理整个文件。
+
+```rust
+use seal_flow::prelude::*;
+use seal_flow::seal::peek_symmetric_key_id;
+use seal_crypto::prelude::SymmetricKeyGenerator;
+use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+use std::collections::HashMap;
+use std::io::Cursor;
+
+fn main() -> Result<()> {
+    // 假设有一个密钥存储
+    let mut key_store = HashMap::new();
+    let key1 = Aes256Gcm::generate_key()?;
+    key_store.insert("key-id-1".to_string(), key1);
+
+    let plaintext = b"一些机密数据";
+
+    // 使用特定密钥进行加密
+    let ciphertext = SymmetricSeal::new(key_store.get("key-id-1").unwrap())
+        .in_memory::<Aes256Gcm>()
+        .encrypt(plaintext, "key-id-1".to_string())?;
+
+    // --- 解密工作流 ---
+    // 1. 从流中窥探密钥ID。
+    // 读取器的位置会被推进，因此对于真实的网络流，
+    // 你可能需要使用 BufReader 来避免数据丢失。
+    let peeked_id = peek_symmetric_key_id(Cursor::new(&ciphertext))?;
+    assert_eq!(peeked_id, "key-id-1");
+    
+    // 2. 从你的密钥存储中检索正确的密钥。
+    let decryption_key = key_store.get(&peeked_id).expect("未找到密钥！");
+
+    // 3. 解密数据。
+    let decrypted = SymmetricSeal::new(decryption_key)
+        .in_memory::<Aes256Gcm>()
+        .decrypt(&ciphertext)?;
+
+    assert_eq!(plaintext, &decrypted[..]);
+    println!("成功窥探密钥ID并解密数据！");
+
+    Ok(())
+}
+```
+
 关于涵盖所有模式和API层级的更详细示例，请参阅 `examples/` 目录。
 
 ## 运行示例

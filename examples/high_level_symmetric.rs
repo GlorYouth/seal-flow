@@ -1,6 +1,7 @@
 use seal_crypto::prelude::*;
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 use seal_flow::prelude::*;
+use seal_flow::seal::{peek_symmetric_key_id, peek_symmetric_key_id_async};
 use std::io::{Cursor, Read, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -84,6 +85,22 @@ async fn main() -> Result<()> {
         .decrypt(Cursor::new(&ciphertext5), &mut decrypted5)?;
     assert_eq!(plaintext, &decrypted5[..]);
     println!("Parallel Streaming roundtrip successful!");
+
+    // --- Demonstrate Peeking ---
+    println!("\n--- Testing Key ID Peeking ---");
+    // We use the ciphertext from the first mode for this demonstration.
+    // Sync peeking
+    let peeked_id_sync = peek_symmetric_key_id(Cursor::new(&ciphertext1))?;
+    assert_eq!(peeked_id_sync, KEY_ID);
+    println!("Sync peeking successful: found key ID '{}'", peeked_id_sync);
+
+    // Async peeking
+    let peeked_id_async = peek_symmetric_key_id_async(Cursor::new(&ciphertext1)).await?;
+    assert_eq!(peeked_id_async, KEY_ID);
+    println!(
+        "Async peeking successful: found key ID '{}'",
+        peeked_id_async
+    );
 
     println!("\nAll high-level symmetric modes are interoperable and successful.");
     Ok(())

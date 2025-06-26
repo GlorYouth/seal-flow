@@ -69,6 +69,52 @@ fn main() -> Result<()> {
 }
 ```
 
+### Peeking Key IDs from a Stream
+
+Before decrypting, you often need to know which key to use. `seal-flow` allows you to "peek" at the header of an encrypted data stream to extract the key ID without processing the entire file.
+
+```rust
+use seal_flow::prelude::*;
+use seal_flow::seal::peek_symmetric_key_id;
+use seal_crypto::prelude::SymmetricKeyGenerator;
+use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+use std::collections::HashMap;
+use std::io::Cursor;
+
+fn main() -> Result<()> {
+    // Imagine a key store
+    let mut key_store = HashMap::new();
+    let key1 = Aes256Gcm::generate_key()?;
+    key_store.insert("key-id-1".to_string(), key1);
+
+    let plaintext = b"some secret data";
+
+    // Encrypt with a specific key
+    let ciphertext = SymmetricSeal::new(key_store.get("key-id-1").unwrap())
+        .in_memory::<Aes256Gcm>()
+        .encrypt(plaintext, "key-id-1".to_string())?;
+
+    // --- Decryption Workflow ---
+    // 1. Peek the key ID from the stream.
+    // The reader's position is advanced, so for a real network stream,
+    // you might use a BufReader to avoid losing data.
+    let peeked_id = peek_symmetric_key_id(Cursor::new(&ciphertext))?;
+    assert_eq!(peeked_id, "key-id-1");
+    
+    // 2. Retrieve the correct key from your key store.
+    let decryption_key = key_store.get(&peeked_id).expect("Key not found!");
+
+    // 3. Decrypt the data.
+    let decrypted = SymmetricSeal::new(decryption_key)
+        .in_memory::<Aes256Gcm>()
+        .decrypt(&ciphertext)?;
+
+    assert_eq!(plaintext, &decrypted[..]);
+    println!("Successfully peeked key ID and decrypted data!");
+
+    Ok(())
+}
+
 For more detailed examples covering all modes and API layers, please see the `examples/` directory.
 
 ## Running Examples
