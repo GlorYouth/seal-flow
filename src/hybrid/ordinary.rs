@@ -121,9 +121,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::{Aes256GcmScheme, Rsa2048};
-    use seal_crypto::prelude::*;
+    use seal_crypto::prelude::KeyGenerator;
+    use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
+    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 
     #[test]
     fn test_hybrid_ordinary_roundtrip() {
@@ -131,10 +132,9 @@ mod tests {
         let plaintext = b"This is a test message for hybrid ordinary encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
         let encrypted =
-            encrypt::<Rsa2048<Sha256>, Aes256GcmScheme>(&pk, plaintext, "test_kek_id".to_string())
-                .unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
-        let decrypted = decrypt::<Rsa2048, Aes256GcmScheme>(&sk, &encrypted).unwrap();
+        let decrypted = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -145,10 +145,9 @@ mod tests {
         let plaintext = b"";
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256GcmScheme>(&pk, plaintext, "test_kek_id".to_string())
-                .unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
-        let decrypted = decrypt::<Rsa2048, Aes256GcmScheme>(&sk, &encrypted).unwrap();
+        let decrypted = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -159,10 +158,9 @@ mod tests {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256GcmScheme>(&pk, &plaintext, "test_kek_id".to_string())
-                .unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string()).unwrap();
 
-        let decrypted = decrypt::<Rsa2048, Aes256GcmScheme>(&sk, &encrypted).unwrap();
+        let decrypted = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted).unwrap();
 
         assert_eq!(plaintext, decrypted);
     }
@@ -173,15 +171,14 @@ mod tests {
         let plaintext = b"some important data";
 
         let mut encrypted =
-            encrypt::<Rsa2048, Aes256GcmScheme>(&pk, plaintext, "test_kek_id".to_string())
-                .unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
         // Tamper with the ciphertext body
         if encrypted.len() > 300 {
             encrypted[300] ^= 1; // Tamper after the header
         }
 
-        let result = decrypt::<Rsa2048, Aes256GcmScheme>(&sk, &encrypted);
+        let result = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted);
         assert!(result.is_err());
     }
 
@@ -192,10 +189,9 @@ mod tests {
         let plaintext = b"some data";
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256GcmScheme>(&pk, plaintext, "test_kek_id".to_string())
-                .unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
-        let result = decrypt::<Rsa2048, Aes256GcmScheme>(&sk2, &encrypted);
+        let result = decrypt::<Rsa2048, Aes256Gcm>(&sk2, &encrypted);
         assert!(result.is_err());
     }
 }

@@ -10,8 +10,7 @@ use std::io::{self, Read, Write};
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Implements `std::io::Write` for synchronous, streaming hybrid encryption.
-pub struct Encryptor<W: Write, A: AsymmetricAlgorithm, S: SymmetricAlgorithm>
-{
+pub struct Encryptor<W: Write, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
     writer: W,
     symmetric_key: Zeroizing<Vec<u8>>, // This is the derived DEK
     base_nonce: [u8; 12],
@@ -26,6 +25,7 @@ where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
     Vec<u8>: From<<A as Kem>::EncapsulatedKey>,
+    <S as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>>,
 {
     /// Creates a new streaming encryptor.
     ///
@@ -73,6 +73,32 @@ where
             _phantom: std::marker::PhantomData,
         })
     }
+
+    /// Finalizes the encryption stream.
+    ///
+    /// This method must be called to ensure that the last partial chunk of data is
+    /// encrypted and the authentication tag is written to the underlying writer.
+    pub fn finish(mut self) -> Result<()> {
+        if !self.buffer.is_empty() {
+            let final_chunk = self.buffer.drain(..).collect::<Vec<u8>>();
+            let mut nonce = self.base_nonce;
+            let counter_bytes = self.chunk_counter.to_le_bytes();
+            for i in 0..8 {
+                nonce[4 + i] ^= counter_bytes[i];
+            }
+
+            let encrypted_chunk = S::encrypt(
+                &self.symmetric_key.clone().into(),
+                &nonce,
+                &final_chunk,
+                None,
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            self.writer.write_all(&encrypted_chunk)?;
+        }
+        self.writer.flush()?;
+        Ok(())
+    }
 }
 
 impl<W: Write, A, S> Write for Encryptor<W, A, S>
@@ -103,24 +129,6 @@ where
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        if !self.buffer.is_empty() {
-            let final_chunk = self.buffer.drain(..).collect::<Vec<u8>>();
-            let mut nonce = self.base_nonce;
-            let counter_bytes = self.chunk_counter.to_le_bytes();
-            for i in 0..8 {
-                nonce[4 + i] ^= counter_bytes[i];
-            }
-
-            let encrypted_chunk = S::encrypt(
-                &self.symmetric_key.clone().into(),
-                &nonce,
-                &final_chunk,
-                None,
-            )
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            self.writer.write_all(&encrypted_chunk)?;
-            self.chunk_counter += 1;
-        }
         self.writer.flush()
     }
 }
@@ -242,10 +250,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::Rsa2048;
-    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-    use std::io::{Cursor, Read, Write};
+    use seal_crypto::prelude::KeyGenerator;
+    use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
+    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+    use std::io::Cursor;
 
     fn test_hybrid_streaming_roundtrip(plaintext: &[u8]) {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
@@ -259,12 +268,11 @@ mod tests {
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
-        encryptor.flush().unwrap();
+        encryptor.finish().unwrap();
 
         // Decrypt
         let mut decryptor =
-            Decryptor::<_, Rsa2048, Aes256Gcm>::new(Cursor::new(&encrypted_data), &sk)
-                .unwrap();
+            Decryptor::<_, Rsa2048, Aes256Gcm>::new(Cursor::new(&encrypted_data), &sk).unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
 
@@ -301,7 +309,7 @@ mod tests {
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
-        encryptor.flush().unwrap();
+        encryptor.finish().unwrap();
 
         // Tamper with the ciphertext body
         if encrypted_data.len() > 300 {
@@ -309,8 +317,7 @@ mod tests {
         }
 
         let mut decryptor =
-            Decryptor::<_, Rsa2048, Aes256Gcm>::new(Cursor::new(&encrypted_data), &sk)
-                .unwrap();
+            Decryptor::<_, Rsa2048, Aes256Gcm>::new(Cursor::new(&encrypted_data), &sk).unwrap();
         let mut decrypted_data = Vec::new();
         let result = decryptor.read_to_end(&mut decrypted_data);
 
@@ -330,12 +337,11 @@ mod tests {
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
-        encryptor.flush().unwrap();
+        encryptor.finish().unwrap();
 
         // Decrypt with the wrong private key should fail
         let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let result =
-            Decryptor::<_, Rsa2048, Aes256Gcm>::new(Cursor::new(&encrypted_data), &sk2);
+        let result = Decryptor::<_, Rsa2048, Aes256Gcm>::new(Cursor::new(&encrypted_data), &sk2);
 
         assert!(result.is_err());
     }

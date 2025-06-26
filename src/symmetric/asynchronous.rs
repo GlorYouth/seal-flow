@@ -290,8 +290,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::Aes256Gcm;
-    use seal_crypto::prelude::*;
+    use seal_crypto::prelude::SymmetricKeyGenerator;
+    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     async fn test_async_streaming_roundtrip(plaintext: &[u8]) {

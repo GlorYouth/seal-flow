@@ -311,16 +311,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::{Aes256GcmScheme, Rsa2048};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use seal_crypto::prelude::KeyGenerator;
+    use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
+    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     async fn test_hybrid_async_streaming_roundtrip(plaintext: &[u8]) {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048::<Sha256>, Aes256GcmScheme>::new(
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
             &mut encrypted_data,
             pk,
             "test_kek_id".to_string(),
@@ -331,10 +333,9 @@ mod tests {
         encryptor.shutdown().await.unwrap();
 
         // Decrypt
-        let mut decryptor =
-            Decryptor::<_, Rsa2048::<Sha256>, Aes256GcmScheme>::new(encrypted_data.as_slice(), sk)
-                .await
-                .unwrap();
+        let mut decryptor = Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk)
+            .await
+            .unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();
 
@@ -364,7 +365,7 @@ mod tests {
         let plaintext = b"some important data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048::<Sha256>, Aes256GcmScheme>::new(
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
             &mut encrypted_data,
             pk,
             "test_kek_id".to_string(),
@@ -379,10 +380,9 @@ mod tests {
             encrypted_data[300] ^= 1;
         }
 
-        let mut decryptor =
-            Decryptor::<_, Rsa2048, Aes256GcmScheme>::new(encrypted_data.as_slice(), sk)
-                .await
-                .unwrap();
+        let mut decryptor = Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk)
+            .await
+            .unwrap();
         let mut decrypted_data = Vec::new();
         let result = decryptor.read_to_end(&mut decrypted_data).await;
 
@@ -395,7 +395,7 @@ mod tests {
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256GcmScheme>::new(
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
             &mut encrypted_data,
             pk,
             "test_kek_id".to_string(),
@@ -407,9 +407,7 @@ mod tests {
 
         // Decrypt with the wrong private key should fail
         let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let result =
-            Decryptor::<_, Rsa2048, Aes256GcmScheme>::new(encrypted_data.as_slice(), sk2)
-                .await;
+        let result = Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk2).await;
 
         assert!(result.is_err());
     }

@@ -266,8 +266,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::Aes256Gcm;
-    use seal_crypto::prelude::*;
+    use seal_crypto::prelude::SymmetricKeyGenerator;
+    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::io::Cursor;
 
     fn get_test_data(size: usize) -> Vec<u8> {

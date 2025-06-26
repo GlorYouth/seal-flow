@@ -7,7 +7,6 @@ use rayon::iter::ParallelIterator;
 use rayon::prelude::*;
 
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -256,9 +255,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::{Aes256Gcm, Rsa2048};
-    use std::io::Cursor;
+    use seal_crypto::prelude::KeyGenerator;
+    use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
+    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+    use std::io::Cursor;
 
     fn get_test_data(size: usize) -> Vec<u8> {
         (0..size).map(|i| (i % 256) as u8).collect()
@@ -333,11 +334,8 @@ mod tests {
 
         let mut encrypted_source = Cursor::new(&encrypted_dest);
         let mut decrypted_dest = Vec::new();
-        let result = decrypt::<Rsa2048, Aes256Gcm, _, _>(
-            &sk,
-            &mut encrypted_source,
-            &mut decrypted_dest,
-        );
+        let result =
+            decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk, &mut encrypted_source, &mut decrypted_dest);
         assert!(result.is_err());
     }
 
@@ -359,11 +357,8 @@ mod tests {
 
         let mut encrypted_source = Cursor::new(&encrypted_dest);
         let mut decrypted_dest = Vec::new();
-        let result = decrypt::<Rsa2048, Aes256Gcm, _, _>(
-            &sk2,
-            &mut encrypted_source,
-            &mut decrypted_dest,
-        );
+        let result =
+            decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk2, &mut encrypted_source, &mut decrypted_dest);
         assert!(result.is_err());
     }
 }

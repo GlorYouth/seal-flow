@@ -4,7 +4,6 @@ use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
 use crate::error::{Error, Result};
 use rand::{rngs::OsRng, TryRngCore};
-use seal_crypto::prelude::*;
 use std::io::{self, Read, Write};
 
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
@@ -58,6 +57,32 @@ where
             _phantom: std::marker::PhantomData,
         })
     }
+
+    /// Finalizes the encryption stream.
+    ///
+    /// This method must be called to ensure that the last partial chunk of data is
+    /// encrypted and the authentication tag is written to the underlying writer.
+    pub fn finish(mut self) -> Result<()> {
+        if !self.buffer.is_empty() {
+            let final_chunk = self.buffer.drain(..).collect::<Vec<u8>>();
+            let mut nonce = self.base_nonce;
+            let counter_bytes = self.chunk_counter.to_le_bytes();
+            for i in 0..8 {
+                nonce[4 + i] ^= counter_bytes[i];
+            }
+
+            let encrypted_chunk = S::encrypt(
+                &self.symmetric_key.clone().into(),
+                &nonce,
+                &final_chunk,
+                None,
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            self.writer.write_all(&encrypted_chunk)?;
+        }
+        self.writer.flush()?;
+        Ok(())
+    }
 }
 
 impl<W: Write, S: SymmetricAlgorithm> Write for Encryptor<W, S>
@@ -86,24 +111,6 @@ where
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        if !self.buffer.is_empty() {
-            let final_chunk = self.buffer.drain(..).collect::<Vec<u8>>();
-            let mut nonce = self.base_nonce;
-            let counter_bytes = self.chunk_counter.to_le_bytes();
-            for i in 0..8 {
-                nonce[4 + i] ^= counter_bytes[i];
-            }
-
-            let encrypted_chunk = S::encrypt(
-                &self.symmetric_key.clone().into(),
-                &nonce,
-                &final_chunk,
-                None,
-            )
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            self.writer.write_all(&encrypted_chunk)?;
-            self.chunk_counter += 1;
-        }
         self.writer.flush()
     }
 }
@@ -201,7 +208,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::Aes256Gcm;
+    use seal_crypto::prelude::SymmetricKeyGenerator;
+    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::io::{Cursor, Read, Write};
 
     fn test_streaming_roundtrip(plaintext: &[u8]) {
@@ -216,7 +224,7 @@ mod tests {
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
-        encryptor.flush().unwrap();
+        encryptor.finish().unwrap();
 
         // Decrypt
         let mut decryptor =
@@ -257,7 +265,7 @@ mod tests {
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
-        encryptor.flush().unwrap();
+        encryptor.finish().unwrap();
 
         // Tamper with the ciphertext body (after the header).
         // First 4 bytes are header length.
@@ -291,7 +299,7 @@ mod tests {
             Encryptor::<_, Aes256Gcm>::new(&mut encrypted_data, key1, "test_key_id_1".to_string())
                 .unwrap();
         encryptor.write_all(plaintext).unwrap();
-        encryptor.flush().unwrap();
+        encryptor.finish().unwrap();
 
         let mut decryptor =
             Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), &key2).unwrap();

@@ -3,7 +3,6 @@ use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
 use crate::error::{Error, Result};
 use rand::{rngs::OsRng, TryRngCore};
 use rayon::prelude::*;
-use seal_crypto::prelude::*;
 
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
@@ -112,9 +111,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::Aes256Gcm;
     use crate::error::Error as FlowError;
     use seal_crypto::errors::Error as CryptoError;
+    use seal_crypto::prelude::SymmetricKeyGenerator;
+    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 
     #[test]
     fn test_symmetric_parallel_roundtrip() {

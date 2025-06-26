@@ -50,6 +50,9 @@ pub enum Error {
     #[error("不支持的操作或算法组合")]
     UnsupportedOperation,
 
+    #[error("提供了错误的密钥类型（例如，需要私钥但提供了公钥）")]
+    WrongKeyType,
+
     #[error("异步任务错误")]
     AsyncTaskError(#[from] tokio::task::JoinError),
 }

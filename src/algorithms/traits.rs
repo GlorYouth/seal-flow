@@ -14,7 +14,7 @@ pub trait SymmetricAlgorithmDetails: AeadScheme + 'static {
 /// This is a marker trait that bundles `SymmetricAlgorithmDetails` with key bounds.
 pub trait SymmetricAlgorithm: SymmetricAlgorithmDetails {}
 
-impl<T: SymmetricAlgorithmDetails> SymmetricAlgorithm for T where {}
+impl<T: SymmetricAlgorithmDetails> SymmetricAlgorithm for T {}
 
 /// Trait to provide the details for a specific asymmetric algorithm.
 /// The implementor of this trait is the scheme itself.

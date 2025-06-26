@@ -126,10 +126,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use seal_crypto::schemes::hash::Sha256;
     use super::*;
-    use crate::algorithms::definitions::{Aes256Gcm, Rsa2048};
-
+    use seal_crypto::prelude::KeyGenerator;
+    use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
+    use seal_crypto::schemes::hash::Sha256;
+    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     #[test]
     fn test_hybrid_parallel_roundtrip() {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
@@ -162,8 +163,7 @@ mod tests {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string())
-                .unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string()).unwrap();
 
         let decrypted = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted).unwrap();
 

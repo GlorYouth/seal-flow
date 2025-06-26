@@ -1,12 +1,17 @@
 use seal_crypto::prelude::*;
+use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
+use seal_crypto::schemes::hash::Sha256;
+use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 use seal_flow::{
-    algorithms::definitions::{Aes256GcmScheme, Rsa2048},
     error::Result,
-    hybrid, symmetric,
+    seal::{hybrid::HybridSeal, symmetric::SymmetricSeal},
 };
 use std::io::{Cursor, Read, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use seal_crypto::schemes::hash::Sha256;
+
+type TestKem = Rsa2048<Sha256>;
+type TestDek = Aes256Gcm;
+
 // --- Symmetric Interoperability Tests ---
 
 #[derive(Debug)]
@@ -30,45 +35,41 @@ enum SymmetricDecryptorMode {
 impl SymmetricEncryptorMode {
     async fn encrypt(
         &self,
-        key: &<Aes256GcmScheme as SymmetricKeySet>::Key,
+        key: &<TestDek as SymmetricKeySet>::Key,
         plaintext: &[u8],
     ) -> Result<Vec<u8>> {
         let key_id = "test_key_id".to_string();
+        let seal = SymmetricSeal::new(key);
 
         match self {
             SymmetricEncryptorMode::Ordinary => {
-                symmetric::ordinary::encrypt::<Aes256GcmScheme>(key, plaintext, key_id)
+                seal.in_memory::<TestDek>().encrypt(plaintext, key_id)
             }
-            SymmetricEncryptorMode::Parallel => {
-                symmetric::parallel::encrypt::<Aes256GcmScheme>(key, plaintext, key_id)
-            }
+            SymmetricEncryptorMode::Parallel => seal
+                .in_memory_parallel::<TestDek>()
+                .encrypt(plaintext, key_id),
             SymmetricEncryptorMode::Streaming => {
                 let mut encrypted_data = Vec::new();
-                let mut encryptor = symmetric::streaming::Encryptor::<_, Aes256GcmScheme>::new(
-                    &mut encrypted_data,
-                    key.clone(),
-                    key_id,
-                )?;
+                let mut encryptor = seal
+                    .streaming::<TestDek>()
+                    .encryptor(&mut encrypted_data, key_id)?;
                 encryptor.write_all(plaintext)?;
-                encryptor.flush()?;
+                encryptor.finish()?;
                 Ok(encrypted_data)
             }
             SymmetricEncryptorMode::AsyncStreaming => {
                 let mut encrypted_data = Vec::new();
-                let mut encryptor = symmetric::asynchronous::Encryptor::<_, Aes256GcmScheme>::new(
-                    &mut encrypted_data,
-                    key.clone(),
-                    key_id,
-                )
-                .await?;
+                let mut encryptor = seal
+                    .asynchronous::<TestDek>()
+                    .encryptor(&mut encrypted_data, key_id)
+                    .await?;
                 encryptor.write_all(plaintext).await?;
                 encryptor.shutdown().await?;
                 Ok(encrypted_data)
             }
             SymmetricEncryptorMode::ParallelStreaming => {
                 let mut encrypted_data = Vec::new();
-                symmetric::parallel_streaming::encrypt::<Aes256GcmScheme, _, _>(
-                    key,
+                seal.parallel_streaming::<TestDek>().encrypt(
                     Cursor::new(plaintext),
                     &mut encrypted_data,
                     key_id,
@@ -82,40 +83,36 @@ impl SymmetricEncryptorMode {
 impl SymmetricDecryptorMode {
     async fn decrypt(
         &self,
-        key: &<Aes256GcmScheme as SymmetricKeySet>::Key,
+        key: &<TestDek as SymmetricKeySet>::Key,
         ciphertext: &[u8],
     ) -> Result<Vec<u8>> {
+        let seal = SymmetricSeal::new(key);
         match self {
-            SymmetricDecryptorMode::Ordinary => {
-                symmetric::ordinary::decrypt::<Aes256GcmScheme>(key, ciphertext)
-            }
+            SymmetricDecryptorMode::Ordinary => seal.in_memory::<TestDek>().decrypt(ciphertext),
             SymmetricDecryptorMode::Parallel => {
-                symmetric::parallel::decrypt::<Aes256GcmScheme>(key, ciphertext)
+                seal.in_memory_parallel::<TestDek>().decrypt(ciphertext)
             }
             SymmetricDecryptorMode::Streaming => {
-                let mut decryptor = symmetric::streaming::Decryptor::<_, Aes256GcmScheme>::new(
-                    Cursor::new(ciphertext),
-                    &key,
-                )?;
+                let mut decryptor = seal
+                    .streaming::<TestDek>()
+                    .decryptor(Cursor::new(ciphertext))?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data)?;
                 Ok(decrypted_data)
             }
             SymmetricDecryptorMode::AsyncStreaming => {
-                let mut decryptor =
-                    symmetric::asynchronous::Decryptor::<_, Aes256GcmScheme>::new(ciphertext, &key)
-                        .await?;
+                let mut decryptor = seal
+                    .asynchronous::<TestDek>()
+                    .decryptor(Cursor::new(ciphertext))
+                    .await?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data).await?;
                 Ok(decrypted_data)
             }
             SymmetricDecryptorMode::ParallelStreaming => {
                 let mut decrypted_data = Vec::new();
-                symmetric::parallel_streaming::decrypt::<Aes256GcmScheme, _, _>(
-                    key,
-                    Cursor::new(ciphertext),
-                    &mut decrypted_data,
-                )?;
+                seal.parallel_streaming::<TestDek>()
+                    .decrypt(Cursor::new(ciphertext), &mut decrypted_data)?;
                 Ok(decrypted_data)
             }
         }
@@ -140,7 +137,7 @@ async fn symmetric_interoperability_matrix() {
         SymmetricDecryptorMode::ParallelStreaming,
     ];
 
-    let key = Aes256GcmScheme::generate_key().unwrap();
+    let key = TestDek::generate_key().unwrap();
     let plaintext = b"This is a test message for interoperability across different modes.";
 
     for enc_mode in &encryptor_modes {
@@ -195,45 +192,39 @@ enum HybridDecryptorMode {
 impl HybridEncryptorMode {
     async fn encrypt(
         &self,
-        pk: &<Rsa2048 as AsymmetricKeySet>::PublicKey,
+        pk: &<TestKem as AsymmetricKeySet>::PublicKey,
         plaintext: &[u8],
     ) -> Result<Vec<u8>> {
         let kek_id = "test_kek_id".to_string();
+        let seal = HybridSeal::<TestKem>::new_encrypt(pk);
 
         match self {
-            HybridEncryptorMode::Ordinary => {
-                hybrid::ordinary::encrypt::<Rsa2048, Aes256GcmScheme>(pk, plaintext, kek_id)
-            }
-            HybridEncryptorMode::Parallel => {
-                hybrid::parallel::encrypt::<Rsa2048, Aes256GcmScheme>(pk, plaintext, kek_id)
-            }
+            HybridEncryptorMode::Ordinary => seal.in_memory::<TestDek>().encrypt(plaintext, kek_id),
+            HybridEncryptorMode::Parallel => seal
+                .in_memory_parallel::<TestDek>()
+                .encrypt(plaintext, kek_id),
             HybridEncryptorMode::Streaming => {
                 let mut encrypted_data = Vec::new();
-                let mut encryptor = hybrid::streaming::Encryptor::<
-                    _,
-                    Rsa2048,
-                    Aes256GcmScheme,
-                >::new(&mut encrypted_data, pk, kek_id)?;
+                let mut encryptor = seal
+                    .streaming::<TestDek>()
+                    .encryptor(&mut encrypted_data, kek_id)?;
                 encryptor.write_all(plaintext)?;
-                encryptor.flush()?;
+                encryptor.finish()?;
                 Ok(encrypted_data)
             }
             HybridEncryptorMode::AsyncStreaming => {
                 let mut encrypted_data = Vec::new();
-                let mut encryptor = hybrid::asynchronous::Encryptor::<
-                    _,
-                    Rsa2048,
-                    Aes256GcmScheme,
-                >::new(&mut encrypted_data, pk.clone(), kek_id)
-                .await?;
+                let mut encryptor = seal
+                    .asynchronous::<TestDek>()
+                    .encryptor(&mut encrypted_data, kek_id)
+                    .await?;
                 encryptor.write_all(plaintext).await?;
                 encryptor.shutdown().await?;
                 Ok(encrypted_data)
             }
             HybridEncryptorMode::ParallelStreaming => {
                 let mut encrypted_data = Vec::new();
-                hybrid::parallel_streaming::encrypt::<Rsa2048, Aes256GcmScheme, _, _>(
-                    pk,
+                seal.parallel_streaming::<TestDek>().encrypt(
                     Cursor::new(plaintext),
                     &mut encrypted_data,
                     kek_id,
@@ -247,44 +238,36 @@ impl HybridEncryptorMode {
 impl HybridDecryptorMode {
     async fn decrypt(
         &self,
-        sk: &<Rsa2048 as AsymmetricKeySet>::PrivateKey,
+        sk: &<TestKem as AsymmetricKeySet>::PrivateKey,
         ciphertext: &[u8],
     ) -> Result<Vec<u8>> {
+        let seal = HybridSeal::<TestKem>::new_decrypt(sk);
         match self {
-            HybridDecryptorMode::Ordinary => {
-                hybrid::ordinary::decrypt::<Rsa2048, Aes256GcmScheme>(sk, ciphertext)
-            }
+            HybridDecryptorMode::Ordinary => seal.in_memory::<TestDek>().decrypt(ciphertext),
             HybridDecryptorMode::Parallel => {
-                hybrid::parallel::decrypt::<Rsa2048, Aes256GcmScheme>(sk, ciphertext)
+                seal.in_memory_parallel::<TestDek>().decrypt(ciphertext)
             }
             HybridDecryptorMode::Streaming => {
-                let mut decryptor = hybrid::streaming::Decryptor::<
-                    _,
-                    Rsa2048,
-                    Aes256GcmScheme,
-                >::new(Cursor::new(ciphertext), sk)?;
+                let mut decryptor = seal
+                    .streaming::<TestDek>()
+                    .decryptor(Cursor::new(ciphertext))?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data)?;
                 Ok(decrypted_data)
             }
             HybridDecryptorMode::AsyncStreaming => {
-                let mut decryptor = hybrid::asynchronous::Decryptor::<
-                    _,
-                    Rsa2048,
-                    Aes256GcmScheme,
-                >::new(ciphertext, sk.clone())
-                .await?;
+                let mut decryptor = seal
+                    .asynchronous::<TestDek>()
+                    .decryptor(Cursor::new(ciphertext))
+                    .await?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data).await?;
                 Ok(decrypted_data)
             }
             HybridDecryptorMode::ParallelStreaming => {
                 let mut decrypted_data = Vec::new();
-                hybrid::parallel_streaming::decrypt::<Rsa2048, Aes256GcmScheme, _, _>(
-                    sk,
-                    Cursor::new(ciphertext),
-                    &mut decrypted_data,
-                )?;
+                seal.parallel_streaming::<TestDek>()
+                    .decrypt(Cursor::new(ciphertext), &mut decrypted_data)?;
                 Ok(decrypted_data)
             }
         }
@@ -309,7 +292,7 @@ async fn hybrid_interoperability_matrix() {
         HybridDecryptorMode::ParallelStreaming,
     ];
 
-    let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+    let (pk, sk) = TestKem::generate_keypair().unwrap();
     let plaintext = b"This is a test message for hybrid interoperability across different modes.";
 
     for enc_mode in &encryptor_modes {
