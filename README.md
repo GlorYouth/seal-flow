@@ -83,6 +83,10 @@ cargo run --example high_level_symmetric --features=async
 cargo run --example mid_level_hybrid --features=async
 ```
 
+## License
+
+This project is licensed under the Mozilla Public License 2.0. See the [LICENSE](LICENSE) file for details.
+
 ## API Layers in Detail
 
 ### High-Level API (`seal` module)

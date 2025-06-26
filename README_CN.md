@@ -81,6 +81,10 @@ cargo run --example high_level_symmetric --features=async
 cargo run --example mid_level_hybrid --features=async
 ```
 
+## 许可证 (License)
+
+本项目采用 Mozilla Public License 2.0 许可证。详情请参阅 [LICENSE](LICENSE) 文件。
+
 ## API分层详解
 
 ### 高层API (`seal` module)
