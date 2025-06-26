@@ -16,6 +16,24 @@ pub mod prelude {
 pub mod error;
 pub mod seal;
 
+/// Provides direct access to the mid-level execution flows.
+///
+/// This API layer is for users who need more fine-grained control over the
+/// execution process than what the high-level [`seal`] API provides.
+/// For example, you might use this to directly create a streaming encryptor
+/// without using the `HybridSeal` or `SymmetricSeal` builders.
+pub mod flows {
+    /// Mid-level flows for symmetric encryption.
+    pub mod symmetric {
+        pub use crate::symmetric::{asynchronous, ordinary, parallel, parallel_streaming, streaming};
+    }
+
+    /// Mid-level flows for hybrid encryption.
+    pub mod hybrid {
+        pub use crate::hybrid::{asynchronous, ordinary, parallel, parallel_streaming, streaming};
+    }
+}
+
 mod algorithms;
 mod common;
 mod hybrid;

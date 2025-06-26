@@ -46,3 +46,19 @@ required-features = ["async"]
 name = "symmetric_benchmark"
 harness = false
 required-features = ["async"]
+
+[[example]]
+name = "high_level_symmetric"
+required-features = ["async"]
+
+[[example]]
+name = "high_level_hybrid"
+required-features = ["async"]
+
+[[example]]
+name = "mid_level_symmetric"
+required-features = ["async"]
+
+[[example]]
+name = "mid_level_hybrid"
+required-features = ["async"]
