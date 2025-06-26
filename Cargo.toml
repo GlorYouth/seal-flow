@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 # --- 核心密码学特性 ---
 # 提供了所有密码学操作的 Trait 和基础实现
-seal-crypto = { path = "seal-crypto", features = ["full"]}
+seal-crypto = { version = "0.1.1", features = ["full"]}
 
 # --- 序列化与错误处理 ---
 # 用于将 Header 结构体序列化为字节流
