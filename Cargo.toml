@@ -27,7 +27,11 @@ tokio = { version = "1.45.1", features = ["io-util", "macros", "rt-multi-thread"
 futures = { version = "0.3", optional = true }
 pin-project-lite = "0.2.16"
 
- [features]
+[dev-dependencies]
+criterion = { version = "0.6.0", features = ["async_tokio"] }
+num_cpus = "1.16.0"
+
+[features]
 # 默认启用所有功能
 default = ["async"]
 # 单独的 feature gate 用于启用异步 API
@@ -36,4 +40,9 @@ async = ["dep:tokio", "dep:futures"]
 [[test]]
 name = "interoperability_matrix"
 path = "tests/interoperability_matrix.rs"
+required-features = ["async"]
+
+[[bench]]
+name = "symmetric_benchmark"
+harness = false
 required-features = ["async"]
