@@ -425,9 +425,8 @@ mod tests {
         asymmetric::traditional::rsa::Rsa2048, hash::Sha256, symmetric::aes_gcm::Aes256Gcm,
     };
     use std::collections::HashMap;
-    use std::io::Cursor;
+    use std::io::{Cursor, Read, Write};
     #[cfg(feature = "async")]
-    use tokio::io::AsyncReadExt;
 
     const TEST_KEK_ID: &str = "test-kek";
 
@@ -483,13 +482,21 @@ mod tests {
         let mut key_store = HashMap::new();
         let (pk, sk) = TestKem::generate_keypair().unwrap();
         key_store.insert(TEST_KEK_ID.to_string(), sk);
+
         let plaintext = get_test_data();
         let seal = HybridSeal::new();
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        seal.streaming_encryptor::<TestKem, TestDek, _>(&mut encrypted_data, &pk, TEST_KEK_ID.to_string())
+        let mut encryptor = seal
+            .streaming_encryptor::<TestKem, TestDek, _>(
+                &mut encrypted_data,
+                &pk,
+                TEST_KEK_ID.to_string(),
+            )
             .unwrap();
+        encryptor.write_all(plaintext).unwrap();
+        encryptor.finish().unwrap();
 
         // Decrypt
         let pending = seal
@@ -501,7 +508,7 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
-        assert_eq!(plaintext, decrypted_data.as_slice());
+        assert_eq!(plaintext.to_vec(), decrypted_data);
     }
 
     #[test]
@@ -530,29 +537,33 @@ mod tests {
     #[cfg(feature = "async")]
     mod async_tests {
         use super::*;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         #[tokio::test]
         async fn test_asynchronous_streaming_roundtrip() {
             let mut key_store = HashMap::new();
             let (pk, sk) = TestKem::generate_keypair().unwrap();
-            key_store.insert(TEST_KEK_ID.to_string(), sk);
-            let plaintext = get_test_data();
+            key_store.insert(TEST_KEK_ID.to_string(), sk.clone());
 
+            let plaintext = get_test_data();
             let seal = HybridSeal::new();
 
             // Encrypt
             let mut encrypted_data = Vec::new();
-            seal.asynchronous_encryptor::<TestKem, TestDek, _>(
-                &mut encrypted_data,
-                pk,
-                TEST_KEK_ID.to_string(),
-            )
-            .await
-            .unwrap();
+            let mut encryptor = seal
+                .asynchronous_encryptor::<TestKem, TestDek, _>(
+                    &mut encrypted_data,
+                    pk,
+                    TEST_KEK_ID.to_string(),
+                )
+                .await
+                .unwrap();
+            encryptor.write_all(plaintext).await.unwrap();
+            encryptor.shutdown().await.unwrap();
 
             // Decrypt
             let pending = seal
-                .asynchronous_decryptor_from_reader::<TestKem, TestDek, _>(Cursor::new(
+                .asynchronous_decryptor_from_reader::<TestKem, TestDek, _>(std::io::Cursor::new(
                     &encrypted_data,
                 ))
                 .await
@@ -560,13 +571,13 @@ mod tests {
             let kek_id = pending.kek_id().unwrap();
             let decryption_key = key_store.get(kek_id).unwrap();
             let mut decryptor = pending
-                .with_private_key(decryption_key.clone()) // sk is consumed by into_decryptor
+                .with_private_key(decryption_key.clone())
                 .await
                 .unwrap();
 
             let mut decrypted_data = Vec::new();
             decryptor.read_to_end(&mut decrypted_data).await.unwrap();
-            assert_eq!(plaintext, decrypted_data.as_slice());
+            assert_eq!(plaintext.to_vec(), decrypted_data);
         }
     }
 }

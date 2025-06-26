@@ -364,7 +364,7 @@ mod tests {
     use seal_crypto::prelude::*;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::collections::HashMap;
-    use std::io::Cursor;
+    use std::io::{Cursor, Read, Write};
     #[cfg(feature = "async")]
     use tokio::io::AsyncReadExt;
 
@@ -422,12 +422,15 @@ mod tests {
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        seal.streaming_encryptor::<Aes256Gcm, _>(
-            &mut encrypted_data,
-            key_store.get(TEST_KEY_ID).unwrap(),
-            TEST_KEY_ID.to_string(),
-        )
-        .unwrap();
+        let mut encryptor = seal
+            .streaming_encryptor::<Aes256Gcm, _>(
+                &mut encrypted_data,
+                key_store.get(TEST_KEY_ID).unwrap(),
+                TEST_KEY_ID.to_string(),
+            )
+            .unwrap();
+        encryptor.write_all(plaintext).unwrap();
+        encryptor.finish().unwrap();
 
         // Decrypt
         let pending = seal
@@ -469,6 +472,7 @@ mod tests {
     mod async_tests {
         use super::*;
         use std::collections::HashMap;
+        use tokio::io::AsyncWriteExt;
 
         #[tokio::test]
         async fn test_asynchronous_streaming_roundtrip() {
@@ -481,13 +485,16 @@ mod tests {
 
             // Encrypt
             let mut encrypted_data = Vec::new();
-            seal.asynchronous_encryptor::<Aes256Gcm, _>(
-                &mut encrypted_data,
-                key_store.get(TEST_KEY_ID).unwrap(),
-                TEST_KEY_ID.to_string(),
-            )
-            .await
-            .unwrap();
+            let mut encryptor = seal
+                .asynchronous_encryptor::<Aes256Gcm, _>(
+                    &mut encrypted_data,
+                    key_store.get(TEST_KEY_ID).unwrap(),
+                    TEST_KEY_ID.to_string(),
+                )
+                .await
+                .unwrap();
+            encryptor.write_all(plaintext).await.unwrap();
+            encryptor.shutdown().await.unwrap();
 
             // Decrypt
             let pending = seal
