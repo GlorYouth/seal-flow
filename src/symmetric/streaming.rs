@@ -71,13 +71,9 @@ where
                 nonce[4 + i] ^= counter_bytes[i];
             }
 
-            let encrypted_chunk = S::encrypt(
-                &self.symmetric_key.clone().into(),
-                &nonce,
-                &final_chunk,
-                None,
-            )
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let encrypted_chunk =
+                S::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
         }
         self.writer.flush()?;
@@ -90,21 +86,50 @@ where
     S::Key: Send + Sync + Clone,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.buffer.extend_from_slice(buf);
+        let mut input = buf;
 
-        while self.buffer.len() >= self.chunk_size {
-            let chunk = self.buffer.drain(..self.chunk_size).collect::<Vec<u8>>();
+        // If there's pending data in the buffer, try to fill and process it first.
+        if !self.buffer.is_empty() {
+            let space_in_buffer = self.chunk_size - self.buffer.len();
+            let fill_len = std::cmp::min(space_in_buffer, input.len());
+            self.buffer.extend_from_slice(&input[..fill_len]);
+            input = &input[fill_len..];
+
+            if self.buffer.len() == self.chunk_size {
+                let mut nonce = self.base_nonce;
+                let counter_bytes = self.chunk_counter.to_le_bytes();
+                for i in 0..8 {
+                    nonce[4 + i] ^= counter_bytes[i];
+                }
+
+                let encrypted_chunk = S::encrypt(&self.symmetric_key, &nonce, &self.buffer, None)
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                self.writer.write_all(&encrypted_chunk)?;
+                self.chunk_counter += 1;
+                self.buffer.clear();
+            }
+        }
+
+        // Process full chunks directly from the input buffer.
+        while input.len() >= self.chunk_size {
+            let chunk = &input[..self.chunk_size];
             let mut nonce = self.base_nonce;
             let counter_bytes = self.chunk_counter.to_le_bytes();
             for i in 0..8 {
                 nonce[4 + i] ^= counter_bytes[i];
             }
 
-            let encrypted_chunk =
-                S::encrypt(&self.symmetric_key.clone().into(), &nonce, &chunk, None)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let encrypted_chunk = S::encrypt(&self.symmetric_key, &nonce, chunk, None)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
+
             self.chunk_counter += 1;
+            input = &input[self.chunk_size..];
+        }
+
+        // Buffer any remaining data.
+        if !input.is_empty() {
+            self.buffer.extend_from_slice(input);
         }
 
         Ok(buf.len())
