@@ -7,7 +7,6 @@ use crate::error::{Error, Result};
 use futures::ready;
 use pin_project_lite::pin_project;
 use rand::{rngs::OsRng, TryRngCore};
-use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
 use std::future::Future;
 use std::io;
@@ -163,6 +162,72 @@ where
     }
 }
 
+/// An asynchronous pending hybrid decryptor, waiting for the private key.
+pub struct PendingDecryptor<R: AsyncRead + Unpin, A, S> {
+    reader: R,
+    header: Header,
+    _phantom: std::marker::PhantomData<(A, S)>,
+}
+
+impl<R: AsyncRead + Unpin, A, S> PendingDecryptor<R, A, S>
+where
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+{
+    /// Creates a new `PendingDecryptor` by asynchronously reading the header.
+    pub async fn from_reader(mut reader: R) -> Result<Self> {
+        use tokio::io::AsyncReadExt;
+        let mut len_buf = [0u8; 4];
+        reader.read_exact(&mut len_buf).await?;
+        let header_len = u32::from_le_bytes(len_buf) as usize;
+
+        let mut header_bytes = vec![0u8; header_len];
+        reader.read_exact(&mut header_bytes).await?;
+        let (header, _) = Header::decode_from_slice(&header_bytes)?;
+
+        Ok(Self {
+            reader,
+            header,
+            _phantom: std::marker::PhantomData,
+        })
+    }
+
+    /// Returns a reference to the header.
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    /// Consumes the pending decryptor and returns a full `Decryptor`.
+    pub async fn into_decryptor(self, sk: A::PrivateKey) -> Result<Decryptor<R, A, S>>
+    where
+        A::EncapsulatedKey: From<Vec<u8>> + Send,
+        S::Key: From<Zeroizing<Vec<u8>>>,
+    {
+        let (encapsulated_key, chunk_size, base_nonce) = match self.header.payload {
+            HeaderPayload::Hybrid {
+                encrypted_dek,
+                stream_info: Some(info),
+                ..
+            } => (encrypted_dek.into(), info.chunk_size, info.base_nonce),
+            _ => return Err(Error::InvalidHeader),
+        };
+
+        let shared_secret =
+            tokio::task::spawn_blocking(move || A::decapsulate(&sk.into(), &encapsulated_key))
+                .await??;
+
+        let tag_len = S::TAG_SIZE;
+        let encrypted_chunk_size = chunk_size as usize + tag_len;
+
+        Ok(Decryptor::new(
+            self.reader,
+            shared_secret,
+            base_nonce,
+            encrypted_chunk_size,
+        ))
+    }
+}
+
 // --- Decryptor ---
 
 enum DecryptorState {
@@ -190,38 +255,15 @@ where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
 {
-    pub async fn new(mut reader: R, sk: <A as AsymmetricKeySet>::PrivateKey) -> Result<Self>
-    where
-        A::EncapsulatedKey: From<Vec<u8>> + Send,
-    {
-        use tokio::io::AsyncReadExt;
-        let mut len_buf = [0u8; 4];
-        reader.read_exact(&mut len_buf).await?;
-        let header_len = u32::from_le_bytes(len_buf) as usize;
-
-        let mut header_bytes = vec![0u8; header_len];
-        reader.read_exact(&mut header_bytes).await?;
-        let (header, _) = Header::decode_from_slice(&header_bytes)?;
-
-        let (encapsulated_key, chunk_size, base_nonce) = match header.payload {
-            HeaderPayload::Hybrid {
-                encrypted_dek,
-                stream_info: Some(info),
-                ..
-            } => (encrypted_dek.into(), info.chunk_size, info.base_nonce),
-            _ => return Err(Error::InvalidHeader),
-        };
-
-        let shared_secret =
-            tokio::task::spawn_blocking(move || A::decapsulate(&sk.into(), &encapsulated_key))
-                .await??;
-
-        let tag_len = S::TAG_SIZE;
-        let encrypted_chunk_size = chunk_size as usize + tag_len;
-
-        Ok(Self {
+    pub fn new(
+        reader: R,
+        symmetric_key: Zeroizing<Vec<u8>>,
+        base_nonce: [u8; 12],
+        encrypted_chunk_size: usize,
+    ) -> Self {
+        Self {
             reader,
-            symmetric_key: shared_secret,
+            symmetric_key,
             base_nonce,
             encrypted_chunk_size,
             buffer: io::Cursor::new(Vec::new()),
@@ -229,7 +271,7 @@ where
             is_done: false,
             state: DecryptorState::Idle,
             _phantom: std::marker::PhantomData,
-        })
+        }
     }
 }
 
@@ -316,29 +358,32 @@ mod tests {
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use std::io::Cursor;
 
     async fn test_hybrid_async_streaming_roundtrip(plaintext: &[u8]) {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let kek_id = "test-rsa-key".to_string();
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-            &mut encrypted_data,
-            pk,
-            "test_kek_id".to_string(),
-        )
-        .await
-        .unwrap();
+        let mut encryptor =
+            Encryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::new(&mut encrypted_data, pk, kek_id.clone())
+                .await
+                .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
         // Decrypt
-        let mut decryptor = Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk)
-            .await
-            .unwrap();
+        let pending = PendingDecryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::from_reader(
+            Cursor::new(&encrypted_data),
+        )
+        .await
+        .unwrap();
+        assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
+
+        let mut decryptor = pending.into_decryptor(sk).await.unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();
-
         assert_eq!(plaintext, decrypted_data.as_slice());
     }
 
@@ -365,37 +410,40 @@ mod tests {
         let plaintext = b"some important data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
+        let mut encryptor = Encryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::new(
             &mut encrypted_data,
             pk,
-            "test_kek_id".to_string(),
+            "test-kek-id".to_string(),
         )
         .await
         .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
-        // Tamper with the ciphertext body
-        if encrypted_data.len() > 300 {
-            encrypted_data[300] ^= 1;
+        let header_len =
+            4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
+        if encrypted_data.len() > header_len {
+            encrypted_data[header_len] ^= 1;
         }
 
-        let mut decryptor = Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk)
-            .await
-            .unwrap();
-        let mut decrypted_data = Vec::new();
-        let result = decryptor.read_to_end(&mut decrypted_data).await;
-
+        let pending = PendingDecryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::from_reader(
+            Cursor::new(&encrypted_data),
+        )
+        .await
+        .unwrap();
+        let mut decryptor = pending.into_decryptor(sk).await.unwrap();
+        let result = decryptor.read_to_end(&mut Vec::new()).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_wrong_private_key_fails_async() {
         let (pk, _) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
+        let mut encryptor = Encryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::new(
             &mut encrypted_data,
             pk,
             "test_kek_id".to_string(),
@@ -405,10 +453,12 @@ mod tests {
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
-        // Decrypt with the wrong private key should fail
-        let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let result = Decryptor::<_, Rsa2048, Aes256Gcm>::new(encrypted_data.as_slice(), sk2).await;
-
+        let pending = PendingDecryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::from_reader(
+            Cursor::new(&encrypted_data),
+        )
+        .await
+        .unwrap();
+        let result = pending.into_decryptor(sk2).await;
         assert!(result.is_err());
     }
 }

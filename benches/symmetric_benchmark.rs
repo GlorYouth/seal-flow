@@ -4,7 +4,7 @@ use rand::{rngs::OsRng, TryRngCore};
 use seal_crypto::prelude::*;
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 use seal_flow::seal::symmetric::SymmetricSeal;
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 use tokio::io::AsyncWriteExt;
 use rayon;
 use num_cpus;
@@ -27,6 +27,7 @@ fn setup() -> (<TestDek as SymmetricKeySet>::Key, Vec<u8>) {
 fn benchmark_symmetric_encryption(c: &mut Criterion) {
     let (key, plaintext) = setup();
     let key_id = "benchmark_key".to_string();
+    let seal = SymmetricSeal::new();
 
     let mut group = c.benchmark_group("Symmetric Encryption");
     group.sample_size(10); // Use a smaller sample size for heavy I/O benchmarks
@@ -35,9 +36,9 @@ fn benchmark_symmetric_encryption(c: &mut Criterion) {
     // --- In-memory (Ordinary) ---
     group.bench_function("in_memory", |b| {
         b.iter(|| {
-            SymmetricSeal::new(&key)
+            seal
                 .in_memory::<TestDek>()
-                .encrypt(black_box(&plaintext), key_id.clone())
+                .encrypt(black_box(&key), black_box(&plaintext), key_id.clone())
                 .unwrap();
         });
     });
@@ -50,9 +51,9 @@ fn benchmark_symmetric_encryption(c: &mut Criterion) {
             .unwrap();
         pool.install(|| {
             b.iter(|| {
-                SymmetricSeal::new(&key)
+                seal
                     .in_memory_parallel::<TestDek>()
-                    .encrypt(black_box(&plaintext), key_id.clone())
+                    .encrypt(black_box(&key), black_box(&plaintext), key_id.clone())
                     .unwrap();
             });
         });
@@ -62,11 +63,10 @@ fn benchmark_symmetric_encryption(c: &mut Criterion) {
     group.bench_function("streaming", |b| {
         b.iter(|| {
             let mut encrypted_data = Vec::with_capacity(PLAINTEXT_SIZE + 1024);
-            let mut encryptor = SymmetricSeal::new(&key)
-                .streaming::<TestDek>()
-                .encryptor(&mut encrypted_data, key_id.clone())
+            let mut encryptor = seal
+                .streaming_encryptor::<TestDek, _>(&mut encrypted_data, &key, key_id.clone())
                 .unwrap();
-            std::io::copy(&mut Cursor::new(&plaintext), &mut encryptor).unwrap();
+            encryptor.write_all(black_box(&plaintext)).unwrap();
             encryptor.finish().unwrap();
         });
     });
@@ -76,14 +76,11 @@ fn benchmark_symmetric_encryption(c: &mut Criterion) {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         b.to_async(&runtime).iter(|| async {
             let mut encrypted_data = Vec::with_capacity(PLAINTEXT_SIZE + 1024);
-            let mut encryptor = SymmetricSeal::new(&key)
-                .asynchronous::<TestDek>()
-                .encryptor(&mut encrypted_data, key_id.clone())
+            let mut encryptor = seal
+                .asynchronous_encryptor::<TestDek, _>(&mut encrypted_data, &key, key_id.clone())
                 .await
                 .unwrap();
-            tokio::io::copy(&mut Cursor::new(&plaintext), &mut encryptor)
-                .await
-                .unwrap();
+            encryptor.write_all(black_box(&plaintext)).await.unwrap();
             encryptor.shutdown().await.unwrap();
         });
     });
@@ -97,9 +94,10 @@ fn benchmark_symmetric_encryption(c: &mut Criterion) {
         pool.install(|| {
             b.iter(|| {
                 let mut encrypted_data = Vec::with_capacity(PLAINTEXT_SIZE + 1024);
-                SymmetricSeal::new(&key)
+                seal
                     .parallel_streaming::<TestDek>()
                     .encrypt(
+                        &key,
                         Cursor::new(black_box(&plaintext)),
                         &mut encrypted_data,
                         key_id.clone(),
@@ -116,11 +114,12 @@ fn benchmark_symmetric_encryption(c: &mut Criterion) {
 fn benchmark_symmetric_decryption(c: &mut Criterion) {
     let (key, plaintext) = setup();
     let key_id = "benchmark_key".to_string();
+    let seal = SymmetricSeal::new();
 
     // Prepare encrypted data for each mode to be decrypted
-    let in_memory_ciphertext = SymmetricSeal::new(&key)
+    let in_memory_ciphertext = seal
         .in_memory::<TestDek>()
-        .encrypt(&plaintext, key_id.clone())
+        .encrypt(&key, &plaintext, key_id)
         .unwrap();
 
     let mut group = c.benchmark_group("Symmetric Decryption");
@@ -130,10 +129,11 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
     // --- In-memory (Ordinary) ---
     group.bench_function("in_memory", |b| {
         b.iter(|| {
-            SymmetricSeal::new(&key)
+            let pending = seal
                 .in_memory::<TestDek>()
                 .decrypt(black_box(&in_memory_ciphertext))
                 .unwrap();
+            pending.with_key(&key).unwrap();
         });
     });
 
@@ -145,10 +145,11 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
             .unwrap();
         pool.install(|| {
             b.iter(|| {
-                SymmetricSeal::new(&key)
+                let pending = seal
                     .in_memory_parallel::<TestDek>()
                     .decrypt(black_box(&in_memory_ciphertext))
                     .unwrap();
+                pending.with_key(&key).unwrap();
             });
         });
     });
@@ -156,10 +157,12 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
     // --- Streaming ---
     group.bench_function("streaming", |b| {
         b.iter(|| {
-            let mut decryptor = SymmetricSeal::new(&key)
-                .streaming::<TestDek>()
-                .decryptor(Cursor::new(black_box(&in_memory_ciphertext)))
+            let pending = seal
+                .streaming_decryptor_from_reader::<TestDek, _>(Cursor::new(black_box(
+                    &in_memory_ciphertext,
+                )))
                 .unwrap();
+            let mut decryptor = pending.with_key(&key).unwrap();
             let mut decrypted_data = Vec::with_capacity(PLAINTEXT_SIZE);
             std::io::copy(&mut decryptor, &mut decrypted_data).unwrap();
         });
@@ -169,11 +172,13 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
     group.bench_function("asynchronous", |b: &mut Bencher| {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         b.to_async(&runtime).iter(|| async {
-            let mut decryptor = SymmetricSeal::new(&key)
-                .asynchronous::<TestDek>()
-                .decryptor(Cursor::new(black_box(&in_memory_ciphertext)))
+            let pending = seal
+                .asynchronous_decryptor_from_reader::<TestDek, _>(Cursor::new(black_box(
+                    &in_memory_ciphertext,
+                )))
                 .await
                 .unwrap();
+            let mut decryptor = pending.with_key(&key).unwrap();
             let mut decrypted_data = Vec::with_capacity(PLAINTEXT_SIZE);
             tokio::io::copy(&mut decryptor, &mut decrypted_data)
                 .await
@@ -190,12 +195,12 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
         pool.install(|| {
             b.iter(|| {
                 let mut decrypted_data = Vec::with_capacity(PLAINTEXT_SIZE);
-                SymmetricSeal::new(&key)
+                let pending = seal
                     .parallel_streaming::<TestDek>()
-                    .decrypt(
-                        Cursor::new(black_box(&in_memory_ciphertext)),
-                        &mut decrypted_data,
-                    )
+                    .decrypt(Cursor::new(black_box(&in_memory_ciphertext)))
+                    .unwrap();
+                pending
+                    .with_key_to_writer(&key, &mut decrypted_data)
                     .unwrap();
             });
         });

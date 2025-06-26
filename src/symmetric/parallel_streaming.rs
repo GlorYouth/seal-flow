@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::thread;
+use std::marker::PhantomData;
 
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 const CHANNEL_BOUND: usize = 16; // Bound the channel to avoid unbounded memory usage
@@ -143,26 +144,77 @@ where
     })
 }
 
-/// Decrypts data from a reader and writes to a writer using a parallel streaming approach.
-pub fn decrypt<S, R, W>(key: &S::Key, mut reader: R, mut writer: W) -> Result<()>
+/// Reads and decodes the header from the beginning of a reader.
+///
+/// The reader's position will be advanced past the header.
+///
+/// # Returns
+///
+/// The parsed `Header`.
+pub fn decode_header_from_stream<R: Read>(reader: &mut R) -> Result<Header> {
+    let mut header_len_bytes = [0u8; 4];
+    reader.read_exact(&mut header_len_bytes)?;
+    let header_len = u32::from_le_bytes(header_len_bytes);
+
+    let mut header_bytes = vec![0; header_len as usize];
+    reader.read_exact(&mut header_bytes)?;
+    let (header, _) = Header::decode_from_slice(&header_bytes)?;
+    Ok(header)
+}
+
+/// A pending decryptor for a parallel stream, waiting for a key.
+///
+/// This state is entered after the header has been successfully read from the
+/// stream, allowing the user to inspect the header (e.g., to find the `key_id`)
+/// before supplying the appropriate key to proceed with decryption.
+pub struct PendingDecryptor<R: Read + Send, S: SymmetricAlgorithm> {
+    reader: R,
+    header: Header,
+    _phantom: PhantomData<S>,
+}
+
+impl<R: Read + Send, S: SymmetricAlgorithm> PendingDecryptor<R, S> {
+    /// Creates a new `PendingDecryptor` by reading the header from the stream.
+    pub fn from_reader(mut reader: R) -> Result<Self> {
+        let header = decode_header_from_stream(&mut reader)?;
+        Ok(Self {
+            reader,
+            header,
+            _phantom: PhantomData,
+        })
+    }
+
+    /// Returns a reference to the header.
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    /// Consumes the `PendingDecryptor` and decrypts the rest of the stream,
+    /// writing the plaintext to the provided writer.
+    pub fn decrypt_to_writer<W: Write>(self, key: &S::Key, writer: W) -> Result<()>
+    where
+        S::Key: Sync + Clone + Send,
+    {
+        decrypt_body_stream::<S, R, W>(key, &self.header, self.reader, writer)
+    }
+}
+
+/// Decrypts a data stream body and writes to a writer using a parallel streaming approach.
+///
+/// This function assumes the header has already been read and consumed from the reader.
+pub fn decrypt_body_stream<S, R, W>(
+    key: &S::Key,
+    header: &Header,
+    mut reader: R,
+    mut writer: W,
+) -> Result<()>
 where
     S: SymmetricAlgorithm,
     S::Key: Sync + Clone + Send,
     R: Read + Send,
     W: Write,
 {
-    // 1. Read and parse header
-    let mut header_len_bytes = [0u8; 4];
-    reader
-        .read_exact(&mut header_len_bytes)
-        .map_err(Error::Io)?;
-    let header_len = u32::from_le_bytes(header_len_bytes);
-
-    let mut header_bytes = vec![0; header_len as usize];
-    reader.read_exact(&mut header_bytes).map_err(Error::Io)?;
-    let (header, _) = Header::decode_from_slice(&header_bytes)?;
-
-    let (chunk_size, base_nonce) = match header.payload {
+    let (chunk_size, base_nonce) = match &header.payload {
         HeaderPayload::Symmetric {
             stream_info: Some(info),
             ..
@@ -277,92 +329,100 @@ mod tests {
     #[test]
     fn test_parallel_streaming_roundtrip() {
         let key = Aes256Gcm::generate_key().unwrap();
-        let plaintext = get_test_data(DEFAULT_CHUNK_SIZE as usize * 3 + 100);
-        let mut source = Cursor::new(&plaintext);
-        let mut encrypted_dest = Vec::new();
+        let plaintext = get_test_data(1024 * 1024); // 1 MiB
 
+        let mut encrypted_data = Vec::new();
         encrypt::<Aes256Gcm, _, _>(
             &key,
-            &mut source,
-            &mut encrypted_dest,
-            "test_key_id".to_string(),
+            Cursor::new(&plaintext),
+            &mut encrypted_data,
+            "test_key".to_string(),
         )
         .unwrap();
 
-        let mut encrypted_source = Cursor::new(&encrypted_dest);
-        let mut decrypted_dest = Vec::new();
-        decrypt::<Aes256Gcm, _, _>(&key, &mut encrypted_source, &mut decrypted_dest).unwrap();
+        let mut decrypted_data = Vec::new();
+        let pending =
+            PendingDecryptor::<_, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        assert_eq!(pending.header().payload.key_id(), Some("test_key"));
+        pending
+            .decrypt_to_writer(&key, &mut decrypted_data)
+            .unwrap();
 
-        assert_eq!(plaintext, decrypted_dest);
+        assert_eq!(plaintext, decrypted_data);
     }
 
     #[test]
     fn test_empty_input() {
         let key = Aes256Gcm::generate_key().unwrap();
-        let plaintext: Vec<u8> = Vec::new();
-        let mut source = Cursor::new(&plaintext);
-        let mut encrypted_dest = Vec::new();
+        let plaintext = b"";
 
+        let mut encrypted_data = Vec::new();
         encrypt::<Aes256Gcm, _, _>(
             &key,
-            &mut source,
-            &mut encrypted_dest,
-            "test_key_id".to_string(),
+            Cursor::new(&plaintext),
+            &mut encrypted_data,
+            "test_key".to_string(),
         )
         .unwrap();
 
-        let mut encrypted_source = Cursor::new(&encrypted_dest);
-        let mut decrypted_dest = Vec::new();
-        decrypt::<Aes256Gcm, _, _>(&key, &mut encrypted_source, &mut decrypted_dest).unwrap();
+        let mut decrypted_data = Vec::new();
+        let pending =
+            PendingDecryptor::<_, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        pending
+            .decrypt_to_writer(&key, &mut decrypted_data)
+            .unwrap();
 
-        assert_eq!(plaintext, decrypted_dest);
+        assert_eq!(plaintext, decrypted_data.as_slice());
     }
 
     #[test]
     fn test_exact_chunk_multiple() {
         let key = Aes256Gcm::generate_key().unwrap();
-        let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize * 2];
-        let mut source = Cursor::new(&plaintext);
-        let mut encrypted_dest = Vec::new();
+        let plaintext = get_test_data((DEFAULT_CHUNK_SIZE * 3) as usize);
 
+        let mut encrypted_data = Vec::new();
         encrypt::<Aes256Gcm, _, _>(
             &key,
-            &mut source,
-            &mut encrypted_dest,
-            "test_key_id".to_string(),
+            Cursor::new(&plaintext),
+            &mut encrypted_data,
+            "test_key".to_string(),
         )
         .unwrap();
 
-        let mut encrypted_source = Cursor::new(&encrypted_dest);
-        let mut decrypted_dest = Vec::new();
-        decrypt::<Aes256Gcm, _, _>(&key, &mut encrypted_source, &mut decrypted_dest).unwrap();
+        let mut decrypted_data = Vec::new();
+        let pending =
+            PendingDecryptor::<_, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        pending
+            .decrypt_to_writer(&key, &mut decrypted_data)
+            .unwrap();
 
-        assert_eq!(plaintext, decrypted_dest);
+        assert_eq!(plaintext, decrypted_data);
     }
 
     #[test]
     fn test_tampered_ciphertext_fails() {
         let key = Aes256Gcm::generate_key().unwrap();
-        let plaintext = b"some important data";
-        let mut source = Cursor::new(plaintext);
-        let mut encrypted_dest = Vec::new();
+        let plaintext = get_test_data(1024);
 
+        let mut encrypted_data = Vec::new();
         encrypt::<Aes256Gcm, _, _>(
             &key,
-            &mut source,
-            &mut encrypted_dest,
-            "test_key_id".to_string(),
+            Cursor::new(&plaintext),
+            &mut encrypted_data,
+            "test_key".to_string(),
         )
         .unwrap();
 
-        // Tamper with the ciphertext body
-        if encrypted_dest.len() > 50 {
-            encrypted_dest[50] ^= 1;
-        }
+        // Tamper
+        let header_len =
+            4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
+        encrypted_data[header_len + 10] ^= 1;
 
-        let mut encrypted_source = Cursor::new(&encrypted_dest);
-        let mut decrypted_dest = Vec::new();
-        let result = decrypt::<Aes256Gcm, _, _>(&key, &mut encrypted_source, &mut decrypted_dest);
+        let mut decrypted_data = Vec::new();
+        let pending =
+            PendingDecryptor::<_, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let result = pending.decrypt_to_writer(&key, &mut decrypted_data);
+
         assert!(result.is_err());
     }
 
@@ -370,21 +430,21 @@ mod tests {
     fn test_wrong_key_fails() {
         let key1 = Aes256Gcm::generate_key().unwrap();
         let key2 = Aes256Gcm::generate_key().unwrap();
-        let plaintext = b"some data";
-        let mut source = Cursor::new(plaintext);
-        let mut encrypted_dest = Vec::new();
+        let plaintext = get_test_data(1024);
 
+        let mut encrypted_data = Vec::new();
         encrypt::<Aes256Gcm, _, _>(
             &key1,
-            &mut source,
-            &mut encrypted_dest,
-            "test_key_id".to_string(),
+            Cursor::new(&plaintext),
+            &mut encrypted_data,
+            "key1".to_string(),
         )
         .unwrap();
 
-        let mut encrypted_source = Cursor::new(&encrypted_dest);
-        let mut decrypted_dest = Vec::new();
-        let result = decrypt::<Aes256Gcm, _, _>(&key2, &mut encrypted_source, &mut decrypted_dest);
+        let mut decrypted_data = Vec::new();
+        let pending =
+            PendingDecryptor::<_, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let result = pending.decrypt_to_writer(&key2, &mut decrypted_data);
         assert!(result.is_err());
     }
 }

@@ -65,11 +65,10 @@ where
     Ok(final_output)
 }
 
-/// Decrypts ciphertext that was encrypted with the corresponding `encrypt` function.
-pub fn decrypt<S: SymmetricAlgorithm>(key: &S::Key, ciphertext: &[u8]) -> Result<Vec<u8>>
-where
-    S::Key: Clone + Send + Sync,
-{
+/// Decodes the header from the beginning of a ciphertext slice.
+///
+/// Returns the parsed `Header` and a slice pointing to the remaining ciphertext body.
+pub fn decode_header(ciphertext: &[u8]) -> Result<(Header, &[u8])> {
     if ciphertext.len() < 4 {
         return Err(Error::InvalidCiphertextFormat);
     }
@@ -81,8 +80,57 @@ where
     let ciphertext_body = &ciphertext[4 + header_len..];
 
     let (header, _) = Header::decode_from_slice(header_bytes)?;
+    Ok((header, ciphertext_body))
+}
 
-    let (chunk_size, base_nonce_array) = match header.payload {
+/// A pending decryptor for in-memory data, waiting for a key.
+///
+/// This state is entered after the header has been successfully parsed from
+/// the ciphertext, allowing the user to inspect the header (e.g., to find
+/// the `key_id`) before supplying the appropriate key to proceed with decryption.
+pub struct PendingDecryptor<'a, S: SymmetricAlgorithm> {
+    header: Header,
+    ciphertext_body: &'a [u8],
+    _phantom: std::marker::PhantomData<S>,
+}
+
+impl<'a, S: SymmetricAlgorithm> PendingDecryptor<'a, S> {
+    /// Creates a new `PendingDecryptor` by parsing the header from the ciphertext.
+    pub fn from_ciphertext(ciphertext: &'a [u8]) -> Result<Self> {
+        let (header, ciphertext_body) = decode_header(ciphertext)?;
+        Ok(Self {
+            header,
+            ciphertext_body,
+            _phantom: std::marker::PhantomData,
+        })
+    }
+
+    /// Returns a reference to the header.
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    /// Consumes the `PendingDecryptor` and returns the decrypted plaintext.
+    pub fn into_plaintext(self, key: &S::Key) -> Result<Vec<u8>>
+    where
+        S::Key: Clone + Send + Sync,
+    {
+        decrypt_body::<S>(key, &self.header, self.ciphertext_body)
+    }
+}
+
+/// Decrypts a ciphertext body using the provided key and header.
+///
+/// This function assumes `decode_header` has been called and its results are provided.
+pub fn decrypt_body<S: SymmetricAlgorithm>(
+    key: &S::Key,
+    header: &Header,
+    ciphertext_body: &[u8],
+) -> Result<Vec<u8>>
+where
+    S::Key: Clone + Send + Sync,
+{
+    let (chunk_size, base_nonce_array) = match &header.payload {
         HeaderPayload::Symmetric {
             stream_info: Some(info),
             ..
@@ -133,9 +181,17 @@ mod tests {
         let plaintext = b"This is a test message that is longer than one chunk to ensure the chunking logic works correctly. Let's add some more data to be sure.";
 
         let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
-        let decrypted = decrypt::<Aes256Gcm>(&key, &encrypted).unwrap();
 
-        assert_eq!(plaintext, decrypted.as_slice());
+        // Test the full convenience function
+        let pending = PendingDecryptor::<Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
+        let decrypted_full = pending.into_plaintext(&key).unwrap();
+        assert_eq!(plaintext, decrypted_full.as_slice());
+
+        // Test the separated functions
+        let (header, body) = decode_header(&encrypted).unwrap();
+        assert_eq!(header.payload.key_id().unwrap(), "test_key_id");
+        let decrypted_parts = decrypt_body::<Aes256Gcm>(&key, &header, body).unwrap();
+        assert_eq!(plaintext, decrypted_parts.as_slice());
     }
 
     #[test]
@@ -144,7 +200,8 @@ mod tests {
         let plaintext = b"";
 
         let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
-        let decrypted = decrypt::<Aes256Gcm>(&key, &encrypted).unwrap();
+        let pending = PendingDecryptor::<Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
+        let decrypted = pending.into_plaintext(&key).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -155,7 +212,8 @@ mod tests {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted = encrypt::<Aes256Gcm>(&key, &plaintext, "test_key_id".to_string()).unwrap();
-        let decrypted = decrypt::<Aes256Gcm>(&key, &encrypted).unwrap();
+        let pending = PendingDecryptor::<Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
+        let decrypted = pending.into_plaintext(&key).unwrap();
 
         assert_eq!(plaintext, decrypted);
     }
@@ -174,7 +232,8 @@ mod tests {
             encrypted[len / 2] ^= 1;
         }
 
-        let result = decrypt::<Aes256Gcm>(&key, &encrypted);
+        let pending = PendingDecryptor::<Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
+        let result = pending.into_plaintext(&key);
         assert!(result.is_err());
     }
 
@@ -186,7 +245,8 @@ mod tests {
 
         let encrypted =
             encrypt::<Aes256Gcm>(&key1, plaintext, "test_key_id_1".to_string()).unwrap();
-        let result = decrypt::<Aes256Gcm>(&key2, &encrypted);
+        let pending = PendingDecryptor::<Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
+        let result = pending.into_plaintext(&key2);
         assert!(result.is_err());
     }
 
@@ -204,7 +264,8 @@ mod tests {
             encrypted[20] ^= 1;
         }
 
-        let result = decrypt::<Aes256Gcm>(&key, &encrypted);
+        let pending = PendingDecryptor::<Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
+        let result = pending.into_plaintext(&key);
         assert!(result.is_err());
     }
 }

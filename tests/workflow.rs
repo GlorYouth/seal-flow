@@ -6,11 +6,10 @@
 use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm as TestDek;
 use seal_crypto::{prelude::*, schemes::hash::Sha256};
-use seal_flow::seal::{
-    hybrid::HybridSeal, peek_hybrid_kek_id, peek_symmetric_key_id, symmetric::SymmetricSeal,
-};
+use seal_flow::seal::{hybrid::HybridSeal, symmetric::SymmetricSeal};
 use std::collections::HashMap;
 use std::io::Cursor;
+use tokio::io::AsyncReadExt;
 
 type TestKem = Rsa2048<Sha256>;
 
@@ -65,26 +64,25 @@ fn test_symmetric_workflow() {
     store.add_key(key_id.clone(), key.clone());
 
     let plaintext = b"This is the symmetric workflow test.";
+    let seal = SymmetricSeal::new();
 
     // --- Encryption Side ---
-    let encrypted = SymmetricSeal::new(&key)
+    let encrypted = seal
         .in_memory::<TestDek>()
-        .encrypt(plaintext, key_id.clone())
+        .encrypt(&key, plaintext, key_id.clone())
         .unwrap();
 
     // --- Decryption Side (simulated) ---
-    // 1. Peek the key ID from the header.
-    let peeked_id = peek_symmetric_key_id(Cursor::new(&encrypted)).unwrap();
+    // 1. Create a pending decryptor to peek the key ID from the header.
+    let pending_decryptor = seal.in_memory::<TestDek>().decrypt(&encrypted).unwrap();
+    let peeked_id = pending_decryptor.key_id().unwrap();
     assert_eq!(key_id, peeked_id);
 
     // 2. Use the ID to get the correct key from the store.
-    let decryption_key = store.get_key(&peeked_id).unwrap();
+    let decryption_key = store.get_key(peeked_id).unwrap();
 
     // 3. Decrypt using the retrieved key.
-    let decrypted = SymmetricSeal::new(decryption_key)
-        .in_memory::<TestDek>()
-        .decrypt(&encrypted)
-        .unwrap();
+    let decrypted = pending_decryptor.with_key(decryption_key).unwrap();
 
     // --- Verification ---
     assert_eq!(plaintext, decrypted.as_slice());
@@ -99,25 +97,29 @@ fn test_hybrid_workflow() {
     store.add_key(kek_id.clone(), sk);
 
     let plaintext = b"This is the hybrid workflow test.";
+    let seal = HybridSeal::new();
 
     // --- Encryption Side ---
-    let encrypted = HybridSeal::<TestKem>::new_encrypt(&pk)
-        .in_memory::<TestDek>()
-        .encrypt(plaintext, kek_id.clone())
+    let encrypted = seal
+        .in_memory::<TestKem, TestDek>()
+        .encrypt(&pk, plaintext, kek_id.clone())
         .unwrap();
 
     // --- Decryption Side (simulated) ---
-    // 1. Peek the KEK ID from the header.
-    let peeked_id = peek_hybrid_kek_id(Cursor::new(&encrypted)).unwrap();
+    // 1. Create a pending decryptor to peek the KEK ID from the header.
+    let pending_decryptor = seal
+        .in_memory::<TestKem, TestDek>()
+        .decrypt(&encrypted)
+        .unwrap();
+    let peeked_id = pending_decryptor.kek_id().unwrap();
     assert_eq!(kek_id, peeked_id);
 
     // 2. Use the ID to get the correct private key from the store.
-    let decryption_key = store.get_key(&peeked_id).unwrap();
+    let decryption_key = store.get_key(peeked_id).unwrap();
 
     // 3. Decrypt using the retrieved private key.
-    let decrypted = HybridSeal::<TestKem>::new_decrypt(decryption_key)
-        .in_memory::<TestDek>()
-        .decrypt(&encrypted)
+    let decrypted = pending_decryptor
+        .with_private_key(decryption_key)
         .unwrap();
 
     // --- Verification ---
@@ -127,8 +129,6 @@ fn test_hybrid_workflow() {
 #[cfg(feature = "async")]
 mod async_workflow_tests {
     use super::*;
-    use seal_flow::seal::{peek_hybrid_kek_id_async, peek_symmetric_key_id_async};
-    use std::io::Cursor;
     use tokio::io::AsyncWriteExt;
 
     #[tokio::test]
@@ -140,39 +140,33 @@ mod async_workflow_tests {
         store.add_key(key_id.clone(), key.clone());
 
         let plaintext = b"This is the async symmetric workflow test.";
+        let seal = SymmetricSeal::new();
 
         // --- Encryption Side ---
         let mut encrypted_data = Vec::new();
-        let mut encryptor = SymmetricSeal::new(&key)
-            .asynchronous::<TestDek>()
-            .encryptor(&mut encrypted_data, key_id.clone())
+        let mut encryptor = seal
+            .asynchronous_encryptor::<TestDek, _>(&mut encrypted_data, &key, key_id.clone())
             .await
             .unwrap();
-        tokio::io::copy(&mut Cursor::new(plaintext), &mut encryptor)
-            .await
-            .unwrap();
+        encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
         // --- Decryption Side (simulated) ---
         // 1. Peek the key ID asynchronously.
-        let peeked_id = peek_symmetric_key_id_async(Cursor::new(&encrypted_data))
+        let pending_decryptor = seal
+            .asynchronous_decryptor_from_reader::<TestDek, _>(Cursor::new(&encrypted_data))
             .await
             .unwrap();
+        let peeked_id = pending_decryptor.key_id().unwrap();
         assert_eq!(key_id, peeked_id);
 
         // 2. Get key from store.
-        let decryption_key = store.get_key(&peeked_id).unwrap();
+        let decryption_key = store.get_key(peeked_id).unwrap();
 
         // 3. Decrypt asynchronously.
         let mut decrypted_data = Vec::new();
-        let mut decryptor = SymmetricSeal::new(decryption_key)
-            .asynchronous::<TestDek>()
-            .decryptor(Cursor::new(&encrypted_data))
-            .await
-            .unwrap();
-        tokio::io::copy(&mut decryptor, &mut decrypted_data)
-            .await
-            .unwrap();
+        let mut decryptor = pending_decryptor.with_key(decryption_key).unwrap();
+        decryptor.read_to_end(&mut decrypted_data).await.unwrap();
 
         // --- Verification ---
         assert_eq!(plaintext, decrypted_data.as_slice());
@@ -184,42 +178,45 @@ mod async_workflow_tests {
         let mut store = AsymmetricKeyStore::new();
         let kek_id = "async-hybrid-key-01".to_string();
         let (pk, sk) = TestKem::generate_keypair().unwrap();
-        store.add_key(kek_id.clone(), sk);
+        store.add_key(kek_id.clone(), sk.clone());
 
         let plaintext = b"This is the async hybrid workflow test.";
+        let seal = HybridSeal::new();
 
         // --- Encryption Side ---
         let mut encrypted_data = Vec::new();
-        let mut encryptor = HybridSeal::<TestKem>::new_encrypt(&pk)
-            .asynchronous::<TestDek>()
-            .encryptor(&mut encrypted_data, kek_id.clone())
+        let mut encryptor = seal
+            .asynchronous_encryptor::<TestKem, TestDek, _>(
+                &mut encrypted_data,
+                pk.clone(),
+                kek_id.clone(),
+            )
             .await
             .unwrap();
-        tokio::io::copy(&mut Cursor::new(plaintext), &mut encryptor)
-            .await
-            .unwrap();
+        encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
         // --- Decryption Side (simulated) ---
         // 1. Peek the KEK ID asynchronously.
-        let peeked_id = peek_hybrid_kek_id_async(Cursor::new(&encrypted_data))
+        let pending_decryptor = seal
+            .asynchronous_decryptor_from_reader::<TestKem, TestDek, _>(Cursor::new(
+                &encrypted_data,
+            ))
             .await
             .unwrap();
+        let peeked_id = pending_decryptor.kek_id().unwrap();
         assert_eq!(kek_id, peeked_id);
 
         // 2. Get key from store.
-        let decryption_key = store.get_key(&peeked_id).unwrap();
+        let decryption_key = store.get_key(peeked_id).unwrap();
 
         // 3. Decrypt asynchronously.
         let mut decrypted_data = Vec::new();
-        let mut decryptor = HybridSeal::<TestKem>::new_decrypt(decryption_key)
-            .asynchronous::<TestDek>()
-            .decryptor(Cursor::new(&encrypted_data))
+        let mut decryptor = pending_decryptor
+            .with_private_key(decryption_key.clone())
             .await
             .unwrap();
-        tokio::io::copy(&mut decryptor, &mut decrypted_data)
-            .await
-            .unwrap();
+        decryptor.read_to_end(&mut decrypted_data).await.unwrap();
 
         // --- Verification ---
         assert_eq!(plaintext, decrypted_data.as_slice());

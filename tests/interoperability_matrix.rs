@@ -39,20 +39,20 @@ impl SymmetricEncryptorMode {
         plaintext: &[u8],
     ) -> Result<Vec<u8>> {
         let key_id = "test_key_id".to_string();
-        let seal = SymmetricSeal::new(key);
+        let seal = SymmetricSeal::new();
 
         match self {
             SymmetricEncryptorMode::Ordinary => {
-                seal.in_memory::<TestDek>().encrypt(plaintext, key_id)
+                seal.in_memory::<TestDek>()
+                    .encrypt(key, plaintext, key_id)
             }
             SymmetricEncryptorMode::Parallel => seal
                 .in_memory_parallel::<TestDek>()
-                .encrypt(plaintext, key_id),
+                .encrypt(key, plaintext, key_id),
             SymmetricEncryptorMode::Streaming => {
                 let mut encrypted_data = Vec::new();
-                let mut encryptor = seal
-                    .streaming::<TestDek>()
-                    .encryptor(&mut encrypted_data, key_id)?;
+                let mut encryptor =
+                    seal.streaming_encryptor::<TestDek, _>(&mut encrypted_data, key, key_id)?;
                 encryptor.write_all(plaintext)?;
                 encryptor.finish()?;
                 Ok(encrypted_data)
@@ -60,8 +60,7 @@ impl SymmetricEncryptorMode {
             SymmetricEncryptorMode::AsyncStreaming => {
                 let mut encrypted_data = Vec::new();
                 let mut encryptor = seal
-                    .asynchronous::<TestDek>()
-                    .encryptor(&mut encrypted_data, key_id)
+                    .asynchronous_encryptor::<TestDek, _>(&mut encrypted_data, key, key_id)
                     .await?;
                 encryptor.write_all(plaintext).await?;
                 encryptor.shutdown().await?;
@@ -69,11 +68,8 @@ impl SymmetricEncryptorMode {
             }
             SymmetricEncryptorMode::ParallelStreaming => {
                 let mut encrypted_data = Vec::new();
-                seal.parallel_streaming::<TestDek>().encrypt(
-                    Cursor::new(plaintext),
-                    &mut encrypted_data,
-                    key_id,
-                )?;
+                seal.parallel_streaming::<TestDek>()
+                    .encrypt(key, Cursor::new(plaintext), &mut encrypted_data, key_id)?;
                 Ok(encrypted_data)
             }
         }
@@ -86,33 +82,39 @@ impl SymmetricDecryptorMode {
         key: &<TestDek as SymmetricKeySet>::Key,
         ciphertext: &[u8],
     ) -> Result<Vec<u8>> {
-        let seal = SymmetricSeal::new(key);
+        let seal = SymmetricSeal::new();
         match self {
-            SymmetricDecryptorMode::Ordinary => seal.in_memory::<TestDek>().decrypt(ciphertext),
-            SymmetricDecryptorMode::Parallel => {
-                seal.in_memory_parallel::<TestDek>().decrypt(ciphertext)
-            }
+            SymmetricDecryptorMode::Ordinary => seal
+                .in_memory::<TestDek>()
+                .decrypt(ciphertext)?
+                .with_key(key),
+            SymmetricDecryptorMode::Parallel => seal
+                .in_memory_parallel::<TestDek>()
+                .decrypt(ciphertext)?
+                .with_key(key),
             SymmetricDecryptorMode::Streaming => {
-                let mut decryptor = seal
-                    .streaming::<TestDek>()
-                    .decryptor(Cursor::new(ciphertext))?;
+                let pending =
+                    seal.streaming_decryptor_from_reader::<TestDek, _>(Cursor::new(ciphertext))?;
+                let mut decryptor = pending.with_key(key)?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data)?;
                 Ok(decrypted_data)
             }
             SymmetricDecryptorMode::AsyncStreaming => {
-                let mut decryptor = seal
-                    .asynchronous::<TestDek>()
-                    .decryptor(Cursor::new(ciphertext))
+                let pending = seal
+                    .asynchronous_decryptor_from_reader::<TestDek, _>(Cursor::new(ciphertext))
                     .await?;
+                let mut decryptor = pending.with_key(key)?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data).await?;
                 Ok(decrypted_data)
             }
             SymmetricDecryptorMode::ParallelStreaming => {
                 let mut decrypted_data = Vec::new();
-                seal.parallel_streaming::<TestDek>()
-                    .decrypt(Cursor::new(ciphertext), &mut decrypted_data)?;
+                let pending = seal
+                    .parallel_streaming::<TestDek>()
+                    .decrypt(Cursor::new(ciphertext))?;
+                pending.with_key_to_writer(key, &mut decrypted_data)?;
                 Ok(decrypted_data)
             }
         }
@@ -196,18 +198,17 @@ impl HybridEncryptorMode {
         plaintext: &[u8],
     ) -> Result<Vec<u8>> {
         let kek_id = "test_kek_id".to_string();
-        let seal = HybridSeal::<TestKem>::new_encrypt(pk);
+        let seal = HybridSeal::new();
 
         match self {
-            HybridEncryptorMode::Ordinary => seal.in_memory::<TestDek>().encrypt(plaintext, kek_id),
+            HybridEncryptorMode::Ordinary => seal.in_memory::<TestKem, TestDek>().encrypt(pk, plaintext, kek_id),
             HybridEncryptorMode::Parallel => seal
-                .in_memory_parallel::<TestDek>()
-                .encrypt(plaintext, kek_id),
+                .in_memory_parallel::<TestKem, TestDek>()
+                .encrypt(pk, plaintext, kek_id),
             HybridEncryptorMode::Streaming => {
                 let mut encrypted_data = Vec::new();
-                let mut encryptor = seal
-                    .streaming::<TestDek>()
-                    .encryptor(&mut encrypted_data, kek_id)?;
+                let mut encryptor =
+                    seal.streaming_encryptor::<TestKem, TestDek, _>(&mut encrypted_data, pk, kek_id)?;
                 encryptor.write_all(plaintext)?;
                 encryptor.finish()?;
                 Ok(encrypted_data)
@@ -215,8 +216,7 @@ impl HybridEncryptorMode {
             HybridEncryptorMode::AsyncStreaming => {
                 let mut encrypted_data = Vec::new();
                 let mut encryptor = seal
-                    .asynchronous::<TestDek>()
-                    .encryptor(&mut encrypted_data, kek_id)
+                    .asynchronous_encryptor::<TestKem, TestDek, _>(&mut encrypted_data, pk.clone(), kek_id)
                     .await?;
                 encryptor.write_all(plaintext).await?;
                 encryptor.shutdown().await?;
@@ -224,7 +224,8 @@ impl HybridEncryptorMode {
             }
             HybridEncryptorMode::ParallelStreaming => {
                 let mut encrypted_data = Vec::new();
-                seal.parallel_streaming::<TestDek>().encrypt(
+                seal.parallel_streaming::<TestKem, TestDek>().encrypt(
+                    pk,
                     Cursor::new(plaintext),
                     &mut encrypted_data,
                     kek_id,
@@ -241,33 +242,43 @@ impl HybridDecryptorMode {
         sk: &<TestKem as AsymmetricKeySet>::PrivateKey,
         ciphertext: &[u8],
     ) -> Result<Vec<u8>> {
-        let seal = HybridSeal::<TestKem>::new_decrypt(sk);
+        let seal = HybridSeal::new();
         match self {
-            HybridDecryptorMode::Ordinary => seal.in_memory::<TestDek>().decrypt(ciphertext),
-            HybridDecryptorMode::Parallel => {
-                seal.in_memory_parallel::<TestDek>().decrypt(ciphertext)
-            }
+            HybridDecryptorMode::Ordinary => seal
+                .in_memory::<TestKem, TestDek>()
+                .decrypt(ciphertext)?
+                .with_private_key(sk),
+            HybridDecryptorMode::Parallel => seal
+                .in_memory_parallel::<TestKem, TestDek>()
+                .decrypt(ciphertext)?
+                .with_private_key(sk),
             HybridDecryptorMode::Streaming => {
-                let mut decryptor = seal
-                    .streaming::<TestDek>()
-                    .decryptor(Cursor::new(ciphertext))?;
+                let pending = seal
+                    .streaming_decryptor_from_reader::<TestKem, TestDek, _>(Cursor::new(
+                        ciphertext,
+                    ))?;
+                let mut decryptor = pending.with_private_key(sk)?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data)?;
                 Ok(decrypted_data)
             }
             HybridDecryptorMode::AsyncStreaming => {
-                let mut decryptor = seal
-                    .asynchronous::<TestDek>()
-                    .decryptor(Cursor::new(ciphertext))
+                let pending = seal
+                    .asynchronous_decryptor_from_reader::<TestKem, TestDek, _>(Cursor::new(
+                        ciphertext,
+                    ))
                     .await?;
+                let mut decryptor = pending.with_private_key(sk.clone()).await?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data).await?;
                 Ok(decrypted_data)
             }
             HybridDecryptorMode::ParallelStreaming => {
                 let mut decrypted_data = Vec::new();
-                seal.parallel_streaming::<TestDek>()
-                    .decrypt(Cursor::new(ciphertext), &mut decrypted_data)?;
+                let pending = seal
+                    .parallel_streaming::<TestKem, TestDek>()
+                    .decrypt(Cursor::new(ciphertext))?;
+                pending.with_private_key_to_writer(sk, &mut decrypted_data)?;
                 Ok(decrypted_data)
             }
         }

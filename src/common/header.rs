@@ -33,6 +33,24 @@ pub enum HeaderPayload {
     },
 }
 
+impl HeaderPayload {
+    /// Returns the key ID if the payload is for symmetric encryption.
+    pub fn key_id(&self) -> Option<&str> {
+        match self {
+            HeaderPayload::Symmetric { key_id, .. } => Some(key_id),
+            _ => None,
+        }
+    }
+
+    /// Returns the Key-Encrypting-Key (KEK) ID if the payload is for hybrid encryption.
+    pub fn kek_id(&self) -> Option<&str> {
+        match self {
+            HeaderPayload::Hybrid { kek_id, .. } => Some(kek_id),
+            _ => None,
+        }
+    }
+}
+
 /// 所有加密数据流的元数据信封
 #[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
 pub struct Header {

@@ -48,18 +48,24 @@ fn main() -> Result<()> {
     let key_id = "my-secret-key-id".to_string();
     let plaintext = b"这是需要被保护的数据。";
 
-    // 高层API是流畅且易于使用的构建者模式
-    let seal = SymmetricSeal::new(&key);
+    // 高层API工厂是无状态且易于使用的
+    let seal = SymmetricSeal::new();
 
     // 加密内存中的数据
     let ciphertext = seal
         .in_memory::<Aes256Gcm>()
-        .encrypt(plaintext, key_id)?;
+        .encrypt(&key, plaintext, key_id)?;
 
     // 解密内存中的数据
-    let decrypted_text = seal
+    // API 推荐一个更安全的两步解密流程。
+    // 首先，创建一个待定解密器，在不解密的情况下检查元数据。
+    let pending_decryptor = seal
         .in_memory::<Aes256Gcm>()
         .decrypt(&ciphertext)?;
+
+    // 现在你可以从头部检查密钥ID，以找到正确的密钥。
+    // 在此示例中，我们将使用已有的密钥。
+    let decrypted_text = pending_decryptor.with_key(&key)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("成功加密和解密数据！");
@@ -67,48 +73,56 @@ fn main() -> Result<()> {
 }
 ```
 
-### 从流中窥探密钥ID (Peeking Key IDs)
+### 解密工作流：查找并使用正确的密钥
 
-在解密之前，你通常需要知道该使用哪个密钥。`seal-flow` 允许你"窥探"加密数据流的头部以提取密钥ID，而无需处理整个文件。
+在解密之前，你通常需要知道该使用哪个密钥。`seal-flow` 提供了一个安全且符合人体工程学的 `PendingDecryptor` 模式来解决这个问题。你可以在提供密钥和处理密文*之前*，检查加密流的元数据以获取密钥ID。
+
+这个工作流可以防止出错并简化密钥管理。
 
 ```rust
 use seal_flow::prelude::*;
-use seal_flow::seal::peek_symmetric_key_id;
 use seal_crypto::prelude::SymmetricKeyGenerator;
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 use std::collections::HashMap;
 use std::io::Cursor;
 
 fn main() -> Result<()> {
-    // 假设有一个密钥存储
+    // 1. 设置一个密钥存储并创建一个密钥
     let mut key_store = HashMap::new();
     let key1 = Aes256Gcm::generate_key()?;
-    key_store.insert("key-id-1".to_string(), key1);
-
+    let key_id = "key-id-1".to_string();
+    key_store.insert(key_id.clone(), key1);
+    
     let plaintext = b"一些机密数据";
+    let seal = SymmetricSeal::new();
 
-    // 使用特定密钥进行加密
-    let ciphertext = SymmetricSeal::new(key_store.get("key-id-1").unwrap())
+    // 2. 使用特定的密钥ID加密数据
+    let ciphertext = seal
         .in_memory::<Aes256Gcm>()
-        .encrypt(plaintext, "key-id-1".to_string())?;
+        .encrypt(key_store.get(&key_id).unwrap(), plaintext, key_id)?;
 
     // --- 解密工作流 ---
-    // 1. 从流中窥探密钥ID。
-    // 读取器的位置会被推进，因此对于真实的网络流，
-    // 你可能需要使用 BufReader 来避免数据丢失。
-    let peeked_id = peek_symmetric_key_id(Cursor::new(&ciphertext))?;
-    assert_eq!(peeked_id, "key-id-1");
+
+    // 3. 通过从读取器创建一个待定解密器来开始解密过程
+    let pending_decryptor = seal
+        .streaming_decryptor_from_reader::<Aes256Gcm, _>(Cursor::new(&ciphertext))?;
+
+    // 4. 从加密头部获取密钥ID。这是一个廉价的操作。
+    let found_key_id = pending_decryptor.key_id().expect("在头部未找到密钥ID！");
+    println!("找到密钥ID: {}", found_key_id);
     
-    // 2. 从你的密钥存储中检索正确的密钥。
-    let decryption_key = key_store.get(&peeked_id).expect("未找到密钥！");
+    // 5. 从你的密钥存储中检索正确的密钥。
+    let decryption_key = key_store.get(found_key_id).expect("在存储中未找到密钥！");
 
-    // 3. 解密数据。
-    let decrypted = SymmetricSeal::new(decryption_key)
-        .in_memory::<Aes256Gcm>()
-        .decrypt(&ciphertext)?;
+    // 6. 提供密钥以获得一个功能完备的解密器。
+    let mut decryptor = pending_decryptor.with_key(decryption_key)?;
+    
+    // 7. 解密数据。
+    let mut decrypted_text = Vec::new();
+    decryptor.read_to_end(&mut decrypted_text)?;
 
-    assert_eq!(plaintext, &decrypted[..]);
-    println!("成功窥探密钥ID并解密数据！");
+    assert_eq!(plaintext, &decrypted_text[..]);
+    println!("成功识别密钥ID并解密数据！");
 
     Ok(())
 }
@@ -136,10 +150,10 @@ cargo run --example mid_level_hybrid --features=async
 
 ### 高层API (`seal` module)
 
-使用构建者模式以实现最大程度的简洁性。
+使用无状态工厂以实现最大程度的简洁性和灵活性。
 
--   **对称加密:** `SymmetricSeal::new(&key).<mode>.<operation>()`
--   **混合加密:** `HybridSeal::new_encrypt(&pk).<mode>.encrypt()` 或 `HybridSeal::new_decrypt(&sk).<mode>.decrypt()
+-   **对称加密:** `SymmetricSeal::new().<mode>.<operation>(&key, ...)`
+-   **混合加密:** `HybridSeal::new().<mode>.encrypt(&pk, ...)` 或 `HybridSeal::new().<mode>.decrypt(&sk, ...)`
 
 ### 中层API (`flows` module)
 

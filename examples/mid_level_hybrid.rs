@@ -2,6 +2,7 @@ use seal_crypto::{prelude::*, schemes::asymmetric::traditional::rsa::Rsa2048};
 use seal_crypto::{schemes::hash::Sha256, schemes::symmetric::aes_gcm::Aes256Gcm};
 use seal_flow::error::Result;
 use seal_flow::flows::hybrid::*;
+use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -12,20 +13,35 @@ const KEK_ID: &str = "mid-level-hybrid-key";
 #[tokio::main]
 async fn main() -> Result<()> {
     // 1. Setup
+    let mut key_store = HashMap::new();
     let (pk, sk) = Kem::generate_keypair()?;
+    key_store.insert(KEK_ID.to_string(), sk);
+
     let plaintext = b"This is a test message for the mid-level hybrid API.";
 
     // --- Mode 1: In-Memory (Ordinary) ---
     println!("--- Testing Mode: In-Memory (Ordinary) ---");
     let ciphertext1 = ordinary::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string())?;
-    let decrypted1 = ordinary::decrypt::<Kem, Dek>(&sk, &ciphertext1)?;
+
+    let (header1, body1) = ordinary::decode_header(&ciphertext1)?;
+    let found_kek_id1 = header1.payload.kek_id().unwrap();
+    println!("Found KEK ID in header: '{}'", found_kek_id1);
+    let decryption_key1 = key_store.get(found_kek_id1).unwrap();
+    let decrypted1 = ordinary::decrypt_body::<Kem, Dek>(decryption_key1, &header1, body1)?;
+
     assert_eq!(plaintext, &decrypted1[..]);
     println!("In-Memory (Ordinary) roundtrip successful!");
 
     // --- Mode 2: In-Memory Parallel ---
     println!("\n--- Testing Mode: In-Memory Parallel ---");
     let ciphertext2 = parallel::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string())?;
-    let decrypted2 = parallel::decrypt::<Kem, Dek>(&sk, &ciphertext2)?;
+
+    let (header2, body2) = parallel::decode_header(&ciphertext2)?;
+    let found_kek_id2 = header2.payload.kek_id().unwrap();
+    println!("Found KEK ID in parallel header: '{}'", found_kek_id2);
+    let decryption_key2 = key_store.get(found_kek_id2).unwrap();
+    let decrypted2 = parallel::decrypt_body::<Kem, Dek>(decryption_key2, &header2, body2)?;
+
     assert_eq!(plaintext, &decrypted2[..]);
     println!("In-Memory Parallel roundtrip successful!");
 
@@ -37,8 +53,13 @@ async fn main() -> Result<()> {
     encryptor3.write_all(plaintext)?;
     encryptor3.finish()?;
 
-    let mut decryptor3 =
-        streaming::Decryptor::<_, Kem, Dek>::new(Cursor::new(&ciphertext3), &sk)?;
+    let pending_decryptor3 =
+        streaming::PendingDecryptor::<_, Kem, Dek>::from_reader(Cursor::new(&ciphertext3))?;
+    let found_kek_id3 = pending_decryptor3.header().payload.kek_id().unwrap();
+    println!("Found KEK ID in stream: '{}'", found_kek_id3);
+    let decryption_key3 = key_store.get(found_kek_id3).unwrap();
+    let mut decryptor3 = pending_decryptor3.into_decryptor(decryption_key3)?;
+
     let mut decrypted3 = Vec::new();
     decryptor3.read_to_end(&mut decrypted3)?;
     assert_eq!(plaintext, &decrypted3[..]);
@@ -53,8 +74,15 @@ async fn main() -> Result<()> {
     encryptor4.write_all(plaintext).await?;
     encryptor4.shutdown().await?;
 
-    let mut decryptor4 =
-        asynchronous::Decryptor::<_, Kem, Dek>::new(Cursor::new(&ciphertext4), sk.clone()).await?;
+    let pending_decryptor4 =
+        asynchronous::PendingDecryptor::<_, Kem, Dek>::from_reader(Cursor::new(&ciphertext4)).await?;
+    let found_kek_id4 = pending_decryptor4.header().payload.kek_id().unwrap();
+    println!("Found KEK ID in async stream: '{}'", found_kek_id4);
+    let decryption_key4 = key_store.get(found_kek_id4).unwrap();
+    let mut decryptor4 = pending_decryptor4
+        .into_decryptor(decryption_key4.clone())
+        .await?;
+
     let mut decrypted4 = Vec::new();
     decryptor4.read_to_end(&mut decrypted4).await?;
     assert_eq!(plaintext, &decrypted4[..]);
@@ -71,10 +99,22 @@ async fn main() -> Result<()> {
     )?;
 
     let mut decrypted5 = Vec::new();
-    parallel_streaming::decrypt::<Kem, Dek, _, _>(&sk, Cursor::new(&ciphertext5), &mut decrypted5)?;
+    let mut source5 = Cursor::new(&ciphertext5);
+    let header5 =
+        parallel_streaming::decode_header_from_stream(&mut source5)?;
+    let found_kek_id5 = header5.payload.kek_id().unwrap();
+    println!("Found KEK ID in parallel stream: '{}'", found_kek_id5);
+    let decryption_key5 = key_store.get(found_kek_id5).unwrap();
+    parallel_streaming::decrypt_body_stream::<Kem, Dek, _, _>(
+        decryption_key5,
+        &header5,
+        source5,
+        &mut decrypted5,
+    )?;
+
     assert_eq!(plaintext, &decrypted5[..]);
     println!("Parallel Streaming roundtrip successful!");
 
     println!("\nAll mid-level hybrid modes are interoperable and successful.");
     Ok(())
-} 
+}

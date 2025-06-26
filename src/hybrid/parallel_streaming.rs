@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::thread;
+use std::marker::PhantomData;
 
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 const CHANNEL_BOUND: usize = 16;
@@ -139,8 +140,71 @@ where
     })
 }
 
-pub fn decrypt<A, S, R: Read + Send + Sync, W: Write + Send + Sync>(
+/// Reads and decodes the header from the beginning of a reader.
+pub fn decode_header_from_stream<R: Read>(reader: &mut R) -> Result<Header> {
+    let mut header_len_bytes = [0u8; 4];
+    reader.read_exact(&mut header_len_bytes)?;
+    let header_len = u32::from_le_bytes(header_len_bytes);
+
+    let mut header_bytes = vec![0; header_len as usize];
+    reader.read_exact(&mut header_bytes)?;
+    let (header, _) = Header::decode_from_slice(&header_bytes).map_err(Error::from)?;
+    Ok(header)
+}
+
+/// A pending decryptor for a parallel hybrid stream, waiting for the private key.
+///
+/// This state is entered after the header has been successfully read from the
+/// stream, allowing the user to inspect the header (e.g., to find the `kek_id`)
+/// before supplying the appropriate private key to proceed with decryption.
+pub struct PendingDecryptor<R, A, S>
+where
+    R: Read + Send,
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+{
+    reader: R,
+    header: Header,
+    _phantom: PhantomData<(A, S)>,
+}
+
+impl<R, A, S> PendingDecryptor<R, A, S>
+where
+    R: Read + Send,
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+{
+    /// Creates a new `PendingDecryptor` by reading the header from the stream.
+    pub fn from_reader(mut reader: R) -> Result<Self> {
+        let header = decode_header_from_stream(&mut reader)?;
+        Ok(Self {
+            reader,
+            header,
+            _phantom: PhantomData,
+        })
+    }
+
+    /// Returns a reference to the header.
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    /// Consumes the `PendingDecryptor` and decrypts the rest of the stream,
+    /// writing the plaintext to the provided writer.
+    pub fn decrypt_to_writer<W: Write>(self, sk: &A::PrivateKey, writer: W) -> Result<()>
+    where
+        S::Key: From<Zeroizing<Vec<u8>>>,
+        A::PrivateKey: Clone,
+        A::EncapsulatedKey: From<Vec<u8>>,
+    {
+        decrypt_body_stream::<A, S, _, _>(sk, &self.header, self.reader, writer)
+    }
+}
+
+/// Decrypts a data stream body and writes to a writer using a parallel streaming approach.
+pub fn decrypt_body_stream<A, S, R, W>(
     private_key: &A::PrivateKey,
+    header: &Header,
     mut reader: R,
     mut writer: W,
 ) -> Result<()>
@@ -150,26 +214,23 @@ where
     S::Key: From<Zeroizing<Vec<u8>>>,
     A::PrivateKey: Clone,
     A::EncapsulatedKey: From<Vec<u8>>,
+    R: Read + Send,
+    W: Write,
 {
-    let mut header_len_bytes = [0u8; 4];
-    reader.read_exact(&mut header_len_bytes)?;
-    let header_len = u32::from_le_bytes(header_len_bytes);
-
-    let mut header_bytes = vec![0; header_len as usize];
-    reader.read_exact(&mut header_bytes)?;
-    let (header, _) = Header::decode_from_slice(&header_bytes).map_err(Error::from)?;
-
-    let (chunk_size, base_nonce, encapsulated_key) = match header.payload {
+    let (chunk_size, base_nonce, encapsulated_key) = match &header.payload {
         HeaderPayload::Hybrid {
             stream_info: Some(info),
             encrypted_dek,
             ..
-        } => (info.chunk_size, info.base_nonce, encrypted_dek.into()),
+        } => (
+            info.chunk_size,
+            info.base_nonce,
+            encrypted_dek.clone().into(),
+        ),
         _ => return Err(Error::InvalidHeader),
     };
 
     let shared_secret = A::decapsulate(&private_key.clone().into(), &encapsulated_key)?;
-
     let encrypted_chunk_size = (chunk_size as usize) + S::TAG_SIZE;
 
     let (enc_chunk_tx, enc_chunk_rx) = mpsc::sync_channel::<(u64, Vec<u8>)>(CHANNEL_BOUND);
@@ -268,97 +329,107 @@ mod tests {
     #[test]
     fn test_hybrid_parallel_streaming_roundtrip() {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let plaintext = get_test_data(DEFAULT_CHUNK_SIZE as usize * 3 + 100);
-        let mut source = Cursor::new(&plaintext);
-        let mut encrypted_dest = Vec::new();
+        let kek_id = "test-kek-id".to_string();
+        let plaintext = get_test_data(1024 * 1024); // 1 MiB
 
+        let mut encrypted_data = Vec::new();
         encrypt::<Rsa2048, Aes256Gcm, _, _>(
             &pk,
-            &mut source,
-            &mut encrypted_dest,
-            "test_kek_id".to_string(),
+            Cursor::new(&plaintext),
+            &mut encrypted_data,
+            kek_id.clone(),
         )
         .unwrap();
 
-        let mut encrypted_source = Cursor::new(&encrypted_dest);
-        let mut decrypted_dest = Vec::new();
-        decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk, &mut encrypted_source, &mut decrypted_dest)
+        let mut decrypted_data = Vec::new();
+        let pending =
+            PendingDecryptor::<_, Rsa2048, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data))
+                .unwrap();
+        assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
+        pending
+            .decrypt_to_writer(&sk, &mut decrypted_data)
             .unwrap();
 
-        assert_eq!(plaintext, decrypted_dest);
+        assert_eq!(plaintext, decrypted_data);
     }
 
     #[test]
     fn test_empty_input() {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let plaintext: Vec<u8> = Vec::new();
-        let mut source = Cursor::new(&plaintext);
-        let mut encrypted_dest = Vec::new();
+        let kek_id = "test-kek-id".to_string();
+        let plaintext = get_test_data(0);
 
+        let mut encrypted_data = Vec::new();
         encrypt::<Rsa2048, Aes256Gcm, _, _>(
             &pk,
-            &mut source,
-            &mut encrypted_dest,
-            "test_kek_id".to_string(),
+            Cursor::new(&plaintext),
+            &mut encrypted_data,
+            kek_id.clone(),
         )
         .unwrap();
 
-        let mut encrypted_source = Cursor::new(&encrypted_dest);
-        let mut decrypted_dest = Vec::new();
-        decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk, &mut encrypted_source, &mut decrypted_dest)
+        let mut decrypted_data = Vec::new();
+        let pending =
+            PendingDecryptor::<_, Rsa2048, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data))
+                .unwrap();
+        assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
+        pending
+            .decrypt_to_writer(&sk, &mut decrypted_data)
             .unwrap();
 
-        assert_eq!(plaintext, decrypted_dest);
+        assert_eq!(plaintext, decrypted_data);
     }
 
     #[test]
     fn test_tampered_ciphertext_fails() {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let plaintext = b"some important data";
-        let mut source = Cursor::new(plaintext);
-        let mut encrypted_dest = Vec::new();
+        let kek_id = "test-kek-id".to_string();
+        let plaintext = get_test_data(1024);
 
+        let mut encrypted_data = Vec::new();
         encrypt::<Rsa2048, Aes256Gcm, _, _>(
             &pk,
-            &mut source,
-            &mut encrypted_dest,
-            "test_kek_id".to_string(),
+            Cursor::new(&plaintext),
+            &mut encrypted_data,
+            kek_id.clone(),
         )
         .unwrap();
 
-        // Tamper with the ciphertext body
-        if encrypted_dest.len() > 100 {
-            // Tamper after the header
-            encrypted_dest[100] ^= 1;
-        }
+        // Tamper
+        let header_len =
+            4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
+        encrypted_data[header_len + 10] ^= 1;
 
-        let mut encrypted_source = Cursor::new(&encrypted_dest);
-        let mut decrypted_dest = Vec::new();
-        let result =
-            decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk, &mut encrypted_source, &mut decrypted_dest);
+        let mut decrypted_data = Vec::new();
+        let pending =
+            PendingDecryptor::<_, Rsa2048, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data))
+                .unwrap();
+        let result = pending.decrypt_to_writer(&sk, &mut decrypted_data);
+
         assert!(result.is_err());
     }
 
     #[test]
     fn test_wrong_private_key_fails() {
-        let (pk1, _) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (pk, _) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let plaintext = b"some data";
-        let mut source = Cursor::new(plaintext);
-        let mut encrypted_dest = Vec::new();
+        let kek_id = "test-kek-id".to_string();
+        let plaintext = get_test_data(1024);
 
+        let mut encrypted_data = Vec::new();
         encrypt::<Rsa2048, Aes256Gcm, _, _>(
-            &pk1,
-            &mut source,
-            &mut encrypted_dest,
-            "test_kek_id".to_string(),
+            &pk,
+            Cursor::new(&plaintext),
+            &mut encrypted_data,
+            kek_id.clone(),
         )
         .unwrap();
 
-        let mut encrypted_source = Cursor::new(&encrypted_dest);
-        let mut decrypted_dest = Vec::new();
-        let result =
-            decrypt::<Rsa2048, Aes256Gcm, _, _>(&sk2, &mut encrypted_source, &mut decrypted_dest);
+        let mut decrypted_data = Vec::new();
+        let pending =
+            PendingDecryptor::<_, Rsa2048, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data))
+                .unwrap();
+        let result = pending.decrypt_to_writer(&sk2, &mut decrypted_data);
         assert!(result.is_err());
     }
 }

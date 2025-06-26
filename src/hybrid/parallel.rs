@@ -69,16 +69,8 @@ where
     Ok(final_output)
 }
 
-/// Performs parallel, in-memory hybrid decryption.
-pub fn decrypt<A, S>(sk: &A::PrivateKey, ciphertext: &[u8]) -> Result<Vec<u8>>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-    S::Key: From<Zeroizing<Vec<u8>>>,
-    A::PrivateKey: Clone,
-    A::EncapsulatedKey: From<Vec<u8>>,
-{
-    // 1. Parse the header.
+/// Decodes the header from the beginning of a ciphertext slice.
+pub fn decode_header(ciphertext: &[u8]) -> Result<(Header, &[u8])> {
     if ciphertext.len() < 4 {
         return Err(Error::InvalidCiphertextFormat);
     }
@@ -90,24 +82,87 @@ where
     let ciphertext_body = &ciphertext[4 + header_len..];
 
     let (header, _) = Header::decode_from_slice(header_bytes)?;
+    Ok((header, ciphertext_body))
+}
 
-    // 2. Extract info and encapsulated key from the header.
-    let (encapsulated_key, chunk_size, base_nonce) = match header.payload {
+/// A pending decryptor for in-memory hybrid-encrypted data that will be
+/// processed in parallel.
+///
+/// This state is entered after the header has been successfully parsed from
+/// the ciphertext, allowing the user to inspect the header (e.g., to find
+/// the `kek_id`) before supplying the appropriate private key to proceed with
+/// decryption.
+pub struct PendingDecryptor<'a, A, S>
+where
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+{
+    header: Header,
+    ciphertext_body: &'a [u8],
+    _phantom: std::marker::PhantomData<(A, S)>,
+}
+
+impl<'a, A, S> PendingDecryptor<'a, A, S>
+where
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+{
+    /// Creates a new `PendingDecryptor` by parsing the header from the ciphertext.
+    pub fn from_ciphertext(ciphertext: &'a [u8]) -> Result<Self> {
+        let (header, ciphertext_body) = decode_header(ciphertext)?;
+        Ok(Self {
+            header,
+            ciphertext_body,
+            _phantom: std::marker::PhantomData,
+        })
+    }
+
+    /// Returns a reference to the header.
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    /// Consumes the `PendingDecryptor` and returns the decrypted plaintext.
+    pub fn into_plaintext(self, sk: &A::PrivateKey) -> Result<Vec<u8>>
+    where
+        S::Key: From<Zeroizing<Vec<u8>>>,
+        A::PrivateKey: Clone,
+        A::EncapsulatedKey: From<Vec<u8>>,
+    {
+        decrypt_body::<A, S>(sk, &self.header, self.ciphertext_body)
+    }
+}
+
+/// Performs parallel, in-memory hybrid decryption on a ciphertext body.
+pub fn decrypt_body<A, S>(
+    sk: &A::PrivateKey,
+    header: &Header,
+    ciphertext_body: &[u8],
+) -> Result<Vec<u8>>
+where
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+    S::Key: From<Zeroizing<Vec<u8>>>,
+    A::PrivateKey: Clone,
+    A::EncapsulatedKey: From<Vec<u8>>,
+{
+    let (encapsulated_key, chunk_size, base_nonce) = match &header.payload {
         HeaderPayload::Hybrid {
             encrypted_dek,
             stream_info: Some(info),
             ..
-        } => (encrypted_dek.into(), info.chunk_size, info.base_nonce),
+        } => (
+            encrypted_dek.clone().into(),
+            info.chunk_size,
+            info.base_nonce,
+        ),
         _ => return Err(Error::InvalidHeader),
     };
 
-    // 3. KEM Decapsulate to recover the DEK.
     let shared_secret = A::decapsulate(&sk.clone().into(), &encapsulated_key)?;
-
     let tag_len = S::TAG_SIZE;
     let encrypted_chunk_size = chunk_size as usize + tag_len;
 
-    // 4. Decrypt data chunks in parallel using Rayon.
     let decrypted_chunks: Vec<Vec<u8>> = ciphertext_body
         .par_chunks(encrypted_chunk_size)
         .enumerate()
@@ -137,11 +192,20 @@ mod tests {
         let plaintext = b"This is a test message for hybrid parallel encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string())
+                .unwrap();
 
-        let decrypted = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted).unwrap();
-
+        // Test convenience function
+        let pending = PendingDecryptor::<Rsa2048, Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
+        let decrypted = pending.into_plaintext(&sk).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
+
+        // Test separated functions
+        let (header, body) = decode_header(&encrypted).unwrap();
+        assert_eq!(header.payload.kek_id(), Some("test_kek_id"));
+        let decrypted_body =
+            decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body).unwrap();
+        assert_eq!(plaintext, decrypted_body.as_slice());
     }
 
     #[test]
@@ -152,7 +216,8 @@ mod tests {
         let encrypted =
             encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
-        let decrypted = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted).unwrap();
+        let pending = PendingDecryptor::<Rsa2048, Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
+        let decrypted = pending.into_plaintext(&sk).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -165,7 +230,8 @@ mod tests {
         let encrypted =
             encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string()).unwrap();
 
-        let decrypted = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted).unwrap();
+        let pending = PendingDecryptor::<Rsa2048, Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
+        let decrypted = pending.into_plaintext(&sk).unwrap();
 
         assert_eq!(plaintext, decrypted);
     }
@@ -182,7 +248,8 @@ mod tests {
             encrypted[300] ^= 1;
         }
 
-        let result = decrypt::<Rsa2048, Aes256Gcm>(&sk, &encrypted);
+        let pending = PendingDecryptor::<Rsa2048, Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
+        let result = pending.into_plaintext(&sk);
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), Error::Crypto(_)));
     }
@@ -196,7 +263,8 @@ mod tests {
         let encrypted =
             encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
-        let result = decrypt::<Rsa2048, Aes256Gcm>(&sk2, &encrypted);
+        let pending = PendingDecryptor::<Rsa2048, Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
+        let result = pending.into_plaintext(&sk2);
         assert!(result.is_err());
     }
 }

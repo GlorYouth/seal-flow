@@ -115,6 +115,68 @@ where
     }
 }
 
+/// A decryptor that is pending the provision of a key.
+///
+/// This state is entered after the header has been successfully read from the
+/// stream, allowing the user to inspect the header (e.g., to find the `key_id`)
+/// before supplying the appropriate key to proceed with decryption.
+pub struct PendingDecryptor<R: Read> {
+    reader: R,
+    header: Header,
+}
+
+impl<R: Read> PendingDecryptor<R> {
+    /// Creates a new `PendingDecryptor` by reading the header from the provided reader.
+    pub fn from_reader(mut reader: R) -> Result<Self> {
+        let mut len_buf = [0u8; 4];
+        reader.read_exact(&mut len_buf)?;
+        let header_len = u32::from_le_bytes(len_buf) as usize;
+
+        let mut header_bytes = vec![0u8; header_len];
+        reader.read_exact(&mut header_bytes)?;
+        let (header, _) = Header::decode_from_slice(&header_bytes)?;
+
+        Ok(Self { reader, header })
+    }
+
+    /// Returns a reference to the header that was read from the stream.
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    /// Consumes the `PendingDecryptor` and returns a full `Decryptor` instance,
+    /// ready to decrypt the stream.
+    pub fn into_decryptor<S: SymmetricAlgorithm>(
+        self,
+        key: &S::Key,
+    ) -> Result<Decryptor<R, S>>
+    where
+        S::Key: Send + Sync + Clone,
+    {
+        let (chunk_size, base_nonce) = match &self.header.payload {
+            HeaderPayload::Symmetric {
+                stream_info: Some(info),
+                ..
+            } => (info.chunk_size, info.base_nonce),
+            _ => return Err(Error::InvalidHeader),
+        };
+
+        let tag_len = S::TAG_SIZE;
+        let encrypted_chunk_size = chunk_size as usize + tag_len;
+
+        Ok(Decryptor {
+            reader: self.reader,
+            symmetric_key: key.clone(),
+            base_nonce,
+            encrypted_chunk_size,
+            buffer: io::Cursor::new(Vec::new()),
+            chunk_counter: 0,
+            is_done: false,
+            _phantom: std::marker::PhantomData,
+        })
+    }
+}
+
 /// Implements `std::io::Read` for synchronous, streaming symmetric decryption.
 pub struct Decryptor<R: Read, S: SymmetricAlgorithm>
 where
@@ -128,43 +190,6 @@ where
     chunk_counter: u64,
     is_done: bool,
     _phantom: std::marker::PhantomData<S>,
-}
-
-impl<R: Read, S: SymmetricAlgorithm> Decryptor<R, S>
-where
-    S::Key: Send + Sync + Clone,
-{
-    pub fn new(mut reader: R, key: &S::Key) -> Result<Self> {
-        let mut len_buf = [0u8; 4];
-        reader.read_exact(&mut len_buf)?;
-        let header_len = u32::from_le_bytes(len_buf) as usize;
-
-        let mut header_bytes = vec![0u8; header_len];
-        reader.read_exact(&mut header_bytes)?;
-        let (header, _) = Header::decode_from_slice(&header_bytes)?;
-
-        let (chunk_size, base_nonce) = match header.payload {
-            HeaderPayload::Symmetric {
-                stream_info: Some(info),
-                ..
-            } => (info.chunk_size, info.base_nonce),
-            _ => return Err(Error::InvalidHeader),
-        };
-
-        let tag_len = S::TAG_SIZE;
-        let encrypted_chunk_size = chunk_size as usize + tag_len;
-
-        Ok(Self {
-            reader,
-            symmetric_key: key.clone(),
-            base_nonce,
-            encrypted_chunk_size,
-            buffer: io::Cursor::new(Vec::new()),
-            chunk_counter: 0,
-            is_done: false,
-            _phantom: std::marker::PhantomData,
-        })
-    }
 }
 
 impl<R: Read, S: SymmetricAlgorithm> Read for Decryptor<R, S>
@@ -214,21 +239,22 @@ mod tests {
 
     fn test_streaming_roundtrip(plaintext: &[u8]) {
         let key = Aes256Gcm::generate_key().unwrap();
+        let key_id = "test_key_id".to_string();
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Aes256Gcm>::new(
-            &mut encrypted_data,
-            key.clone(),
-            "test_key_id".to_string(),
-        )
-        .unwrap();
+        let mut encryptor =
+            Encryptor::<_, Aes256Gcm>::new(&mut encrypted_data, key.clone(), key_id.clone())
+                .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
 
-        // Decrypt
-        let mut decryptor =
-            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), &key).unwrap();
+        // Decrypt using the new two-step process
+        let pending_decryptor =
+            PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        assert_eq!(pending_decryptor.header().payload.key_id(), Some(key_id.as_str()));
+
+        let mut decryptor = pending_decryptor.into_decryptor::<Aes256Gcm>(&key).unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
 
@@ -267,24 +293,16 @@ mod tests {
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
 
-        // Tamper with the ciphertext body (after the header).
-        // First 4 bytes are header length.
-        let header_len_bytes: [u8; 4] = encrypted_data[0..4].try_into().unwrap();
-        let header_len = u32::from_le_bytes(header_len_bytes) as usize;
+        // Tamper with the ciphertext body, after the header
+        let header_len =
+            4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
+        if encrypted_data.len() > header_len {
+            encrypted_data[header_len] ^= 1;
+        }
 
-        // Tamper the first byte of the actual ciphertext.
-        let ciphertext_start_index = 4 + header_len;
-        assert!(
-            encrypted_data.len() > ciphertext_start_index,
-            "Not enough data to tamper"
-        );
-        encrypted_data[ciphertext_start_index] ^= 1;
-
-        let mut decryptor =
-            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), &key).unwrap();
-        let mut decrypted_data = Vec::new();
-        let result = decryptor.read_to_end(&mut decrypted_data);
-
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let mut decryptor = pending.into_decryptor::<Aes256Gcm>(&key).unwrap();
+        let result = decryptor.read_to_end(&mut Vec::new());
         assert!(result.is_err());
     }
 
@@ -294,17 +312,17 @@ mod tests {
         let key2 = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"some data";
 
+        // Encrypt
         let mut encrypted_data = Vec::new();
         let mut encryptor =
-            Encryptor::<_, Aes256Gcm>::new(&mut encrypted_data, key1, "test_key_id_1".to_string())
-                .unwrap();
+            Encryptor::<_, Aes256Gcm>::new(&mut encrypted_data, key1, "key1".to_string()).unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
 
-        let mut decryptor =
-            Decryptor::<_, Aes256Gcm>::new(Cursor::new(&encrypted_data), &key2).unwrap();
-        let mut decrypted_data = Vec::new();
-        let result = decryptor.read_to_end(&mut decrypted_data);
+        // Decrypt with the wrong key
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let mut decryptor = pending.into_decryptor::<Aes256Gcm>(&key2).unwrap();
+        let result = decryptor.read_to_end(&mut Vec::new());
 
         assert!(result.is_err());
     }

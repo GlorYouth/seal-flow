@@ -50,18 +50,24 @@ fn main() -> Result<()> {
     let key_id = "my-secret-key-id".to_string();
     let plaintext = b"Data that is being protected.";
 
-    // The high-level builder API is fluent and easy to use
-    let seal = SymmetricSeal::new(&key);
+    // The high-level API factory is stateless and easy to use
+    let seal = SymmetricSeal::new();
 
     // Encrypt data held in memory
     let ciphertext = seal
         .in_memory::<Aes256Gcm>()
-        .encrypt(plaintext, key_id)?;
+        .encrypt(&key, plaintext, key_id)?;
 
-    // Decrypt data held in memory
-    let decrypted_text = seal
+    // Decrypt data held in memory.
+    // The API promotes a safer two-step decryption process.
+    // First, create a pending decryptor to inspect metadata without decrypting.
+    let pending_decryptor = seal
         .in_memory::<Aes256Gcm>()
         .decrypt(&ciphertext)?;
+
+    // You can now inspect the key ID from the header to find the correct key.
+    // For this example, we'll use the key we already have.
+    let decrypted_text = pending_decryptor.with_key(&key)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully encrypted and decrypted data!");
@@ -69,51 +75,60 @@ fn main() -> Result<()> {
 }
 ```
 
-### Peeking Key IDs from a Stream
+### Decryption Workflow: Finding and Using the Right Key
 
-Before decrypting, you often need to know which key to use. `seal-flow` allows you to "peek" at the header of an encrypted data stream to extract the key ID without processing the entire file.
+Before decrypting, you often need to know which key to use. `seal-flow` provides a safe and ergonomic `PendingDecryptor` pattern to solve this. You can inspect the metadata of an encrypted stream to get the key ID *before* supplying the key and processing the ciphertext.
+
+This workflow prevents errors and simplifies key management.
 
 ```rust
 use seal_flow::prelude::*;
-use seal_flow::seal::peek_symmetric_key_id;
 use seal_crypto::prelude::SymmetricKeyGenerator;
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 use std::collections::HashMap;
 use std::io::Cursor;
 
 fn main() -> Result<()> {
-    // Imagine a key store
+    // 1. Setup a key store and create a key
     let mut key_store = HashMap::new();
     let key1 = Aes256Gcm::generate_key()?;
-    key_store.insert("key-id-1".to_string(), key1);
-
-    let plaintext = b"some secret data";
-
-    // Encrypt with a specific key
-    let ciphertext = SymmetricSeal::new(key_store.get("key-id-1").unwrap())
-        .in_memory::<Aes256Gcm>()
-        .encrypt(plaintext, "key-id-1".to_string())?;
-
-    // --- Decryption Workflow ---
-    // 1. Peek the key ID from the stream.
-    // The reader's position is advanced, so for a real network stream,
-    // you might use a BufReader to avoid losing data.
-    let peeked_id = peek_symmetric_key_id(Cursor::new(&ciphertext))?;
-    assert_eq!(peeked_id, "key-id-1");
+    let key_id = "key-id-1".to_string();
+    key_store.insert(key_id.clone(), key1);
     
-    // 2. Retrieve the correct key from your key store.
-    let decryption_key = key_store.get(&peeked_id).expect("Key not found!");
+    let plaintext = b"some secret data";
+    let seal = SymmetricSeal::new();
 
-    // 3. Decrypt the data.
-    let decrypted = SymmetricSeal::new(decryption_key)
+    // 2. Encrypt data with a specific key ID
+    let ciphertext = seal
         .in_memory::<Aes256Gcm>()
-        .decrypt(&ciphertext)?;
+        .encrypt(key_store.get(&key_id).unwrap(), plaintext, key_id)?;
 
-    assert_eq!(plaintext, &decrypted[..]);
-    println!("Successfully peeked key ID and decrypted data!");
+    // --- The Decryption Workflow ---
+
+    // 3. Begin the decryption process by creating a pending decryptor from a reader
+    let pending_decryptor = seal
+        .streaming_decryptor_from_reader::<Aes256Gcm, _>(Cursor::new(&ciphertext))?;
+
+    // 4. Get the key ID from the encrypted header. This is a cheap operation.
+    let found_key_id = pending_decryptor.key_id().expect("Key ID not found in header!");
+    println!("Found key ID: {}", found_key_id);
+    
+    // 5. Retrieve the correct key from your key store.
+    let decryption_key = key_store.get(found_key_id).expect("Key not found in store!");
+
+    // 6. Provide the key to get a fully operational decryptor.
+    let mut decryptor = pending_decryptor.with_key(decryption_key)?;
+    
+    // 7. Decrypt the data.
+    let mut decrypted_text = Vec::new();
+    decryptor.read_to_end(&mut decrypted_text)?;
+
+    assert_eq!(plaintext, &decrypted_text[..]);
+    println!("Successfully identified key ID and decrypted data!");
 
     Ok(())
 }
+```
 
 For more detailed examples covering all modes and API layers, please see the `examples/` directory.
 
@@ -137,10 +152,10 @@ This project is licensed under the Mozilla Public License 2.0. See the [LICENSE]
 
 ### High-Level API (`seal` module)
 
-Uses a builder pattern for maximum simplicity.
+Uses a stateless factory for maximum simplicity and flexibility.
 
--   **Symmetric:** `SymmetricSeal::new(&key).<mode>.<operation>()`
--   **Hybrid:** `HybridSeal::new_encrypt(&pk).<mode>.encrypt()` or `HybridSeal::new_decrypt(&sk).<mode>.decrypt()`
+-   **Symmetric:** `SymmetricSeal::new().<mode>.<operation>(&key, ...)`
+-   **Hybrid:** `HybridSeal::new().<mode>.encrypt(&pk, ...)` or `HybridSeal::new().<mode>.decrypt(&sk, ...)`
 
 ### Mid-Level API (`flows` module)
 
