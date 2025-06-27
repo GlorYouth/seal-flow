@@ -9,14 +9,27 @@ type Kem = Rsa2048<Sha256>;
 type Dek = Aes256Gcm;
 const KEK_ID: &str = "high-level-hybrid-key";
 
+// 1. Define a struct to act as our key provider.
+struct MyKeyProvider {
+    keys: HashMap<String, <Kem as AsymmetricKeySet>::PrivateKey>,
+}
+
+impl AsymmetricKeyProvider for MyKeyProvider {
+    fn get_asymmetric_key<'a>(&'a self, kek_id: &str) -> Option<AsymmetricPrivateKey<'a>> {
+        self.keys
+            .get(kek_id)
+            .map(|k| AsymmetricPrivateKey::Rsa2048(k))
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // 1. Setup
-    // In a real application, you would have a secure way to store and retrieve private keys.
-    // Here, we use a HashMap to simulate a key store.
-    let mut key_store = HashMap::new();
+    // Create a key pair and store the private key in our provider.
     let (pk, sk) = Kem::generate_keypair()?;
-    key_store.insert(KEK_ID.to_string(), sk);
+    let mut keys = HashMap::new();
+    keys.insert(KEK_ID.to_string(), sk);
+    let provider = MyKeyProvider { keys };
 
     let plaintext = b"This is a test message for hybrid interoperability.";
     let seal = HybridSeal::new();
@@ -27,9 +40,7 @@ async fn main() -> Result<()> {
         .encrypt::<Kem, Dek>(&pk, KEK_ID.to_string())
         .to_vec(plaintext)?;
     let pending_decryptor1 = seal.decrypt().from_slice(&ciphertext1)?;
-    let found_kek_id = pending_decryptor1.kek_id().unwrap();
-    let decryption_key1 = key_store.get(found_kek_id).unwrap();
-    let decrypted1 = pending_decryptor1.with_private_key::<Kem, Dek>(decryption_key1)?;
+    let decrypted1 = pending_decryptor1.with_provider::<_, Dek>(&provider)?;
     assert_eq!(plaintext, &decrypted1[..]);
     println!("In-Memory (Ordinary) roundtrip successful!");
 
@@ -39,9 +50,7 @@ async fn main() -> Result<()> {
         .encrypt::<Kem, Dek>(&pk, KEK_ID.to_string())
         .to_vec_parallel(plaintext)?;
     let pending_decryptor2 = seal.decrypt().from_slice_parallel(&ciphertext2)?;
-    let found_kek_id = pending_decryptor2.kek_id().unwrap();
-    let decryption_key2 = key_store.get(found_kek_id).unwrap();
-    let decrypted2 = pending_decryptor2.with_private_key::<Kem, Dek>(decryption_key2)?;
+    let decrypted2 = pending_decryptor2.with_provider::<_, Dek>(&provider)?;
     assert_eq!(plaintext, &decrypted2[..]);
     println!("In-Memory Parallel roundtrip successful!");
 
@@ -55,10 +64,11 @@ async fn main() -> Result<()> {
     encryptor.finish()?;
 
     let pending_decryptor3 = seal.decrypt().from_reader(Cursor::new(&ciphertext3))?;
-    let found_kek_id = pending_decryptor3.kek_id().unwrap();
-    println!("Found KEK ID in stream: '{}'", found_kek_id);
-    let decryption_key3 = key_store.get(found_kek_id).unwrap();
-    let mut decryptor3 = pending_decryptor3.with_private_key::<Kem, Dek>(decryption_key3)?;
+    println!(
+        "Found KEK ID in stream: '{}'",
+        pending_decryptor3.kek_id().unwrap()
+    );
+    let mut decryptor3 = pending_decryptor3.with_provider::<_, Dek>(&provider)?;
 
     let mut decrypted3 = Vec::new();
     decryptor3.read_to_end(&mut decrypted3)?;
@@ -79,11 +89,12 @@ async fn main() -> Result<()> {
         .decrypt()
         .from_async_reader(Cursor::new(&ciphertext4))
         .await?;
-    let found_kek_id_async = pending_decryptor4.kek_id().unwrap();
-    println!("Found KEK ID in async stream: '{}'", found_kek_id_async);
-    let decryption_key4 = key_store.get(found_kek_id_async).unwrap();
+    println!(
+        "Found KEK ID in async stream: '{}'",
+        pending_decryptor4.kek_id().unwrap()
+    );
     let mut decryptor4 = pending_decryptor4
-        .with_private_key::<Kem, Dek>(decryption_key4.clone())
+        .with_provider::<_, Dek>(&provider)
         .await?;
 
     let mut decrypted4 = Vec::new();
@@ -101,13 +112,14 @@ async fn main() -> Result<()> {
     let pending_decryptor5 = seal
         .decrypt()
         .from_reader_parallel(Cursor::new(&ciphertext5))?;
-    let found_kek_id = pending_decryptor5.kek_id().unwrap();
-    println!("Found KEK ID in parallel stream: '{}'", found_kek_id);
-    let decryption_key5 = key_store.get(found_kek_id).unwrap();
-    pending_decryptor5.with_private_key_to_writer::<Kem, Dek, _>(decryption_key5, &mut decrypted5)?;
+    println!(
+        "Found KEK ID in parallel stream: '{}'",
+        pending_decryptor5.kek_id().unwrap()
+    );
+    pending_decryptor5.with_provider::<_, Dek, _>(&provider, &mut decrypted5)?;
     assert_eq!(plaintext, &decrypted5[..]);
     println!("Parallel Streaming roundtrip successful!");
 
     println!("\nAll high-level hybrid modes are interoperable and successful.");
     Ok(())
-} 
+}

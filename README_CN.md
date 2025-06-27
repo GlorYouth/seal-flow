@@ -125,6 +125,61 @@ fn main() -> Result<()> {
 }
 ```
 
+### 使用 Provider 进行密钥管理
+
+为了实现更健壮和解耦的密钥管理，`seal-flow` 引入了 `SymmetricKeyProvider` 和 `AsymmetricKeyProvider` trait。你可以实现这些 trait，让解密器自动查找正确的密钥，而无需从密钥存储中手动获取。
+
+这对于与密钥管理服务（KMS）、数据库或其他集中式配置系统集成特别有用。
+
+以下是如何使用 provider：
+
+```rust
+use seal_flow::prelude::*;
+use seal_crypto::prelude::SymmetricKeyGenerator;
+use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+use std::collections::HashMap;
+
+// 1. 定义你的 key provider 结构体。
+struct MyKeyProvider {
+    key_store: HashMap<String, <Aes256Gcm as SymmetricKeySet>::Key>,
+}
+
+// 2. 实现 `SymmetricKeyProvider` trait。
+impl SymmetricKeyProvider for MyKeyProvider {
+    fn get_symmetric_key<'a>(&'a self, key_id: &str) -> Option<SymmetricKey<'a>> {
+        // 查找密钥并将其包装在 `SymmetricKey` 枚举中。
+        self.key_store.get(key_id).map(|k| SymmetricKey::Aes256Gcm(k))
+    }
+}
+
+fn main() -> Result<()> {
+    // 3. 创建你的 provider 实例。
+    let mut key_store = HashMap::new();
+    let key = Aes256Gcm::generate_key()?;
+    let key_id = "my-kms-key".to_string();
+    key_store.insert(key_id.clone(), key);
+    let provider = MyKeyProvider { key_store };
+    
+    let plaintext = b"一些机密数据";
+    let seal = SymmetricSeal::new();
+
+    // 使用来自 provider 的密钥（或任何其他来源）进行加密。
+    let ciphertext = seal
+        .encrypt::<Aes256Gcm>(provider.key_store.get(&key_id).unwrap(), key_id)
+        .to_vec(plaintext)?;
+
+    // 4. 使用 provider 进行解密。
+    // `seal-flow` 会使用头部中的ID自动调用 `get_symmetric_key`。
+    let pending_decryptor = seal.decrypt().from_slice(&ciphertext)?;
+    let decrypted_text = pending_decryptor.with_provider(&provider)?;
+
+    assert_eq!(plaintext, &decrypted_text[..]);
+    println!("成功使用密钥提供程序解密！");
+
+    Ok(())
+}
+```
+
 关于涵盖所有模式和API层级的更详细示例，请参阅 `examples/` 目录。
 
 ## 运行示例

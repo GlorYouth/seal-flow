@@ -1,6 +1,10 @@
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::common::algorithms::AsymmetricAlgorithm as AsymmetricAlgorithmEnum;
 use crate::common::header::Header;
 use crate::crypto::zeroize::Zeroizing;
+use crate::error::Error;
+use crate::keys::AsymmetricPrivateKey;
+use crate::provider::AsymmetricKeyProvider;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -100,7 +104,10 @@ where
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
         crate::hybrid::parallel_streaming::encrypt::<A, S, R, W>(
-            self.pk, reader, writer, self.kek_id,
+            self.pk,
+            reader,
+            writer,
+            self.kek_id,
         )
     }
 
@@ -153,10 +160,7 @@ impl HybridDecryptorBuilder {
     }
 
     /// Configures decryption from a synchronous `Read` stream.
-    pub fn from_reader<R: Read>(
-        &self,
-        reader: R,
-    ) -> crate::Result<PendingStreamingDecryptor<R>> {
+    pub fn from_reader<R: Read>(&self, reader: R) -> crate::Result<PendingStreamingDecryptor<R>> {
         let mid_level_pending = crate::hybrid::streaming::PendingDecryptor::from_reader(reader)?;
         Ok(PendingStreamingDecryptor {
             inner: mid_level_pending,
@@ -205,6 +209,53 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         self.header().payload.kek_id()
     }
 
+    /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and decrypt.
+    pub fn with_provider<P, S>(self, provider: &P) -> crate::Result<Vec<u8>>
+    where
+        P: AsymmetricKeyProvider,
+        S: SymmetricAlgorithm,
+        S::Key: From<Zeroizing<Vec<u8>>>,
+    {
+        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
+        let key = provider
+            .get_asymmetric_key(kek_id)
+            .ok_or(Error::KeyNotFound)?;
+
+        let algorithm = self
+            .header()
+            .payload
+            .asymmetric_algorithm()
+            .ok_or(Error::InvalidHeader)?;
+
+        use seal_crypto::schemes::asymmetric::{
+            post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
+            traditional::rsa::{Rsa2048, Rsa4096},
+        };
+
+        match algorithm {
+            AsymmetricAlgorithmEnum::Rsa2048 => match key {
+                AsymmetricPrivateKey::Rsa2048(k) => self.with_private_key::<Rsa2048, S>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Rsa4096 => match key {
+                AsymmetricPrivateKey::Rsa4096(k) => self.with_private_key::<Rsa4096, S>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber512 => match key {
+                AsymmetricPrivateKey::Kyber512(k) => self.with_private_key::<Kyber512, S>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber768 => match key {
+                AsymmetricPrivateKey::Kyber768(k) => self.with_private_key::<Kyber768, S>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber1024 => match key {
+                AsymmetricPrivateKey::Kyber1024(k) => self.with_private_key::<Kyber1024, S>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+        }
+    }
+
     /// Supplies the private key and returns the decrypted plaintext.
     pub fn with_private_key<A, S>(self, sk: &A::PrivateKey) -> crate::Result<Vec<u8>>
     where
@@ -231,6 +282,53 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     /// Returns the Key-Encrypting-Key ID from the header.
     pub fn kek_id(&self) -> Option<&str> {
         self.header().payload.kek_id()
+    }
+
+    /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and decrypt.
+    pub fn with_provider<P, S>(self, provider: &P) -> crate::Result<Vec<u8>>
+    where
+        P: AsymmetricKeyProvider,
+        S: SymmetricAlgorithm,
+        S::Key: From<Zeroizing<Vec<u8>>>,
+    {
+        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
+        let key = provider
+            .get_asymmetric_key(kek_id)
+            .ok_or(Error::KeyNotFound)?;
+
+        let algorithm = self
+            .header()
+            .payload
+            .asymmetric_algorithm()
+            .ok_or(Error::InvalidHeader)?;
+
+        use seal_crypto::schemes::asymmetric::{
+            post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
+            traditional::rsa::{Rsa2048, Rsa4096},
+        };
+
+        match algorithm {
+            AsymmetricAlgorithmEnum::Rsa2048 => match key {
+                AsymmetricPrivateKey::Rsa2048(k) => self.with_private_key::<Rsa2048, S>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Rsa4096 => match key {
+                AsymmetricPrivateKey::Rsa4096(k) => self.with_private_key::<Rsa4096, S>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber512 => match key {
+                AsymmetricPrivateKey::Kyber512(k) => self.with_private_key::<Kyber512, S>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber768 => match key {
+                AsymmetricPrivateKey::Kyber768(k) => self.with_private_key::<Kyber768, S>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber1024 => match key {
+                AsymmetricPrivateKey::Kyber1024(k) => self.with_private_key::<Kyber1024, S>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+        }
     }
 
     /// Supplies the private key and returns the decrypted plaintext.
@@ -260,6 +358,64 @@ impl<R: Read> PendingStreamingDecryptor<R> {
     /// Returns the Key-Encrypting-Key ID from the stream's header.
     pub fn kek_id(&self) -> Option<&str> {
         self.header().payload.kek_id()
+    }
+
+    /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and create a decryptor.
+    pub fn with_provider<'s, P, S>(self, provider: &'s P) -> crate::Result<Box<dyn Read + 's>>
+    where
+        P: AsymmetricKeyProvider,
+        S: SymmetricAlgorithm,
+        S::Key: From<Zeroizing<Vec<u8>>>,
+        R: 's,
+    {
+        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
+        let key = provider
+            .get_asymmetric_key(kek_id)
+            .ok_or(Error::KeyNotFound)?;
+
+        let algorithm = self
+            .header()
+            .payload
+            .asymmetric_algorithm()
+            .ok_or(Error::InvalidHeader)?;
+
+        use seal_crypto::schemes::asymmetric::{
+            post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
+            traditional::rsa::{Rsa2048, Rsa4096},
+        };
+
+        match algorithm {
+            AsymmetricAlgorithmEnum::Rsa2048 => match key {
+                AsymmetricPrivateKey::Rsa2048(k) => self
+                    .with_private_key::<Rsa2048, S>(k)
+                    .map(|d| Box::new(d) as Box<dyn Read>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Rsa4096 => match key {
+                AsymmetricPrivateKey::Rsa4096(k) => self
+                    .with_private_key::<Rsa4096, S>(k)
+                    .map(|d| Box::new(d) as Box<dyn Read>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber512 => match key {
+                AsymmetricPrivateKey::Kyber512(k) => self
+                    .with_private_key::<Kyber512, S>(k)
+                    .map(|d| Box::new(d) as Box<dyn Read>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber768 => match key {
+                AsymmetricPrivateKey::Kyber768(k) => self
+                    .with_private_key::<Kyber768, S>(k)
+                    .map(|d| Box::new(d) as Box<dyn Read>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber1024 => match key {
+                AsymmetricPrivateKey::Kyber1024(k) => self
+                    .with_private_key::<Kyber1024, S>(k)
+                    .map(|d| Box::new(d) as Box<dyn Read>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+        }
     }
 
     /// Supplies the private key and returns a fully initialized `Decryptor`.
@@ -300,6 +456,64 @@ where
         self.header().payload.kek_id()
     }
 
+    /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and decrypt the stream.
+    pub fn with_provider<P, S, W>(self, provider: &P, writer: W) -> crate::Result<()>
+    where
+        P: AsymmetricKeyProvider,
+        S: SymmetricAlgorithm,
+        W: Write,
+        S::Key: From<Zeroizing<Vec<u8>>>,
+    {
+        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
+        let key = provider
+            .get_asymmetric_key(kek_id)
+            .ok_or(Error::KeyNotFound)?;
+
+        let algorithm = self
+            .header()
+            .payload
+            .asymmetric_algorithm()
+            .ok_or(Error::InvalidHeader)?;
+
+        use seal_crypto::schemes::asymmetric::{
+            post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
+            traditional::rsa::{Rsa2048, Rsa4096},
+        };
+
+        match algorithm {
+            AsymmetricAlgorithmEnum::Rsa2048 => match key {
+                AsymmetricPrivateKey::Rsa2048(k) => {
+                    self.with_private_key_to_writer::<Rsa2048, S, W>(k, writer)
+                }
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Rsa4096 => match key {
+                AsymmetricPrivateKey::Rsa4096(k) => {
+                    self.with_private_key_to_writer::<Rsa4096, S, W>(k, writer)
+                }
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber512 => match key {
+                AsymmetricPrivateKey::Kyber512(k) => {
+                    self.with_private_key_to_writer::<Kyber512, S, W>(k, writer)
+                }
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber768 => match key {
+                AsymmetricPrivateKey::Kyber768(k) => {
+                    self.with_private_key_to_writer::<Kyber768, S, W>(k, writer)
+                }
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber1024 => match key {
+                AsymmetricPrivateKey::Kyber1024(k) => {
+                    self.with_private_key_to_writer::<Kyber1024, S, W>(k, writer)
+                }
+                _ => Err(Error::MismatchedKeyType),
+            },
+        }
+    }
+
     /// Supplies the private key and decrypts the stream, writing to the provided writer.
     pub fn with_private_key_to_writer<A, S, W: Write>(
         self,
@@ -335,6 +549,72 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         self.header().payload.kek_id()
     }
 
+    /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and create a decryptor.
+    pub async fn with_provider<'s, P, S>(
+        self,
+        provider: &'s P,
+    ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 's>>
+    where
+        P: AsymmetricKeyProvider,
+        S: SymmetricAlgorithm,
+        S::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
+        R: Send + 's,
+    {
+        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
+        let key = provider
+            .get_asymmetric_key(kek_id)
+            .ok_or(Error::KeyNotFound)?;
+
+        let algorithm = self
+            .header()
+            .payload
+            .asymmetric_algorithm()
+            .ok_or(Error::InvalidHeader)?;
+
+        use seal_crypto::schemes::asymmetric::{
+            post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
+            traditional::rsa::{Rsa2048, Rsa4096},
+        };
+
+        match algorithm {
+            AsymmetricAlgorithmEnum::Rsa2048 => match key {
+                AsymmetricPrivateKey::Rsa2048(k) => self
+                    .with_private_key::<Rsa2048, S>(k.clone())
+                    .await
+                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Rsa4096 => match key {
+                AsymmetricPrivateKey::Rsa4096(k) => self
+                    .with_private_key::<Rsa4096, S>(k.clone())
+                    .await
+                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber512 => match key {
+                AsymmetricPrivateKey::Kyber512(k) => self
+                    .with_private_key::<Kyber512, S>(k.clone())
+                    .await
+                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber768 => match key {
+                AsymmetricPrivateKey::Kyber768(k) => self
+                    .with_private_key::<Kyber768, S>(k.clone())
+                    .await
+                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            AsymmetricAlgorithmEnum::Kyber1024 => match key {
+                AsymmetricPrivateKey::Kyber1024(k) => self
+                    .with_private_key::<Kyber1024, S>(k.clone())
+                    .await
+                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+        }
+    }
+
     /// Supplies the private key and returns a fully initialized `Decryptor`.
     pub async fn with_private_key<A, S>(
         self,
@@ -353,6 +633,9 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keys::AsymmetricPrivateKey;
+    use crate::provider::AsymmetricKeyProvider;
+    use once_cell::sync::Lazy;
     use seal_crypto::prelude::*;
     use seal_crypto::schemes::{
         asymmetric::traditional::rsa::Rsa2048, hash::Sha256, symmetric::aes_gcm::Aes256Gcm,
@@ -369,6 +652,32 @@ mod tests {
 
     type TestKem = Rsa2048<Sha256>;
     type TestDek = Aes256Gcm;
+
+    static TEST_KEY_PAIR_RSA2048: Lazy<(
+        <TestKem as AsymmetricKeySet>::PublicKey,
+        <TestKem as AsymmetricKeySet>::PrivateKey,
+    )> = Lazy::new(|| TestKem::generate_keypair().unwrap());
+
+    struct TestKeyProvider {
+        keys: HashMap<String, AsymmetricPrivateKey<'static>>,
+    }
+
+    impl TestKeyProvider {
+        fn new() -> Self {
+            let mut keys = HashMap::new();
+            keys.insert(
+                "test-provider-key".to_string(),
+                AsymmetricPrivateKey::Rsa2048(&TEST_KEY_PAIR_RSA2048.1),
+            );
+            Self { keys }
+        }
+    }
+
+    impl AsymmetricKeyProvider for TestKeyProvider {
+        fn get_asymmetric_key<'a>(&'a self, kek_id: &str) -> Option<AsymmetricPrivateKey<'a>> {
+            self.keys.get(kek_id).copied()
+        }
+    }
 
     #[test]
     fn test_in_memory_roundtrip() -> crate::Result<()> {
@@ -453,11 +762,35 @@ mod tests {
         seal.encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
             .pipe_parallel(Cursor::new(plaintext), &mut encrypted)?;
 
-        let pending = seal.decrypt().from_reader_parallel(Cursor::new(&encrypted))?;
+        let pending = seal
+            .decrypt()
+            .from_reader_parallel(Cursor::new(&encrypted))?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
 
         let mut decrypted = Vec::new();
         pending.with_private_key_to_writer::<TestKem, TestDek, _>(&sk, &mut decrypted)?;
+
+        assert_eq!(plaintext, decrypted.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn test_with_provider_roundtrip() -> crate::Result<()> {
+        let provider = TestKeyProvider::new();
+        let kek_id = "test-provider-key".to_string();
+
+        let pk = &TEST_KEY_PAIR_RSA2048.0;
+
+        let plaintext = get_test_data();
+        let seal = HybridSeal::new();
+
+        let encrypted = seal
+            .encrypt::<TestKem, TestDek>(pk, kek_id.clone())
+            .to_vec(plaintext)?;
+
+        let pending = seal.decrypt().from_slice(&encrypted)?;
+        assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
+        let decrypted = pending.with_provider::<_, TestDek>(&provider)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())

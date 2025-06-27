@@ -1,8 +1,6 @@
 //! Ordinary (single-threaded, in-memory) hybrid encryption and decryption.
 
-use super::common::{
-    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
-};
+use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
@@ -149,8 +147,7 @@ mod tests {
         // Test separated functions
         let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
         assert_eq!(header.payload.kek_id(), Some("test_kek_id"));
-        let decrypted_parts =
-            decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body).unwrap();
+        let decrypted_parts = decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body).unwrap();
         assert_eq!(plaintext, decrypted_parts.as_slice());
     }
 

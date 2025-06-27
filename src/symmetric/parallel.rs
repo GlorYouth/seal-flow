@@ -1,6 +1,4 @@
-use super::common::{
-    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
-};
+use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};

@@ -1,8 +1,6 @@
 //! Implements a parallel streaming hybrid encryption/decryption scheme.
 
-use super::common::{
-    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
-};
+use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
@@ -346,8 +344,7 @@ mod tests {
         .unwrap();
 
         // Tamper
-        let header_len =
-            4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
+        let header_len = 4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
         encrypted_data[header_len + 10] ^= 1;
 
         let mut decrypted_data = Vec::new();

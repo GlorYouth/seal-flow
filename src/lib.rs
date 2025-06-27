@@ -10,10 +10,13 @@ pub use seal_crypto as crypto;
 pub mod prelude {
     //! A "prelude" for users of the `seal-flow` crate.
     pub use crate::error::{Error, Result};
+    pub use crate::keys::{AsymmetricPrivateKey, SymmetricKey};
+    pub use crate::provider::{AsymmetricKeyProvider, SymmetricKeyProvider};
     pub use crate::seal::{HybridSeal, SymmetricSeal};
 }
 
 pub mod error;
+pub mod provider;
 pub mod seal;
 
 /// Provides direct access to the mid-level execution flows.
@@ -25,7 +28,9 @@ pub mod seal;
 pub mod flows {
     /// Mid-level flows for symmetric encryption.
     pub mod symmetric {
-        pub use crate::symmetric::{asynchronous, ordinary, parallel, parallel_streaming, streaming};
+        pub use crate::symmetric::{
+            asynchronous, ordinary, parallel, parallel_streaming, streaming,
+        };
     }
 
     /// Mid-level flows for hybrid encryption.
@@ -37,6 +42,7 @@ pub mod flows {
 mod algorithms;
 pub mod common;
 mod hybrid;
+mod keys;
 mod symmetric;
 
 pub use error::{Error, Result};

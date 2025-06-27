@@ -1,5 +1,13 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
+use crate::common::algorithms::SymmetricAlgorithm as SymmetricAlgorithmEnum;
 use crate::common::header::Header;
+use crate::error::Error;
+use crate::keys::SymmetricKey;
+use crate::provider::SymmetricKeyProvider;
+use seal_crypto::schemes::symmetric::{
+    aes_gcm::{Aes128Gcm, Aes256Gcm},
+    chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305},
+};
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -20,11 +28,7 @@ impl SymmetricSeal {
     /// This captures the essential encryption parameters (algorithm, key, key ID)
     /// and returns a context object. You can then call methods on this context
     /// to select the desired execution mode (e.g., in-memory, streaming).
-    pub fn encrypt<'a, S>(
-        &self,
-        key: &'a S::Key,
-        key_id: String,
-    ) -> SymmetricEncryptor<'a, S>
+    pub fn encrypt<'a, S>(&self, key: &'a S::Key, key_id: String) -> SymmetricEncryptor<'a, S>
     where
         S: SymmetricAlgorithm,
         S::Key: Clone + Send + Sync,
@@ -136,12 +140,8 @@ impl SymmetricDecryptorBuilder {
     }
 
     /// Configures decryption from a synchronous `Read` stream.
-    pub fn from_reader<R: Read>(
-        &self,
-        reader: R,
-    ) -> crate::Result<PendingStreamingDecryptor<R>> {
-        let mid_level_pending =
-            crate::symmetric::streaming::PendingDecryptor::from_reader(reader)?;
+    pub fn from_reader<R: Read>(&self, reader: R) -> crate::Result<PendingStreamingDecryptor<R>> {
+        let mid_level_pending = crate::symmetric::streaming::PendingDecryptor::from_reader(reader)?;
         Ok(PendingStreamingDecryptor {
             inner: mid_level_pending,
         })
@@ -189,6 +189,36 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         self.header().payload.key_id()
     }
 
+    /// Supplies a `SymmetricKeyProvider` to automatically look up the key and decrypt.
+    pub fn with_provider<P: SymmetricKeyProvider>(self, provider: &P) -> crate::Result<Vec<u8>> {
+        let key_id = self.key_id().ok_or(Error::InvalidHeader)?;
+        let key = provider
+            .get_symmetric_key(key_id)
+            .ok_or(Error::KeyNotFound)?;
+        match self.inner.header().payload.symmetric_algorithm() {
+            SymmetricAlgorithmEnum::Aes128Gcm => match key {
+                SymmetricKey::Aes128Gcm(k) => self.inner.into_plaintext::<Aes128Gcm>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::Aes256Gcm => match key {
+                SymmetricKey::Aes256Gcm(k) => self.inner.into_plaintext::<Aes256Gcm>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
+                SymmetricKey::Chacha20Poly1305(k) => {
+                    self.inner.into_plaintext::<ChaCha20Poly1305>(k)
+                }
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
+                SymmetricKey::XChaCha20Poly1305(k) => {
+                    self.inner.into_plaintext::<XChaCha20Poly1305>(k)
+                }
+                _ => Err(Error::MismatchedKeyType),
+            },
+        }
+    }
+
     /// Supplies the key and returns the decrypted plaintext.
     pub fn with_key<S: SymmetricAlgorithm>(self, key: &S::Key) -> crate::Result<Vec<u8>>
     where
@@ -212,6 +242,36 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     /// Returns the key ID from the header.
     pub fn key_id(&self) -> Option<&str> {
         self.header().payload.key_id()
+    }
+
+    /// Supplies a `SymmetricKeyProvider` to automatically look up the key and decrypt.
+    pub fn with_provider<P: SymmetricKeyProvider>(self, provider: &P) -> crate::Result<Vec<u8>> {
+        let key_id = self.key_id().ok_or(Error::InvalidHeader)?;
+        let key = provider
+            .get_symmetric_key(key_id)
+            .ok_or(Error::KeyNotFound)?;
+        match self.inner.header().payload.symmetric_algorithm() {
+            SymmetricAlgorithmEnum::Aes128Gcm => match key {
+                SymmetricKey::Aes128Gcm(k) => self.inner.into_plaintext::<Aes128Gcm>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::Aes256Gcm => match key {
+                SymmetricKey::Aes256Gcm(k) => self.inner.into_plaintext::<Aes256Gcm>(k),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
+                SymmetricKey::Chacha20Poly1305(k) => {
+                    self.inner.into_plaintext::<ChaCha20Poly1305>(k)
+                }
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
+                SymmetricKey::XChaCha20Poly1305(k) => {
+                    self.inner.into_plaintext::<XChaCha20Poly1305>(k)
+                }
+                _ => Err(Error::MismatchedKeyType),
+            },
+        }
     }
 
     /// Supplies the key and returns the decrypted plaintext.
@@ -239,6 +299,47 @@ impl<R: Read> PendingStreamingDecryptor<R> {
         self.header().payload.key_id()
     }
 
+    /// Supplies a `SymmetricKeyProvider` to automatically look up the key and create a decryptor.
+    pub fn with_provider<'s, P>(self, provider: &'s P) -> crate::Result<Box<dyn Read + 's>>
+    where
+        P: SymmetricKeyProvider,
+        R: 's,
+    {
+        let key_id = self.key_id().ok_or(Error::InvalidHeader)?;
+        let key = provider
+            .get_symmetric_key(key_id)
+            .ok_or(Error::KeyNotFound)?;
+        match self.inner.header().payload.symmetric_algorithm() {
+            SymmetricAlgorithmEnum::Aes128Gcm => match key {
+                SymmetricKey::Aes128Gcm(k) => self
+                    .inner
+                    .into_decryptor::<Aes128Gcm>(k)
+                    .map(|d| Box::new(d) as Box<dyn Read>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::Aes256Gcm => match key {
+                SymmetricKey::Aes256Gcm(k) => self
+                    .inner
+                    .into_decryptor::<Aes256Gcm>(k)
+                    .map(|d| Box::new(d) as Box<dyn Read>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
+                SymmetricKey::Chacha20Poly1305(k) => self
+                    .inner
+                    .into_decryptor::<ChaCha20Poly1305>(k)
+                    .map(|d| Box::new(d) as Box<dyn Read>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
+                SymmetricKey::XChaCha20Poly1305(k) => self
+                    .inner
+                    .into_decryptor::<XChaCha20Poly1305>(k)
+                    .map(|d| Box::new(d) as Box<dyn Read>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+        }
+    }
     /// Supplies the key and returns a fully initialized `Decryptor`.
     pub fn with_key<S: SymmetricAlgorithm>(
         self,
@@ -273,6 +374,43 @@ where
         self.header().payload.key_id()
     }
 
+    /// Supplies a `SymmetricKeyProvider` to automatically look up the key and decrypt the stream.
+    pub fn with_provider<W, P>(self, provider: &P, writer: W) -> crate::Result<()>
+    where
+        W: Write + Send,
+        P: SymmetricKeyProvider,
+    {
+        let key_id = self.key_id().ok_or(Error::InvalidHeader)?;
+        let key = provider
+            .get_symmetric_key(key_id)
+            .ok_or(Error::KeyNotFound)?;
+        match self.inner.header().payload.symmetric_algorithm() {
+            SymmetricAlgorithmEnum::Aes128Gcm => match key {
+                SymmetricKey::Aes128Gcm(k) => {
+                    self.inner.decrypt_to_writer::<Aes128Gcm, W>(k, writer)
+                }
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::Aes256Gcm => match key {
+                SymmetricKey::Aes256Gcm(k) => {
+                    self.inner.decrypt_to_writer::<Aes256Gcm, W>(k, writer)
+                }
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
+                SymmetricKey::Chacha20Poly1305(k) => self
+                    .inner
+                    .decrypt_to_writer::<ChaCha20Poly1305, W>(k, writer),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
+                SymmetricKey::XChaCha20Poly1305(k) => self
+                    .inner
+                    .decrypt_to_writer::<XChaCha20Poly1305, W>(k, writer),
+                _ => Err(Error::MismatchedKeyType),
+            },
+        }
+    }
     /// Supplies the key and decrypts the stream, writing to the provided writer.
     pub fn with_key_to_writer<S: SymmetricAlgorithm, W: Write>(
         self,
@@ -304,6 +442,51 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         self.header().payload.key_id()
     }
 
+    /// Supplies a `SymmetricKeyProvider` to automatically look up the key and create a decryptor.
+    pub fn with_provider<'s, P>(
+        self,
+        provider: &'s P,
+    ) -> crate::Result<Box<dyn AsyncRead + Unpin + 's>>
+    where
+        P: SymmetricKeyProvider,
+        R: 's,
+    {
+        let key_id = self.key_id().ok_or(Error::InvalidHeader)?;
+        let key = provider
+            .get_symmetric_key(key_id)
+            .ok_or(Error::KeyNotFound)?;
+        match self.inner.header().payload.symmetric_algorithm() {
+            SymmetricAlgorithmEnum::Aes128Gcm => match key {
+                SymmetricKey::Aes128Gcm(k) => self
+                    .inner
+                    .into_decryptor::<Aes128Gcm>(k)
+                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::Aes256Gcm => match key {
+                SymmetricKey::Aes256Gcm(k) => self
+                    .inner
+                    .into_decryptor::<Aes256Gcm>(k)
+                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
+                SymmetricKey::Chacha20Poly1305(k) => self
+                    .inner
+                    .into_decryptor::<ChaCha20Poly1305>(k)
+                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
+                SymmetricKey::XChaCha20Poly1305(k) => self
+                    .inner
+                    .into_decryptor::<XChaCha20Poly1305>(k)
+                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
+                _ => Err(Error::MismatchedKeyType),
+            },
+        }
+    }
+
     /// Supplies the key and returns a fully initialized `Decryptor`.
     pub fn with_key<S: SymmetricAlgorithm>(
         self,
@@ -319,6 +502,7 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::SymmetricKeyProvider;
     use seal_crypto::prelude::*;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::collections::HashMap;
@@ -419,6 +603,63 @@ mod tests {
         pending.with_key_to_writer::<Aes256Gcm, _>(&key, &mut decrypted)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
+        Ok(())
+    }
+
+    // A mock key provider for testing purposes.
+    struct TestKeyProvider {
+        keys: HashMap<String, SymmetricKey<'static>>,
+    }
+
+    // Note: This is a bit of a hack for testing.
+    // In a real scenario, you wouldn't use static lifetimes like this.
+    // We'd likely have keys owned by the provider struct itself.
+    // But for a simple test, we can create static keys.
+    use once_cell::sync::Lazy;
+    static TEST_KEY_AES256: Lazy<<Aes256Gcm as SymmetricKeySet>::Key> =
+        Lazy::new(|| Aes256Gcm::generate_key().unwrap());
+
+    impl TestKeyProvider {
+        fn new() -> Self {
+            let mut keys = HashMap::new();
+            keys.insert(
+                "test-provider-key".to_string(),
+                SymmetricKey::Aes256Gcm(&TEST_KEY_AES256),
+            );
+            Self { keys }
+        }
+    }
+
+    impl SymmetricKeyProvider for TestKeyProvider {
+        fn get_symmetric_key<'a>(&'a self, key_id: &str) -> Option<SymmetricKey<'a>> {
+            self.keys.get(key_id).copied()
+        }
+    }
+
+    #[test]
+    fn test_with_provider_roundtrip() -> crate::Result<()> {
+        let provider = TestKeyProvider::new();
+        let key_id = "test-provider-key".to_string();
+        let key = provider.get_symmetric_key(&key_id).unwrap();
+
+        let plaintext = get_test_data();
+        let seal = SymmetricSeal::new();
+
+        // Extract the raw key for encryption
+        let raw_key = match key {
+            SymmetricKey::Aes256Gcm(k) => k,
+            _ => panic!("Wrong key type"),
+        };
+
+        let encrypted = seal
+            .encrypt::<Aes256Gcm>(raw_key, key_id.clone())
+            .to_vec(plaintext)?;
+
+        // Decrypt using the provider
+        let pending = seal.decrypt().from_slice(&encrypted)?;
+        let decrypted = pending.with_provider(&provider)?;
+
+        assert_eq!(plaintext, &decrypted[..]);
         Ok(())
     }
 

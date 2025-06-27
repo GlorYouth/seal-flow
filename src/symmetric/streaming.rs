@@ -1,8 +1,6 @@
 //! Implements `std::io` traits for synchronous, streaming symmetric encryption.
 
-use super::common::{
-    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
-};
+use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
@@ -53,9 +51,8 @@ where
             let final_chunk = self.buffer.drain(..).collect::<Vec<u8>>();
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-            let encrypted_chunk =
-                S::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let encrypted_chunk = S::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
         }
         self.writer.flush()?;
@@ -138,10 +135,7 @@ impl<R: Read> PendingDecryptor<R> {
 
     /// Consumes the `PendingDecryptor` and returns a full `Decryptor` instance,
     /// ready to decrypt the stream.
-    pub fn into_decryptor<S: SymmetricAlgorithm>(
-        self,
-        key: &S::Key,
-    ) -> Result<Decryptor<R, S>>
+    pub fn into_decryptor<S: SymmetricAlgorithm>(self, key: &S::Key) -> Result<Decryptor<R, S>>
     where
         S::Key: Send + Sync + Clone,
     {
@@ -240,7 +234,10 @@ mod tests {
         // Decrypt using the new two-step process
         let pending_decryptor =
             PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        assert_eq!(pending_decryptor.header().payload.key_id(), Some(key_id.as_str()));
+        assert_eq!(
+            pending_decryptor.header().payload.key_id(),
+            Some(key_id.as_str())
+        );
 
         let mut decryptor = pending_decryptor.into_decryptor::<Aes256Gcm>(&key).unwrap();
         let mut decrypted_data = Vec::new();
@@ -282,8 +279,7 @@ mod tests {
         encryptor.finish().unwrap();
 
         // Tamper with the ciphertext body, after the header
-        let header_len =
-            4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
+        let header_len = 4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
         if encrypted_data.len() > header_len {
             encrypted_data[header_len] ^= 1;
         }

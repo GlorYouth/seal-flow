@@ -53,6 +53,15 @@ pub enum Error {
     #[error("提供了错误的密钥类型（例如，需要私钥但提供了公钥）")]
     WrongKeyType,
 
+    #[error("提供的密钥类型与密文中指定的加密算法不匹配")]
+    MismatchedKeyType,
+
+    #[error("在密钥存储中找不到指定的密钥ID")]
+    KeyNotFound,
+
+    #[error("密文中未找到密钥加密密钥（KEK）ID")]
+    KekIdNotFound,
+
     #[error("异步任务错误")]
     AsyncTaskError(#[from] tokio::task::JoinError),
 }

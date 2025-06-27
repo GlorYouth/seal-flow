@@ -1,6 +1,4 @@
-use super::common::{
-    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
-};
+use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
@@ -140,8 +138,7 @@ mod tests {
         let plaintext = b"This is a test message for hybrid parallel encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string())
-                .unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
         // Test convenience function
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
@@ -151,8 +148,7 @@ mod tests {
         // Test separated functions
         let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
         assert_eq!(header.payload.kek_id(), Some("test_kek_id"));
-        let decrypted_body =
-            decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body).unwrap();
+        let decrypted_body = decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body).unwrap();
         assert_eq!(plaintext, decrypted_body.as_slice());
     }
 

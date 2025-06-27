@@ -1,13 +1,13 @@
-use std::hint::black_box;
 use criterion::{criterion_group, criterion_main, Bencher, Criterion};
+use num_cpus;
 use rand::{rngs::OsRng, TryRngCore};
+use rayon;
 use seal_crypto::prelude::*;
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 use seal_flow::seal::symmetric::SymmetricSeal;
+use std::hint::black_box;
 use std::io::{Cursor, Write};
 use tokio::io::AsyncWriteExt;
-use rayon;
-use num_cpus;
 
 type TestDek = Aes256Gcm;
 
@@ -95,10 +95,7 @@ fn benchmark_symmetric_encryption(c: &mut Criterion) {
             b.iter(|| {
                 let mut encrypted_data = Vec::with_capacity(PLAINTEXT_SIZE + 1024);
                 seal.encrypt::<TestDek>(&key, key_id.clone())
-                    .pipe_parallel(
-                        Cursor::new(black_box(&plaintext)),
-                        &mut encrypted_data,
-                    )
+                    .pipe_parallel(Cursor::new(black_box(&plaintext)), &mut encrypted_data)
                     .unwrap();
             });
         });
@@ -209,4 +206,4 @@ criterion_group!(
     benchmark_symmetric_encryption,
     benchmark_symmetric_decryption
 );
-criterion_main!(benches); 
+criterion_main!(benches);

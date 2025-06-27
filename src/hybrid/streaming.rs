@@ -96,9 +96,13 @@ where
             if self.buffer.len() == self.chunk_size {
                 let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-                let encrypted_chunk =
-                    S::encrypt(&self.symmetric_key.clone().into(), &nonce, &self.buffer, None)
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                let encrypted_chunk = S::encrypt(
+                    &self.symmetric_key.clone().into(),
+                    &nonce,
+                    &self.buffer,
+                    None,
+                )
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
                 self.writer.write_all(&encrypted_chunk)?;
                 self.chunk_counter += 1;
                 self.buffer.clear();
@@ -258,14 +262,18 @@ mod tests {
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::new(&mut encrypted_data, &pk, kek_id.clone())
-                .unwrap();
+        let mut encryptor = Encryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::new(
+            &mut encrypted_data,
+            &pk,
+            kek_id.clone(),
+        )
+        .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
 
         // Decrypt
-        let pending_decryptor = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let pending_decryptor =
+            PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         assert_eq!(
             pending_decryptor.header().payload.kek_id(),
             Some(kek_id.as_str())
@@ -313,8 +321,7 @@ mod tests {
         encryptor.finish().unwrap();
 
         // Tamper with the ciphertext body
-        let header_len =
-            4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
+        let header_len = 4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
         if encrypted_data.len() > header_len {
             encrypted_data[header_len] ^= 1;
         }

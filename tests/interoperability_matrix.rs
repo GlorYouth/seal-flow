@@ -50,8 +50,9 @@ impl SymmetricEncryptorMode {
                 .to_vec_parallel(plaintext),
             SymmetricEncryptorMode::Streaming => {
                 let mut encrypted_data = Vec::new();
-                let mut encryptor =
-                    seal.encrypt::<TestDek>(key, key_id).into_writer(&mut encrypted_data)?;
+                let mut encryptor = seal
+                    .encrypt::<TestDek>(key, key_id)
+                    .into_writer(&mut encrypted_data)?;
                 encryptor.write_all(plaintext)?;
                 encryptor.finish()?;
                 Ok(encrypted_data)
@@ -276,7 +277,8 @@ impl HybridDecryptorMode {
                 let pending = seal
                     .decrypt()
                     .from_reader_parallel(Cursor::new(ciphertext))?;
-                pending.with_private_key_to_writer::<TestKem, TestDek, _>(sk, &mut decrypted_data)?;
+                pending
+                    .with_private_key_to_writer::<TestKem, TestDek, _>(sk, &mut decrypted_data)?;
                 Ok(decrypted_data)
             }
         }

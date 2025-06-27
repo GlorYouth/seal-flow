@@ -8,39 +8,53 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 type TheAlgorithm = Aes256Gcm;
 const KEY_ID: &str = "high-level-symmetric-key";
 
+// 1. Define a struct to act as our key provider.
+// In a real application, this might connect to a KMS, a database, or a config file.
+struct MyKeyProvider {
+    // For this example, we'll just use a HashMap.
+    keys: HashMap<String, <TheAlgorithm as SymmetricKeySet>::Key>,
+}
+
+impl SymmetricKeyProvider for MyKeyProvider {
+    fn get_symmetric_key<'a>(&'a self, key_id: &str) -> Option<SymmetricKey<'a>> {
+        // Find the key and wrap it in the `SymmetricKey` enum.
+        self.keys.get(key_id).map(|k| SymmetricKey::Aes256Gcm(k))
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // 1. Setup
-    // In a real application, you would have a secure way to store and retrieve keys.
-    // Here, we use a HashMap to simulate a key store.
-    let mut key_store = HashMap::new();
+    // Create a key and store it in our provider.
     let key = TheAlgorithm::generate_key()?;
-    key_store.insert(KEY_ID.to_string(), key);
+    let mut keys = HashMap::new();
+    keys.insert(KEY_ID.to_string(), key);
+    let provider = MyKeyProvider { keys };
 
     let plaintext = b"This is a test message for interoperability across different modes.";
     let seal = SymmetricSeal::new();
 
+    // In a real app, the encryptor and decryptor might be in different processes.
+    // The encryptor only needs the key, while the decryptor can use the provider.
+    let encryption_key = provider.keys.get(KEY_ID).unwrap();
+
     // --- Mode 1: In-Memory (Ordinary) ---
     println!("--- Testing Mode: In-Memory (Ordinary) ---");
     let ciphertext1 = seal
-        .encrypt::<TheAlgorithm>(key_store.get(KEY_ID).unwrap(), KEY_ID.to_string())
+        .encrypt::<TheAlgorithm>(encryption_key, KEY_ID.to_string())
         .to_vec(plaintext)?;
     let pending_decryptor1 = seal.decrypt().from_slice(&ciphertext1)?;
-    let found_key_id = pending_decryptor1.key_id().unwrap();
-    let decryption_key = key_store.get(found_key_id).unwrap();
-    let decrypted1 = pending_decryptor1.with_key::<TheAlgorithm>(decryption_key)?;
+    let decrypted1 = pending_decryptor1.with_provider(&provider)?;
     assert_eq!(plaintext, &decrypted1[..]);
     println!("In-Memory (Ordinary) roundtrip successful!");
 
     // --- Mode 2: In-Memory Parallel ---
     println!("\n--- Testing Mode: In-Memory Parallel ---");
     let ciphertext2 = seal
-        .encrypt::<TheAlgorithm>(key_store.get(KEY_ID).unwrap(), KEY_ID.to_string())
+        .encrypt::<TheAlgorithm>(encryption_key, KEY_ID.to_string())
         .to_vec_parallel(plaintext)?;
     let pending_decryptor2 = seal.decrypt().from_slice_parallel(&ciphertext2)?;
-    let found_key_id = pending_decryptor2.key_id().unwrap();
-    let decryption_key = key_store.get(found_key_id).unwrap();
-    let decrypted2 = pending_decryptor2.with_key::<TheAlgorithm>(decryption_key)?;
+    let decrypted2 = pending_decryptor2.with_provider(&provider)?;
     assert_eq!(plaintext, &decrypted2[..]);
     println!("In-Memory Parallel roundtrip successful!");
 
@@ -48,16 +62,17 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Mode: Synchronous Streaming ---");
     let mut ciphertext3 = Vec::new();
     let mut encryptor3 = seal
-        .encrypt::<TheAlgorithm>(key_store.get(KEY_ID).unwrap(), KEY_ID.to_string())
+        .encrypt::<TheAlgorithm>(encryption_key, KEY_ID.to_string())
         .into_writer(&mut ciphertext3)?;
     encryptor3.write_all(plaintext)?;
     encryptor3.finish()?;
 
     let pending_decryptor3 = seal.decrypt().from_reader(Cursor::new(&ciphertext3))?;
-    let found_key_id = pending_decryptor3.key_id().unwrap();
-    println!("Found key ID in stream: '{}'", found_key_id);
-    let decryption_key = key_store.get(found_key_id).unwrap();
-    let mut decryptor3 = pending_decryptor3.with_key::<TheAlgorithm>(decryption_key)?;
+    println!(
+        "Found key ID in stream: '{}'",
+        pending_decryptor3.key_id().unwrap()
+    );
+    let mut decryptor3 = pending_decryptor3.with_provider(&provider)?;
 
     let mut decrypted3 = Vec::new();
     decryptor3.read_to_end(&mut decrypted3)?;
@@ -68,7 +83,7 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Mode: Asynchronous Streaming ---");
     let mut ciphertext4 = Vec::new();
     let mut encryptor4 = seal
-        .encrypt::<TheAlgorithm>(key_store.get(KEY_ID).unwrap(), KEY_ID.to_string())
+        .encrypt::<TheAlgorithm>(encryption_key, KEY_ID.to_string())
         .into_async_writer(&mut ciphertext4)
         .await?;
     encryptor4.write_all(plaintext).await?;
@@ -78,10 +93,11 @@ async fn main() -> Result<()> {
         .decrypt()
         .from_async_reader(Cursor::new(&ciphertext4))
         .await?;
-    let found_key_id_async = pending_decryptor4.key_id().unwrap();
-    println!("Found key ID in async stream: '{}'", found_key_id_async);
-    let decryption_key_async = key_store.get(found_key_id_async).unwrap();
-    let mut decryptor4 = pending_decryptor4.with_key::<TheAlgorithm>(decryption_key_async)?;
+    println!(
+        "Found key ID in async stream: '{}'",
+        pending_decryptor4.key_id().unwrap()
+    );
+    let mut decryptor4 = pending_decryptor4.with_provider(&provider)?;
 
     let mut decrypted4 = Vec::new();
     decryptor4.read_to_end(&mut decrypted4).await?;
@@ -91,20 +107,21 @@ async fn main() -> Result<()> {
     // --- Mode 5: Parallel Streaming ---
     println!("\n--- Testing Mode: Parallel Streaming ---");
     let mut ciphertext5 = Vec::new();
-    seal.encrypt::<TheAlgorithm>(key_store.get(KEY_ID).unwrap(), KEY_ID.to_string())
+    seal.encrypt::<TheAlgorithm>(encryption_key, KEY_ID.to_string())
         .pipe_parallel(Cursor::new(plaintext), &mut ciphertext5)?;
 
     let mut decrypted5 = Vec::new();
     let pending_decryptor5 = seal
         .decrypt()
         .from_reader_parallel(Cursor::new(&ciphertext5))?;
-    let found_key_id = pending_decryptor5.key_id().unwrap();
-    println!("Found key ID in parallel stream: '{}'", found_key_id);
-    let decryption_key = key_store.get(found_key_id).unwrap();
-    pending_decryptor5.with_key_to_writer::<TheAlgorithm, _>(decryption_key, &mut decrypted5)?;
+    println!(
+        "Found key ID in parallel stream: '{}'",
+        pending_decryptor5.key_id().unwrap()
+    );
+    pending_decryptor5.with_provider(&provider, &mut decrypted5)?;
     assert_eq!(plaintext, &decrypted5[..]);
     println!("Parallel Streaming roundtrip successful!");
 
     println!("\nAll high-level symmetric modes are interoperable and successful.");
     Ok(())
-} 
+}

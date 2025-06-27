@@ -2,9 +2,7 @@
 //! This mode is designed for high-performance processing of large files or data streams
 //! by overlapping I/O with parallel computation.
 
-use super::common::{
-    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
-};
+use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
@@ -134,10 +132,7 @@ impl<R: Read + Send> PendingDecryptor<R> {
     /// Creates a new `PendingDecryptor` by reading the header from the stream.
     pub fn from_reader(mut reader: R) -> Result<Self> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
-        Ok(Self {
-            reader,
-            header,
-        })
+        Ok(Self { reader, header })
     }
 
     /// Returns a reference to the header.
@@ -147,7 +142,11 @@ impl<R: Read + Send> PendingDecryptor<R> {
 
     /// Consumes the `PendingDecryptor` and decrypts the rest of the stream,
     /// writing the plaintext to the provided writer.
-    pub fn decrypt_to_writer<S: SymmetricAlgorithm, W: Write>(self, key: &S::Key, writer: W) -> Result<()>
+    pub fn decrypt_to_writer<S: SymmetricAlgorithm, W: Write>(
+        self,
+        key: &S::Key,
+        writer: W,
+    ) -> Result<()>
     where
         S::Key: Sync + Clone + Send,
     {
@@ -297,8 +296,7 @@ mod tests {
         .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending =
-            PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         assert_eq!(pending.header().payload.key_id(), Some("test_key"));
         pending
             .decrypt_to_writer::<Aes256Gcm, _>(&key, &mut decrypted_data)
@@ -322,8 +320,7 @@ mod tests {
         .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending =
-            PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         pending
             .decrypt_to_writer::<Aes256Gcm, _>(&key, &mut decrypted_data)
             .unwrap();
@@ -346,8 +343,7 @@ mod tests {
         .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending =
-            PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         pending
             .decrypt_to_writer::<Aes256Gcm, _>(&key, &mut decrypted_data)
             .unwrap();
@@ -370,13 +366,11 @@ mod tests {
         .unwrap();
 
         // Tamper
-        let header_len =
-            4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
+        let header_len = 4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
         encrypted_data[header_len + 10] ^= 1;
 
         let mut decrypted_data = Vec::new();
-        let pending =
-            PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         let result = pending.decrypt_to_writer::<Aes256Gcm, _>(&key, &mut decrypted_data);
 
         assert!(result.is_err());
@@ -398,8 +392,7 @@ mod tests {
         .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending =
-            PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         let result = pending.decrypt_to_writer::<Aes256Gcm, _>(&key2, &mut decrypted_data);
         assert!(result.is_err());
     }

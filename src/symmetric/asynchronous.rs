@@ -1,8 +1,6 @@
 #![cfg(feature = "async")]
 
-use super::common::{
-    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
-};
+use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
@@ -161,10 +159,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
 
     /// Consumes the `PendingDecryptor` and returns a full `Decryptor` instance,
     /// ready to decrypt the stream.
-    pub fn into_decryptor<S: SymmetricAlgorithm>(
-        self,
-        key: &S::Key,
-    ) -> Result<Decryptor<R, S>>
+    pub fn into_decryptor<S: SymmetricAlgorithm>(self, key: &S::Key) -> Result<Decryptor<R, S>>
     where
         S::Key: Send + Sync + Clone,
     {
@@ -213,12 +208,7 @@ where
     S: SymmetricAlgorithm,
     S::Key: Send + Sync + Clone,
 {
-    pub fn new(
-        reader: R,
-        key: &S::Key,
-        base_nonce: [u8; 12],
-        encrypted_chunk_size: usize,
-    ) -> Self {
+    pub fn new(reader: R, key: &S::Key, base_nonce: [u8; 12], encrypted_chunk_size: usize) -> Self {
         Self {
             reader,
             symmetric_key: key.clone(),
@@ -307,9 +297,8 @@ mod tests {
     use super::*;
     use seal_crypto::prelude::SymmetricKeyGenerator;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use std::io::Cursor;
-
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     async fn test_async_streaming_roundtrip(plaintext: &[u8]) {
         let key = Aes256Gcm::generate_key().unwrap();
@@ -325,18 +314,15 @@ mod tests {
         encryptor.shutdown().await.unwrap();
 
         // Decrypt using the new two-step process
-        let pending_decryptor =
-            PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
-                .await
-                .unwrap();
+        let pending_decryptor = PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
+            .await
+            .unwrap();
         assert_eq!(
             pending_decryptor.header().payload.key_id(),
             Some(key_id.as_str())
         );
 
-        let mut decryptor = pending_decryptor
-            .into_decryptor::<Aes256Gcm>(&key)
-            .unwrap();
+        let mut decryptor = pending_decryptor.into_decryptor::<Aes256Gcm>(&key).unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();
 
@@ -377,8 +363,7 @@ mod tests {
         encryptor.shutdown().await.unwrap();
 
         // Tamper with the ciphertext body, after the header
-        let header_len =
-            4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
+        let header_len = 4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
         if encrypted_data.len() > header_len {
             encrypted_data[header_len] ^= 1;
         }

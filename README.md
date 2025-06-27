@@ -127,6 +127,61 @@ fn main() -> Result<()> {
 }
 ```
 
+### Key Management with Providers
+
+For more robust and decoupled key management, `seal-flow` introduces the `SymmetricKeyProvider` and `AsymmetricKeyProvider` traits. Instead of manually fetching a key from a store, you can implement these traits to let the decryptor automatically look up the correct key.
+
+This is especially useful for integrating with a Key Management Service (KMS), a database, or other centralized configuration systems.
+
+Here's how to use a provider:
+
+```rust
+use seal_flow::prelude::*;
+use seal_crypto::prelude::SymmetricKeyGenerator;
+use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+use std::collections::HashMap;
+
+// 1. Define your key provider struct.
+struct MyKeyProvider {
+    key_store: HashMap<String, <Aes256Gcm as SymmetricKeySet>::Key>,
+}
+
+// 2. Implement the `SymmetricKeyProvider` trait.
+impl SymmetricKeyProvider for MyKeyProvider {
+    fn get_symmetric_key<'a>(&'a self, key_id: &str) -> Option<SymmetricKey<'a>> {
+        // Look up the key and wrap it in the `SymmetricKey` enum.
+        self.key_store.get(key_id).map(|k| SymmetricKey::Aes256Gcm(k))
+    }
+}
+
+fn main() -> Result<()> {
+    // 3. Create an instance of your provider.
+    let mut key_store = HashMap::new();
+    let key = Aes256Gcm::generate_key()?;
+    let key_id = "my-kms-key".to_string();
+    key_store.insert(key_id.clone(), key);
+    let provider = MyKeyProvider { key_store };
+    
+    let plaintext = b"some secret data";
+    let seal = SymmetricSeal::new();
+
+    // Encrypt with the key from the provider (or any other source).
+    let ciphertext = seal
+        .encrypt::<Aes256Gcm>(provider.key_store.get(&key_id).unwrap(), key_id)
+        .to_vec(plaintext)?;
+
+    // 4. Decrypt using the provider.
+    // `seal-flow` automatically calls `get_symmetric_key` with the ID from the header.
+    let pending_decryptor = seal.decrypt().from_slice(&ciphertext)?;
+    let decrypted_text = pending_decryptor.with_provider(&provider)?;
+
+    assert_eq!(plaintext, &decrypted_text[..]);
+    println!("Successfully decrypted using the key provider!");
+
+    Ok(())
+}
+```
+
 For more detailed examples covering all modes and API layers, please see the `examples/` directory.
 
 ## Running Examples

@@ -1,7 +1,10 @@
- [package]
+[package]
 name = "seal-flow"
 version = "0.1.0"
 edition = "2021"
+description = "A stateless, high-level cryptographic workflow library."
+repository = "https://github.com/seal-io/seal-flow"
+readme = "README.md"
 
 [dependencies]
 # --- 核心密码学特性 ---
@@ -30,6 +33,7 @@ pin-project-lite = "0.2.16"
 [dev-dependencies]
 criterion = { version = "0.6.0", features = ["async_tokio"] }
 num_cpus = "1.16.0"
+once_cell = "1.21.3"
 
 [features]
 # 默认启用所有功能

@@ -1272,6 +1272,7 @@ dependencies = [
  "criterion",
  "futures",
  "num_cpus",
+ "once_cell",
  "pin-project-lite",
  "rand 0.9.1",
  "rayon",

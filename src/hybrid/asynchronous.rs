@@ -1,9 +1,7 @@
 //! Asynchronous, streaming hybrid encryption and decryption implementation.
 #![cfg(feature = "async")]
 
-use super::common::{
-    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
-};
+use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
@@ -318,8 +316,8 @@ mod tests {
     use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use std::io::Cursor;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     async fn test_hybrid_async_streaming_roundtrip(plaintext: &[u8]) {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
@@ -327,18 +325,20 @@ mod tests {
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::new(&mut encrypted_data, pk, kek_id.clone())
-                .await
-                .unwrap();
+        let mut encryptor = Encryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::new(
+            &mut encrypted_data,
+            pk,
+            kek_id.clone(),
+        )
+        .await
+        .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
         // Decrypt
-        let pending =
-            PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
-                .await
-                .unwrap();
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
+            .await
+            .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
 
         let mut decryptor = pending
@@ -383,16 +383,14 @@ mod tests {
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
-        let header_len =
-            4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
+        let header_len = 4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
         if encrypted_data.len() > header_len {
             encrypted_data[header_len] ^= 1;
         }
 
-        let pending =
-            PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
-                .await
-                .unwrap();
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
+            .await
+            .unwrap();
         let mut decryptor = pending
             .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk)
             .await
@@ -418,10 +416,9 @@ mod tests {
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
-        let pending =
-            PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
-                .await
-                .unwrap();
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
+            .await
+            .unwrap();
         let result = pending
             .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk2)
             .await;

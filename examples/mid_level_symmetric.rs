@@ -52,8 +52,11 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Mode: Synchronous Streaming ---");
     let mut ciphertext3 = Vec::new();
     let key3 = key_store.get(KEY_ID).unwrap();
-    let mut encryptor3 =
-        streaming::Encryptor::<_, TheAlgorithm>::new(&mut ciphertext3, key3.clone(), KEY_ID.to_string())?;
+    let mut encryptor3 = streaming::Encryptor::<_, TheAlgorithm>::new(
+        &mut ciphertext3,
+        key3.clone(),
+        KEY_ID.to_string(),
+    )?;
     encryptor3.write_all(plaintext)?;
     encryptor3.finish()?;
 
@@ -83,8 +86,7 @@ async fn main() -> Result<()> {
     encryptor4.shutdown().await?;
 
     let pending_decryptor4 =
-        asynchronous::PendingDecryptor::<_>::from_reader(Cursor::new(&ciphertext4))
-            .await?;
+        asynchronous::PendingDecryptor::<_>::from_reader(Cursor::new(&ciphertext4)).await?;
     let found_key_id4 = pending_decryptor4.header().payload.key_id().unwrap();
     println!("Found key ID in async stream: '{}'", found_key_id4);
     let decryption_key4 = key_store.get(found_key_id4).unwrap();
@@ -108,8 +110,7 @@ async fn main() -> Result<()> {
 
     let mut decrypted5 = Vec::new();
     let mut source5 = Cursor::new(&ciphertext5);
-    let pending_decryptor5 =
-        parallel_streaming::PendingDecryptor::from_reader(&mut source5)?;
+    let pending_decryptor5 = parallel_streaming::PendingDecryptor::from_reader(&mut source5)?;
     let header5 = pending_decryptor5.header().clone();
     let found_key_id5 = header5.payload.key_id().unwrap();
     println!("Found key ID in parallel stream: '{}'", found_key_id5);
