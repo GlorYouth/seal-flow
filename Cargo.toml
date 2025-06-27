@@ -51,6 +51,11 @@ name = "symmetric_benchmark"
 harness = false
 required-features = ["async"]
 
+[[bench]]
+name = "asymmetric_benchmark"
+harness = false
+required-features = ["async"]
+
 [[example]]
 name = "high_level_symmetric"
 required-features = ["async"]
