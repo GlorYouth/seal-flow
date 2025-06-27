@@ -244,10 +244,25 @@ where
             return Ok(0);
         }
 
-        // Buffer is empty, so we need to read and decrypt the next chunk.
-        let bytes_read = self.reader.read(&mut self.encrypted_chunk_buffer)?;
-        if bytes_read == 0 {
-            self.is_done = true;
+        // Buffer is empty, so we need to read the next chunk.
+        let mut total_bytes_read = 0;
+        while total_bytes_read < self.encrypted_chunk_size {
+            match self
+                .reader
+                .read(&mut self.encrypted_chunk_buffer[total_bytes_read..])
+            {
+                Ok(0) => {
+                    self.is_done = true;
+                    break; // EOF
+                }
+                Ok(n) => total_bytes_read += n,
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        }
+
+        if total_bytes_read == 0 {
+            // We've hit EOF and there's no partial chunk to process.
             return Ok(0);
         }
 
@@ -262,7 +277,7 @@ where
         let bytes_written = S::decrypt_to_buffer(
             &self.symmetric_key,
             &nonce,
-            &self.encrypted_chunk_buffer[..bytes_read],
+            &self.encrypted_chunk_buffer[..total_bytes_read],
             decrypted_buf,
             None,
         )

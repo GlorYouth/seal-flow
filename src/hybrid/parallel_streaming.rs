@@ -2,19 +2,42 @@
 
 use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::common::buffer::BufferPool;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
-use rayon::iter::ParallelIterator;
+use bytes::BytesMut;
 use rayon::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
-use std::collections::BTreeMap;
+use std::collections::BinaryHeap;
 use std::io::{Read, Write};
-use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 
 const CHANNEL_BOUND: usize = 16;
 
-pub fn encrypt<A, S, R: Read + Send + Sync, W: Write + Send + Sync>(
+/// A wrapper for chunks to allow ordering in a min-heap.
+struct OrderedChunk {
+    index: u64,
+    data: Result<BytesMut>,
+}
+impl PartialEq for OrderedChunk {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
+    }
+}
+impl Eq for OrderedChunk {}
+impl PartialOrd for OrderedChunk {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for OrderedChunk {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.index.cmp(&self.index)
+    }
+}
+
+pub fn encrypt<A, S, R, W>(
     public_key: &A::PublicKey,
     mut reader: R,
     mut writer: W,
@@ -24,90 +47,139 @@ where
     A: AsymmetricAlgorithm,
     A::EncapsulatedKey: Into<Vec<u8>> + Send,
     S: SymmetricAlgorithm,
-    S::Key: From<Zeroizing<Vec<u8>>>,
+    S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
+    R: Read + Send,
+    W: Write,
 {
     let (header, base_nonce, shared_secret) =
         create_header::<A, S>(&public_key.clone().into(), kek_id)?;
+    let key_arc = Arc::new(shared_secret.into());
+    let pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize));
 
     let header_bytes = header.encode_to_vec()?;
     writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
     writer.write_all(&header_bytes)?;
 
-    let (raw_chunk_tx, raw_chunk_rx) = mpsc::sync_channel::<(u64, Vec<u8>)>(CHANNEL_BOUND);
-    let (enc_chunk_tx, enc_chunk_rx) = mpsc::sync_channel::<(u64, Result<Vec<u8>>)>(CHANNEL_BOUND);
-    let (io_error_tx, io_error_rx) = mpsc::channel::<std::io::Error>();
+    let (raw_chunk_tx, raw_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
+    let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
+    let (io_error_tx, io_error_rx) = crossbeam_channel::unbounded();
 
     thread::scope(|s| {
+        let pool_for_reader = Arc::clone(&pool);
         s.spawn(move || {
             let mut chunk_index = 0u64;
             loop {
-                let mut chunk = vec![0; DEFAULT_CHUNK_SIZE as usize];
-                let mut bytes_read = 0;
-                while bytes_read < chunk.len() {
-                    match reader.read(&mut chunk[bytes_read..]) {
+                let mut buffer = pool_for_reader.acquire();
+                let chunk_size = buffer.capacity();
+                buffer.resize(chunk_size, 0);
+
+                let mut bytes_read_total = 0;
+                while bytes_read_total < chunk_size {
+                    match reader.read(&mut buffer[bytes_read_total..]) {
                         Ok(0) => break,
-                        Ok(n) => bytes_read += n,
+                        Ok(n) => bytes_read_total += n,
                         Err(e) => {
+                            pool_for_reader.release(buffer);
                             let _ = io_error_tx.send(e);
                             return;
                         }
                     }
                 }
-                if bytes_read > 0 {
-                    chunk.truncate(bytes_read);
-                    if raw_chunk_tx.send((chunk_index, chunk)).is_err() {
+
+                if bytes_read_total > 0 {
+                    buffer.truncate(bytes_read_total);
+                    if raw_chunk_tx.send((chunk_index, buffer)).is_err() {
                         break;
                     }
                     chunk_index += 1;
+                } else {
+                    pool_for_reader.release(buffer);
                 }
-                if bytes_read < DEFAULT_CHUNK_SIZE as usize {
+
+                if bytes_read_total < chunk_size {
                     break;
                 }
             }
         });
 
+        let in_pool = Arc::clone(&pool);
+        let out_pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE));
+        let writer_pool = Arc::clone(&out_pool);
         let enc_chunk_tx_clone = enc_chunk_tx.clone();
         s.spawn(move || {
             raw_chunk_rx
                 .into_iter()
                 .par_bridge()
-                .for_each(|(index, chunk)| {
+                .for_each(|(index, in_buffer)| {
+                    let mut out_buffer = out_pool.acquire();
                     let nonce = derive_nonce(&base_nonce, index);
-                    let encrypted = S::encrypt(&shared_secret.clone().into(), &nonce, &chunk, None)
-                        .map_err(Error::from);
-                    if enc_chunk_tx_clone.send((index, encrypted)).is_err() {
-                        return;
-                    }
+                    let capacity = out_buffer.capacity();
+                    out_buffer.resize(capacity, 0);
+
+                    let result = S::encrypt_to_buffer(
+                        &key_arc,
+                        &nonce,
+                        &in_buffer,
+                        &mut out_buffer,
+                        None,
+                    )
+                    .map(|written| {
+                        out_buffer.truncate(written);
+                        out_buffer
+                    })
+                    .map_err(Error::from);
+
+                    in_pool.release(in_buffer);
+                    if enc_chunk_tx_clone.send((index, result)).is_err() {}
                 });
         });
 
-        let mut next_chunk_to_write = 0u64;
-        let mut out_of_order_buffer = BTreeMap::new();
-        drop(enc_chunk_tx);
+        let mut final_result: Result<()> = Ok(());
+        let mut pending_chunks = BinaryHeap::new();
+        let mut next_chunk_to_write = 0;
+        drop(enc_chunk_tx); // Drop our sender to signal completion
 
-        loop {
-            if let Ok(io_err) = io_error_rx.try_recv() {
-                return Err(Error::Io(io_err));
-            }
-            match enc_chunk_rx.recv() {
-                Ok((index, encrypted_result)) => {
-                    let encrypted_chunk = encrypted_result?;
-                    out_of_order_buffer.insert(index, encrypted_chunk);
-                    while let Some(chunk_to_write) =
-                        out_of_order_buffer.remove(&next_chunk_to_write)
-                    {
-                        writer.write_all(&chunk_to_write)?;
-                        next_chunk_to_write += 1;
+        while let Ok((index, result)) = enc_chunk_rx.recv() {
+            pending_chunks.push(OrderedChunk { index, data: result });
+            while let Some(top) = pending_chunks.peek() {
+                if top.index == next_chunk_to_write {
+                    let chunk = pending_chunks.pop().unwrap();
+                    match chunk.data {
+                        Ok(data) => {
+                            if let Err(e) = writer.write_all(&data) {
+                                final_result = Err(e.into());
+                                break;
+                            }
+                            writer_pool.release(data);
+                            next_chunk_to_write += 1;
+                        }
+                        Err(e) => {
+                            final_result = Err(e);
+                            break;
+                        }
                     }
+                } else {
+                    break;
                 }
-                Err(_) => break,
+            }
+            if final_result.is_err() {
+                break;
             }
         }
-        while let Some(chunk_to_write) = out_of_order_buffer.remove(&next_chunk_to_write) {
-            writer.write_all(&chunk_to_write)?;
-            next_chunk_to_write += 1;
+
+        if final_result.is_ok() {
+            if let Ok(e) = io_error_rx.try_recv() {
+                final_result = Err(e.into());
+            }
         }
-        Ok(())
+        if final_result.is_err() {
+            for chunk in pending_chunks {
+                if let Ok(buf) = chunk.data {
+                    writer_pool.release(buf);
+                }
+            }
+        }
+        final_result
     })
 }
 
@@ -145,7 +217,7 @@ where
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
-        S::Key: From<Zeroizing<Vec<u8>>>,
+        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
         A::PrivateKey: Clone,
         A::EncapsulatedKey: From<Vec<u8>>,
     {
@@ -163,7 +235,7 @@ pub fn decrypt_body_stream<A, S, R, W>(
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    S::Key: From<Zeroizing<Vec<u8>>>,
+    S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     A::PrivateKey: Clone,
     A::EncapsulatedKey: From<Vec<u8>>,
     R: Read + Send,
@@ -183,85 +255,130 @@ where
     };
 
     let shared_secret = A::decapsulate(&private_key.clone().into(), &encapsulated_key)?;
+    let key_arc = Arc::new(shared_secret.into());
     let encrypted_chunk_size = (chunk_size as usize) + S::TAG_SIZE;
+    let pool = Arc::new(BufferPool::new(encrypted_chunk_size));
 
-    let (enc_chunk_tx, enc_chunk_rx) = mpsc::sync_channel::<(u64, Vec<u8>)>(CHANNEL_BOUND);
-    let (dec_chunk_tx, dec_chunk_rx) = mpsc::sync_channel::<(u64, Result<Vec<u8>>)>(CHANNEL_BOUND);
-    let (io_error_tx, io_error_rx) = mpsc::channel::<std::io::Error>();
+    let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
+    let (dec_chunk_tx, dec_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
+    let (io_error_tx, io_error_rx) = crossbeam_channel::unbounded();
 
     thread::scope(|s| {
+        let pool_for_reader = Arc::clone(&pool);
         s.spawn(move || {
             let mut chunk_index = 0u64;
             loop {
-                let mut chunk = vec![0; encrypted_chunk_size];
-                let mut bytes_read = 0;
-                while bytes_read < chunk.len() {
-                    match reader.read(&mut chunk[bytes_read..]) {
+                let mut buffer = pool_for_reader.acquire();
+                let chunk_size_local = buffer.capacity();
+                buffer.resize(chunk_size_local, 0);
+
+                let mut bytes_read_total = 0;
+                while bytes_read_total < chunk_size_local {
+                    match reader.read(&mut buffer[bytes_read_total..]) {
                         Ok(0) => break,
-                        Ok(n) => bytes_read += n,
+                        Ok(n) => bytes_read_total += n,
                         Err(e) => {
+                            pool_for_reader.release(buffer);
                             let _ = io_error_tx.send(e);
                             return;
                         }
                     }
                 }
-                if bytes_read > 0 {
-                    chunk.truncate(bytes_read);
-                    if enc_chunk_tx.send((chunk_index, chunk)).is_err() {
+
+                if bytes_read_total > 0 {
+                    buffer.truncate(bytes_read_total);
+                    if enc_chunk_tx.send((chunk_index, buffer)).is_err() {
                         break;
                     }
                     chunk_index += 1;
+                } else {
+                    pool_for_reader.release(buffer);
                 }
-                if bytes_read < encrypted_chunk_size {
+
+                if bytes_read_total < chunk_size_local {
                     break;
                 }
             }
         });
 
+        let in_pool = Arc::clone(&pool);
+        let out_pool = Arc::new(BufferPool::new(chunk_size as usize));
+        let writer_pool = Arc::clone(&out_pool);
         let dec_chunk_tx_clone = dec_chunk_tx.clone();
         s.spawn(move || {
             enc_chunk_rx
                 .into_iter()
                 .par_bridge()
-                .for_each(|(index, chunk)| {
+                .for_each(|(index, in_buffer)| {
+                    let mut out_buffer = out_pool.acquire();
                     let nonce = derive_nonce(&base_nonce, index);
-                    let decrypted = S::decrypt(&shared_secret.clone().into(), &nonce, &chunk, None)
-                        .map_err(Error::from);
-                    if dec_chunk_tx_clone.send((index, decrypted)).is_err() {
-                        return;
-                    }
+                    let capacity = out_buffer.capacity();
+                    out_buffer.resize(capacity, 0);
+
+                    let result = S::decrypt_to_buffer(
+                        &key_arc,
+                        &nonce,
+                        &in_buffer,
+                        &mut out_buffer,
+                        None,
+                    )
+                    .map(|written| {
+                        out_buffer.truncate(written);
+                        out_buffer
+                    })
+                    .map_err(Error::from);
+
+                    in_pool.release(in_buffer);
+                    if dec_chunk_tx_clone.send((index, result)).is_err() {}
                 });
         });
 
-        let mut next_chunk_to_write = 0u64;
-        let mut out_of_order_buffer = BTreeMap::new();
+        let mut final_result: Result<()> = Ok(());
+        let mut pending_chunks = BinaryHeap::new();
+        let mut next_chunk_to_write = 0;
         drop(dec_chunk_tx);
 
-        loop {
-            if let Ok(io_err) = io_error_rx.try_recv() {
-                return Err(Error::Io(io_err));
-            }
-            match dec_chunk_rx.recv() {
-                Ok((index, decrypted_result)) => {
-                    let decrypted_chunk = decrypted_result?;
-                    out_of_order_buffer.insert(index, decrypted_chunk);
-                    while let Some(chunk_to_write) =
-                        out_of_order_buffer.remove(&next_chunk_to_write)
-                    {
-                        writer.write_all(&chunk_to_write)?;
-                        next_chunk_to_write += 1;
+        while let Ok((index, result)) = dec_chunk_rx.recv() {
+            pending_chunks.push(OrderedChunk { index, data: result });
+            while let Some(top) = pending_chunks.peek() {
+                if top.index == next_chunk_to_write {
+                    let chunk = pending_chunks.pop().unwrap();
+                    match chunk.data {
+                        Ok(data) => {
+                            if let Err(e) = writer.write_all(&data) {
+                                final_result = Err(e.into());
+                                break;
+                            }
+                            writer_pool.release(data);
+                            next_chunk_to_write += 1;
+                        }
+                        Err(e) => {
+                            final_result = Err(e);
+                            break;
+                        }
                     }
+                } else {
+                    break;
                 }
-                Err(_) => break,
+            }
+            if final_result.is_err() {
+                break;
             }
         }
 
-        while let Some(chunk_to_write) = out_of_order_buffer.remove(&next_chunk_to_write) {
-            writer.write_all(&chunk_to_write)?;
-            next_chunk_to_write += 1;
+        if final_result.is_ok() {
+            if let Ok(e) = io_error_rx.try_recv() {
+                final_result = Err(e.into());
+            }
         }
-
-        Ok(())
+        if final_result.is_err() {
+            for chunk in pending_chunks {
+                if let Ok(buf) = chunk.data {
+                    writer_pool.release(buf);
+                }
+            }
+        }
+        final_result
     })
 }
 

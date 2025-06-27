@@ -22,20 +22,24 @@ where
     let key_material = shared_secret.into();
 
     // 3. Encrypt data chunks sequentially.
-    let mut encrypted_chunks = Vec::new();
+    let mut encrypted_body = Vec::with_capacity(
+        plaintext.len() + (plaintext.len() / DEFAULT_CHUNK_SIZE as usize + 1) * S::TAG_SIZE,
+    );
+    let mut temp_chunk_buffer = vec![0u8; DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE];
+
     for (i, chunk) in plaintext.chunks(DEFAULT_CHUNK_SIZE as usize).enumerate() {
         let nonce = derive_nonce(&base_nonce, i as u64);
-        let encrypted_chunk = S::encrypt(&key_material, &nonce, chunk, None)?;
-        encrypted_chunks.push(encrypted_chunk);
+        let bytes_written =
+            S::encrypt_to_buffer(&key_material, &nonce, chunk, &mut temp_chunk_buffer, None)?;
+        encrypted_body.extend_from_slice(&temp_chunk_buffer[..bytes_written]);
     }
 
     // 4. Assemble the final output.
-    let body = encrypted_chunks.concat();
-    let capacity = 4 + header_bytes.len() + body.len();
-    let mut final_output = Vec::with_capacity(capacity);
+    let mut final_output =
+        Vec::with_capacity(4 + header_bytes.len() + encrypted_body.len());
     final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
     final_output.extend_from_slice(&header_bytes);
-    final_output.extend_from_slice(&body);
+    final_output.extend_from_slice(&encrypted_body);
 
     Ok(final_output)
 }
@@ -114,15 +118,22 @@ where
     let encrypted_chunk_size = chunk_size as usize + tag_len;
 
     // 3. Decrypt data chunks sequentially.
-    let mut decrypted_chunks = Vec::new();
+    let mut plaintext = Vec::with_capacity(ciphertext_body.len());
+    let mut decrypted_chunk_buffer = vec![0u8; chunk_size as usize];
+
     for (i, encrypted_chunk) in ciphertext_body.chunks(encrypted_chunk_size).enumerate() {
         let nonce = derive_nonce(&base_nonce, i as u64);
-        let decrypted_chunk =
-            S::decrypt(&key_material, &nonce, encrypted_chunk, None)?;
-        decrypted_chunks.push(decrypted_chunk);
+        let bytes_written = S::decrypt_to_buffer(
+            &key_material,
+            &nonce,
+            encrypted_chunk,
+            &mut decrypted_chunk_buffer,
+            None,
+        )?;
+        plaintext.extend_from_slice(&decrypted_chunk_buffer[..bytes_written]);
     }
 
-    Ok(decrypted_chunks.concat())
+    Ok(plaintext)
 }
 
 #[cfg(test)]

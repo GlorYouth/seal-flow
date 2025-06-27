@@ -176,6 +176,7 @@ impl<R: Read> PendingDecryptor<R> {
             base_nonce,
             encrypted_chunk_size,
             buffer: io::Cursor::new(Vec::new()),
+            encrypted_chunk_buffer: vec![0; encrypted_chunk_size],
             chunk_counter: 0,
             is_done: false,
             _phantom: std::marker::PhantomData,
@@ -193,6 +194,7 @@ where
     base_nonce: [u8; 12],
     encrypted_chunk_size: usize,
     buffer: io::Cursor<Vec<u8>>,
+    encrypted_chunk_buffer: Vec<u8>,
     chunk_counter: u64,
     is_done: bool,
     _phantom: std::marker::PhantomData<(A, S)>,
@@ -206,33 +208,62 @@ where
     A::PrivateKey: Clone,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // If there's data in the decrypted buffer, serve it first.
         let bytes_read_from_buf = self.buffer.read(buf)?;
-        if bytes_read_from_buf > 0 || self.is_done {
+        if bytes_read_from_buf > 0 {
             return Ok(bytes_read_from_buf);
         }
 
-        let mut encrypted_chunk = vec![0u8; self.encrypted_chunk_size];
-        let bytes_read = self.reader.read(&mut encrypted_chunk)?;
-        if bytes_read == 0 {
-            // This is a clean EOF on a chunk boundary.
-            self.is_done = true;
+        // If the buffer is empty and we're done, signal EOF.
+        if self.is_done {
             return Ok(0);
         }
 
-        // Handle cases where the last chunk is smaller than the full chunk size.
-        let final_encrypted_chunk = &encrypted_chunk[..bytes_read];
+        // Buffer is empty, so we need to read the next chunk.
+        let mut total_bytes_read = 0;
+        while total_bytes_read < self.encrypted_chunk_size {
+            match self
+                .reader
+                .read(&mut self.encrypted_chunk_buffer[total_bytes_read..])
+            {
+                Ok(0) => {
+                    self.is_done = true;
+                    break; // EOF
+                }
+                Ok(n) => total_bytes_read += n,
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        }
+
+        if total_bytes_read == 0 {
+            // We've hit EOF and there's no partial chunk to process.
+            return Ok(0);
+        }
 
         let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-        let plaintext_chunk =
-            S::decrypt(&self.symmetric_key, &nonce, final_encrypted_chunk, None)
-                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "decryption failed"))?;
+        // Prepare the output buffer inside the cursor
+        let decrypted_buf = self.buffer.get_mut();
+        decrypted_buf.clear();
+        // Resize to max possible decrypted size. The actual size will be truncated later.
+        decrypted_buf.resize(self.encrypted_chunk_size, 0);
 
-        self.buffer = io::Cursor::new(plaintext_chunk);
+        let bytes_written = S::decrypt_to_buffer(
+            &self.symmetric_key,
+            &nonce,
+            &self.encrypted_chunk_buffer[..total_bytes_read],
+            decrypted_buf,
+            None,
+        )
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+        decrypted_buf.truncate(bytes_written);
+        self.buffer.set_position(0);
         self.chunk_counter += 1;
 
-        // Recursively call read to fill the user's buffer from our new internal buffer.
-        self.read(buf)
+        // Now, try to read from the newly filled buffer into the user's buffer.
+        self.buffer.read(buf)
     }
 }
 

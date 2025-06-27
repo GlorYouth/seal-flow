@@ -101,7 +101,7 @@ where
         R: Read + Send + Sync,
         W: Write + Send + Sync,
         A::EncapsulatedKey: Into<Vec<u8>> + Send,
-        S::Key: From<Zeroizing<Vec<u8>>>,
+        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
         crate::hybrid::parallel_streaming::encrypt::<A, S, R, W>(
             self.pk,
@@ -119,8 +119,8 @@ where
     ) -> crate::Result<crate::hybrid::asynchronous::Encryptor<W, A, S>>
     where
         A::PublicKey: Clone,
-        A::EncapsulatedKey: Into<Vec<u8>> + Send, 
-        <S as seal_crypto::prelude::SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>>
+        A::EncapsulatedKey: Into<Vec<u8>> + Send,
+        <S as seal_crypto::prelude::SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
         crate::hybrid::asynchronous::Encryptor::new(writer, self.pk.clone(), self.kek_id).await
     }
@@ -290,7 +290,7 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     where
         P: AsymmetricKeyProvider,
         S: SymmetricAlgorithm,
-        S::Key: From<Zeroizing<Vec<u8>>>,
+        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
@@ -337,7 +337,7 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
-        S::Key: From<Zeroizing<Vec<u8>>>,
+        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
         A::PrivateKey: Clone,
         A::EncapsulatedKey: From<Vec<u8>>,
     {
@@ -463,7 +463,7 @@ where
         P: AsymmetricKeyProvider,
         S: SymmetricAlgorithm,
         W: Write,
-        S::Key: From<Zeroizing<Vec<u8>>>,
+        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
@@ -524,7 +524,7 @@ where
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
-        S::Key: From<Zeroizing<Vec<u8>>>,
+        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
         A::PrivateKey: Clone,
         A::EncapsulatedKey: From<Vec<u8>>,
     {
@@ -625,7 +625,7 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
         A::EncapsulatedKey: From<Vec<u8>> + Send,
-        S::Key: From<Zeroizing<Vec<u8>>>,
+        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
         self.inner.into_decryptor::<A, S>(sk).await
     }
