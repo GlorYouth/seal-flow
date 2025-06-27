@@ -9,7 +9,7 @@ readme = "README.md"
 [dependencies]
 # --- 核心密码学特性 ---
 # 提供了所有密码学操作的 Trait 和基础实现
-seal-crypto = { version = "0.1.1", features = ["full"]}
+seal-crypto = { path = "seal-crypto", features = ["full"]}
 
 # --- 序列化与错误处理 ---
 # 用于将 Header 结构体序列化为字节流
@@ -22,6 +22,8 @@ thiserror = "2.0.12"
 rayon = "1.10.0"
 # 用于生成随机的 base_nonce
 rand = "0.9.1"
+bytes = "1.10.1"
+crossbeam-channel = "0.5.15"
 
 # --- 异步支持 (可选，通过 feature gate 控制) ---
 # 异步运行时和 I/O Trait
