@@ -23,10 +23,13 @@ where
         plaintext.len() + (plaintext.len() / DEFAULT_CHUNK_SIZE as usize + 1) * S::TAG_SIZE,
     );
 
+    let mut temp_chunk_buffer = vec![0u8; DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE];
+
     for (i, chunk) in plaintext.chunks(DEFAULT_CHUNK_SIZE as usize).enumerate() {
         let nonce = derive_nonce(&base_nonce_bytes, i as u64);
-        let encrypted_chunk = S::encrypt(&key_material, &nonce, chunk, None)?;
-        encrypted_body.extend_from_slice(&encrypted_chunk);
+        let bytes_written =
+            S::encrypt_to_buffer(&key_material, &nonce, chunk, &mut temp_chunk_buffer, None)?;
+        encrypted_body.extend_from_slice(&temp_chunk_buffer[..bytes_written]);
     }
 
     let mut final_output = Vec::with_capacity(4 + header_bytes.len() + encrypted_body.len());
@@ -93,16 +96,15 @@ where
     let key_material = key.into();
     let mut plaintext = Vec::with_capacity(ciphertext_body.len());
     let chunk_size_with_tag = chunk_size as usize + S::TAG_SIZE;
-    let mut chunk_index = 0;
+
+    // Reusable buffer for decrypted chunks, sized for the largest possible chunk.
+    let mut decrypted_chunk_buffer = vec![0u8; chunk_size as usize];
 
     let mut cursor = 0;
+    let mut chunk_index = 0;
     while cursor < ciphertext_body.len() {
         let remaining_len = ciphertext_body.len() - cursor;
-        let current_chunk_len = if remaining_len < chunk_size_with_tag {
-            remaining_len
-        } else {
-            chunk_size_with_tag
-        };
+        let current_chunk_len = std::cmp::min(remaining_len, chunk_size_with_tag);
 
         if current_chunk_len == 0 {
             break;
@@ -111,9 +113,15 @@ where
         let encrypted_chunk = &ciphertext_body[cursor..cursor + current_chunk_len];
 
         let nonce = derive_nonce(&base_nonce_array, chunk_index as u64);
-        let decrypted_chunk = S::decrypt(&key_material, &nonce, encrypted_chunk, None)?;
+        let bytes_written = S::decrypt_to_buffer(
+            &key_material,
+            &nonce,
+            encrypted_chunk,
+            &mut decrypted_chunk_buffer,
+            None,
+        )?;
 
-        plaintext.extend_from_slice(&decrypted_chunk);
+        plaintext.extend_from_slice(&decrypted_chunk_buffer[..bytes_written]);
 
         cursor += current_chunk_len;
         chunk_index += 1;

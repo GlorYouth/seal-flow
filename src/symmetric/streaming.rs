@@ -17,6 +17,7 @@ where
     chunk_size: usize,
     buffer: Vec<u8>,
     chunk_counter: u64,
+    encrypted_chunk_buffer: Vec<u8>,
     _phantom: std::marker::PhantomData<S>,
 }
 
@@ -38,6 +39,7 @@ where
             chunk_size: DEFAULT_CHUNK_SIZE as usize,
             buffer: Vec::with_capacity(DEFAULT_CHUNK_SIZE as usize),
             chunk_counter: 0,
+            encrypted_chunk_buffer: vec![0u8; DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE],
             _phantom: std::marker::PhantomData,
         })
     }
@@ -48,12 +50,19 @@ where
     /// encrypted and the authentication tag is written to the underlying writer.
     pub fn finish(mut self) -> Result<()> {
         if !self.buffer.is_empty() {
-            let final_chunk = self.buffer.drain(..).collect::<Vec<u8>>();
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
-
-            let encrypted_chunk = S::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            self.writer.write_all(&encrypted_chunk)?;
+            let bytes_written = S::encrypt_to_buffer(
+                &self.symmetric_key,
+                &nonce,
+                &self.buffer,
+                &mut self.encrypted_chunk_buffer,
+                None,
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            self.writer
+                .write_all(&self.encrypted_chunk_buffer[..bytes_written])?;
+            self.chunk_counter += 1;
+            self.buffer.clear();
         }
         self.writer.flush()?;
         Ok(())
@@ -77,9 +86,16 @@ where
             if self.buffer.len() == self.chunk_size {
                 let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-                let encrypted_chunk = S::encrypt(&self.symmetric_key, &nonce, &self.buffer, None)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-                self.writer.write_all(&encrypted_chunk)?;
+                let bytes_written = S::encrypt_to_buffer(
+                    &self.symmetric_key,
+                    &nonce,
+                    &self.buffer,
+                    &mut self.encrypted_chunk_buffer,
+                    None,
+                )
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                self.writer
+                    .write_all(&self.encrypted_chunk_buffer[..bytes_written])?;
                 self.chunk_counter += 1;
                 self.buffer.clear();
             }
@@ -90,9 +106,16 @@ where
             let chunk = &input[..self.chunk_size];
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-            let encrypted_chunk = S::encrypt(&self.symmetric_key, &nonce, chunk, None)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            self.writer.write_all(&encrypted_chunk)?;
+            let bytes_written = S::encrypt_to_buffer(
+                &self.symmetric_key,
+                &nonce,
+                chunk,
+                &mut self.encrypted_chunk_buffer,
+                None,
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            self.writer
+                .write_all(&self.encrypted_chunk_buffer[..bytes_written])?;
 
             self.chunk_counter += 1;
             input = &input[self.chunk_size..];
@@ -157,6 +180,7 @@ impl<R: Read> PendingDecryptor<R> {
             base_nonce,
             encrypted_chunk_size,
             buffer: io::Cursor::new(Vec::new()),
+            encrypted_chunk_buffer: vec![0; encrypted_chunk_size],
             chunk_counter: 0,
             is_done: false,
             _phantom: std::marker::PhantomData,
@@ -174,9 +198,34 @@ where
     base_nonce: [u8; 12],
     encrypted_chunk_size: usize,
     buffer: io::Cursor<Vec<u8>>,
+    encrypted_chunk_buffer: Vec<u8>,
     chunk_counter: u64,
     is_done: bool,
     _phantom: std::marker::PhantomData<S>,
+}
+
+impl<R: Read, S: SymmetricAlgorithm> Decryptor<R, S>
+where
+    S::Key: Send + Sync,
+{
+    pub fn new(
+        reader: R,
+        key: S::Key,
+        base_nonce: [u8; 12],
+        encrypted_chunk_size: usize,
+    ) -> Self {
+        Self {
+            reader,
+            symmetric_key: key,
+            base_nonce,
+            encrypted_chunk_size,
+            buffer: io::Cursor::new(Vec::new()),
+            encrypted_chunk_buffer: vec![0; encrypted_chunk_size],
+            chunk_counter: 0,
+            is_done: false,
+            _phantom: std::marker::PhantomData,
+        }
+    }
 }
 
 impl<R: Read, S: SymmetricAlgorithm> Read for Decryptor<R, S>
@@ -184,13 +233,19 @@ where
     S::Key: Send + Sync,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        // If there's data in the decrypted buffer, serve it first.
         let bytes_read_from_buf = self.buffer.read(buf)?;
-        if bytes_read_from_buf > 0 || self.is_done {
+        if bytes_read_from_buf > 0 {
             return Ok(bytes_read_from_buf);
         }
 
-        let mut encrypted_chunk = vec![0u8; self.encrypted_chunk_size];
-        let bytes_read = self.reader.read(&mut encrypted_chunk)?;
+        // If the buffer is empty and we're done, signal EOF.
+        if self.is_done {
+            return Ok(0);
+        }
+
+        // Buffer is empty, so we need to read and decrypt the next chunk.
+        let bytes_read = self.reader.read(&mut self.encrypted_chunk_buffer)?;
         if bytes_read == 0 {
             self.is_done = true;
             return Ok(0);
@@ -198,17 +253,26 @@ where
 
         let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-        let decrypted_chunk = S::decrypt(
+        // Prepare the output buffer inside the cursor
+        let decrypted_buf = self.buffer.get_mut();
+        decrypted_buf.clear();
+        // Resize to max possible decrypted size. The actual size will be truncated later.
+        decrypted_buf.resize(self.encrypted_chunk_size, 0);
+
+        let bytes_written = S::decrypt_to_buffer(
             &self.symmetric_key,
             &nonce,
-            &encrypted_chunk[..bytes_read],
+            &self.encrypted_chunk_buffer[..bytes_read],
+            decrypted_buf,
             None,
         )
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        self.buffer = io::Cursor::new(decrypted_chunk);
+        decrypted_buf.truncate(bytes_written);
+        self.buffer.set_position(0);
         self.chunk_counter += 1;
 
+        // Now, try to read from the newly filled buffer into the user's buffer.
         self.buffer.read(buf)
     }
 }
