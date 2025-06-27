@@ -27,12 +27,13 @@ where
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     // 4. Assemble the final output
-    let mut final_output = Vec::with_capacity(
-        4 + header_bytes.len() + encrypted_chunks.iter().map(Vec::len).sum::<usize>(),
-    );
+    let total_body_size = encrypted_chunks.iter().map(Vec::len).sum::<usize>();
+    let mut final_output = Vec::with_capacity(4 + header_bytes.len() + total_body_size);
     final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
     final_output.extend_from_slice(&header_bytes);
-    final_output.extend_from_slice(&encrypted_chunks.concat());
+    for chunk in encrypted_chunks {
+        final_output.extend_from_slice(&chunk);
+    }
 
     Ok(final_output)
 }
@@ -71,7 +72,12 @@ where
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    Ok(decrypted_chunks.concat())
+    let total_size = decrypted_chunks.iter().map(Vec::len).sum();
+    let mut plaintext = Vec::with_capacity(total_size);
+    for chunk in decrypted_chunks {
+        plaintext.extend_from_slice(&chunk);
+    }
+    Ok(plaintext)
 }
 
 /// A pending decryptor for in-memory data that will be processed in parallel.

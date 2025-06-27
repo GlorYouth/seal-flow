@@ -32,14 +32,13 @@ where
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     // 4. Assemble the final output.
-    let final_output = {
-        let body = encrypted_chunks.concat();
-        let mut output = Vec::with_capacity(4 + header_bytes.len() + body.len());
-        output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
-        output.extend_from_slice(&header_bytes);
-        output.extend_from_slice(&body);
-        output
-    };
+    let total_body_size = encrypted_chunks.iter().map(Vec::len).sum::<usize>();
+    let mut final_output = Vec::with_capacity(4 + header_bytes.len() + total_body_size);
+    final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
+    final_output.extend_from_slice(&header_bytes);
+    for chunk in encrypted_chunks {
+        final_output.extend_from_slice(&chunk);
+    }
 
     Ok(final_output)
 }
@@ -123,7 +122,12 @@ where
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    Ok(decrypted_chunks.concat())
+    let total_size = decrypted_chunks.iter().map(Vec::len).sum();
+    let mut plaintext = Vec::with_capacity(total_size);
+    for chunk in decrypted_chunks {
+        plaintext.extend_from_slice(&chunk);
+    }
+    Ok(plaintext)
 }
 
 #[cfg(test)]
