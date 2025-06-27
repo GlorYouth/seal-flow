@@ -55,15 +55,13 @@ fn main() -> Result<()> {
 
     // Encrypt data held in memory
     let ciphertext = seal
-        .in_memory::<Aes256Gcm>()
-        .encrypt(&key, plaintext, key_id)?;
+        .encrypt::<Aes256Gcm>(&key, key_id)
+        .to_vec(plaintext)?;
 
     // Decrypt data held in memory.
     // The API promotes a safer two-step decryption process.
     // First, create a pending decryptor to inspect metadata without decrypting.
-    let pending_decryptor = seal
-        .in_memory::<Aes256Gcm>()
-        .decrypt(&ciphertext)?;
+    let pending_decryptor = seal.decrypt().from_slice(&ciphertext)?;
 
     // You can now inspect the key ID from the header to find the correct key.
     // For this example, we'll use the key we already have.
@@ -100,14 +98,13 @@ fn main() -> Result<()> {
 
     // 2. Encrypt data with a specific key ID
     let ciphertext = seal
-        .in_memory::<Aes256Gcm>()
-        .encrypt(key_store.get(&key_id).unwrap(), plaintext, key_id)?;
+        .encrypt::<Aes256Gcm>(key_store.get(&key_id).unwrap(), key_id)
+        .to_vec(plaintext)?;
 
     // --- The Decryption Workflow ---
 
     // 3. Begin the decryption process by creating a pending decryptor from a reader
-    let pending_decryptor = seal
-        .streaming_decryptor_from_reader(Cursor::new(&ciphertext))?;
+    let pending_decryptor = seal.decrypt().from_reader(Cursor::new(&ciphertext))?;
 
     // 4. Get the key ID from the encrypted header. This is a cheap operation.
     let found_key_id = pending_decryptor.key_id().expect("Key ID not found in header!");
@@ -152,10 +149,10 @@ This project is licensed under the Mozilla Public License 2.0. See the [LICENSE]
 
 ### High-Level API (`seal` module)
 
-Uses a stateless factory for maximum simplicity and flexibility.
+Uses a stateless factory for maximum simplicity and flexibility. All operations start with `encrypt` or `decrypt`.
 
--   **Symmetric:** `SymmetricSeal::new().<mode>.<operation>(&key, ...)`
--   **Hybrid:** `HybridSeal::new().<mode>.encrypt(&pk, ...)` or `HybridSeal::new().<mode>.decrypt(&sk, ...)`
+-   **Symmetric:** `SymmetricSeal::new().encrypt(&key, ...).to_vec(plaintext)?`
+-   **Hybrid:** `HybridSeal::new().encrypt(&pk, ...).to_vec(plaintext)?`
 
 ### Mid-Level API (`flows` module)
 

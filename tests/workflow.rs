@@ -68,13 +68,13 @@ fn test_symmetric_workflow() {
 
     // --- Encryption Side ---
     let encrypted = seal
-        .in_memory::<TestDek>()
-        .encrypt(&key, plaintext, key_id.clone())
+        .encrypt::<TestDek>(&key, key_id.clone())
+        .to_vec(plaintext)
         .unwrap();
 
     // --- Decryption Side (simulated) ---
     // 1. Create a pending decryptor to peek the key ID from the header.
-    let pending_decryptor = seal.in_memory::<TestDek>().decrypt(&encrypted).unwrap();
+    let pending_decryptor = seal.decrypt().from_slice(&encrypted).unwrap();
     let peeked_id = pending_decryptor.key_id().unwrap();
     assert_eq!(key_id, peeked_id);
 
@@ -103,16 +103,13 @@ fn test_hybrid_workflow() {
 
     // --- Encryption Side ---
     let encrypted = seal
-        .in_memory::<TestKem, TestDek>()
-        .encrypt(&pk, plaintext, kek_id.clone())
+        .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
+        .to_vec(plaintext)
         .unwrap();
 
     // --- Decryption Side (simulated) ---
     // 1. Create a pending decryptor to peek the KEK ID from the header.
-    let pending_decryptor = seal
-        .in_memory::<TestKem, TestDek>()
-        .decrypt(&encrypted)
-        .unwrap();
+    let pending_decryptor = seal.decrypt().from_slice(&encrypted).unwrap();
     let peeked_id = pending_decryptor.kek_id().unwrap();
     assert_eq!(kek_id, peeked_id);
 
@@ -147,7 +144,8 @@ mod async_workflow_tests {
         // --- Encryption Side ---
         let mut encrypted_data = Vec::new();
         let mut encryptor = seal
-            .asynchronous_encryptor::<TestDek, _>(&mut encrypted_data, &key, key_id.clone())
+            .encrypt::<TestDek>(&key, key_id.clone())
+            .into_async_writer(&mut encrypted_data)
             .await
             .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
@@ -156,7 +154,8 @@ mod async_workflow_tests {
         // --- Decryption Side (simulated) ---
         // 1. Peek the key ID asynchronously.
         let pending_decryptor = seal
-            .asynchronous_decryptor_from_reader(Cursor::new(&encrypted_data))
+            .decrypt()
+            .from_async_reader(Cursor::new(&encrypted_data))
             .await
             .unwrap();
         let peeked_id = pending_decryptor.key_id().unwrap();
@@ -190,11 +189,8 @@ mod async_workflow_tests {
         // --- Encryption Side ---
         let mut encrypted_data = Vec::new();
         let mut encryptor = seal
-            .asynchronous_encryptor::<TestKem, TestDek, _>(
-                &mut encrypted_data,
-                pk.clone(),
-                kek_id.clone(),
-            )
+            .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
+            .into_async_writer(&mut encrypted_data)
             .await
             .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
@@ -203,7 +199,8 @@ mod async_workflow_tests {
         // --- Decryption Side (simulated) ---
         // 1. Peek the KEK ID asynchronously.
         let pending_decryptor = seal
-            .asynchronous_decryptor_from_reader(Cursor::new(&encrypted_data))
+            .decrypt()
+            .from_async_reader(Cursor::new(&encrypted_data))
             .await
             .unwrap();
         let peeked_id = pending_decryptor.kek_id().unwrap();

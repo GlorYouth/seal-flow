@@ -2,8 +2,8 @@ use seal_crypto::{prelude::*, schemes::asymmetric::traditional::rsa::Rsa2048};
 use seal_crypto::{schemes::hash::Sha256, schemes::symmetric::aes_gcm::Aes256Gcm};
 use seal_flow::prelude::*;
 use std::collections::HashMap;
-use std::io::{Cursor, Read};
-use tokio::io::AsyncReadExt;
+use std::io::{Cursor, Read, Write};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 type Kem = Rsa2048<Sha256>;
 type Dek = Aes256Gcm;
@@ -24,9 +24,9 @@ async fn main() -> Result<()> {
     // --- Mode 1: In-Memory (Ordinary) ---
     println!("--- Testing Mode: In-Memory (Ordinary) ---");
     let ciphertext1 = seal
-        .in_memory::<Kem, Dek>()
-        .encrypt(&pk, plaintext, KEK_ID.to_string())?;
-    let pending_decryptor1 = seal.in_memory::<Kem, Dek>().decrypt(&ciphertext1)?;
+        .encrypt::<Kem, Dek>(&pk, KEK_ID.to_string())
+        .to_vec(plaintext)?;
+    let pending_decryptor1 = seal.decrypt().from_slice(&ciphertext1)?;
     let found_kek_id = pending_decryptor1.kek_id().unwrap();
     let decryption_key1 = key_store.get(found_kek_id).unwrap();
     let decrypted1 = pending_decryptor1.with_private_key::<Kem, Dek>(decryption_key1)?;
@@ -36,11 +36,9 @@ async fn main() -> Result<()> {
     // --- Mode 2: In-Memory Parallel ---
     println!("\n--- Testing Mode: In-Memory Parallel ---");
     let ciphertext2 = seal
-        .in_memory_parallel::<Kem, Dek>()
-        .encrypt(&pk, plaintext, KEK_ID.to_string())?;
-    let pending_decryptor2 = seal
-        .in_memory_parallel::<Kem, Dek>()
-        .decrypt(&ciphertext2)?;
+        .encrypt::<Kem, Dek>(&pk, KEK_ID.to_string())
+        .to_vec_parallel(plaintext)?;
+    let pending_decryptor2 = seal.decrypt().from_slice_parallel(&ciphertext2)?;
     let found_kek_id = pending_decryptor2.kek_id().unwrap();
     let decryption_key2 = key_store.get(found_kek_id).unwrap();
     let decrypted2 = pending_decryptor2.with_private_key::<Kem, Dek>(decryption_key2)?;
@@ -50,10 +48,13 @@ async fn main() -> Result<()> {
     // --- Mode 3: Synchronous Streaming ---
     println!("\n--- Testing Mode: Synchronous Streaming ---");
     let mut ciphertext3 = Vec::new();
-    seal.streaming_encryptor::<Kem, Dek, _>(&mut ciphertext3, &pk, KEK_ID.to_string())?;
+    let mut encryptor = seal
+        .encrypt::<Kem, Dek>(&pk, KEK_ID.to_string())
+        .into_writer(&mut ciphertext3)?;
+    encryptor.write_all(plaintext)?;
+    encryptor.finish()?;
 
-    let pending_decryptor3 =
-        seal.streaming_decryptor_from_reader(Cursor::new(&ciphertext3))?;
+    let pending_decryptor3 = seal.decrypt().from_reader(Cursor::new(&ciphertext3))?;
     let found_kek_id = pending_decryptor3.kek_id().unwrap();
     println!("Found KEK ID in stream: '{}'", found_kek_id);
     let decryption_key3 = key_store.get(found_kek_id).unwrap();
@@ -67,11 +68,16 @@ async fn main() -> Result<()> {
     // --- Mode 4: Asynchronous Streaming ---
     println!("\n--- Testing Mode: Asynchronous Streaming ---");
     let mut ciphertext4 = Vec::new();
-    seal.asynchronous_encryptor::<Kem, Dek, _>(&mut ciphertext4, pk.clone(), KEK_ID.to_string())
+    let mut encryptor = seal
+        .encrypt::<Kem, Dek>(&pk, KEK_ID.to_string())
+        .into_async_writer(&mut ciphertext4)
         .await?;
+    encryptor.write_all(plaintext).await?;
+    encryptor.shutdown().await?;
 
     let pending_decryptor4 = seal
-        .asynchronous_decryptor_from_reader(Cursor::new(&ciphertext4))
+        .decrypt()
+        .from_async_reader(Cursor::new(&ciphertext4))
         .await?;
     let found_kek_id_async = pending_decryptor4.kek_id().unwrap();
     println!("Found KEK ID in async stream: '{}'", found_kek_id_async);
@@ -88,17 +94,13 @@ async fn main() -> Result<()> {
     // --- Mode 5: Parallel Streaming ---
     println!("\n--- Testing Mode: Parallel Streaming ---");
     let mut ciphertext5 = Vec::new();
-    seal.parallel_streaming::<Kem, Dek>().encrypt(
-        &pk,
-        Cursor::new(plaintext),
-        &mut ciphertext5,
-        KEK_ID.to_string(),
-    )?;
+    seal.encrypt::<Kem, Dek>(&pk, KEK_ID.to_string())
+        .pipe_parallel(Cursor::new(plaintext), &mut ciphertext5)?;
 
     let mut decrypted5 = Vec::new();
     let pending_decryptor5 = seal
-        .parallel_streaming::<Kem, Dek>()
-        .decrypt(Cursor::new(&ciphertext5))?;
+        .decrypt()
+        .from_reader_parallel(Cursor::new(&ciphertext5))?;
     let found_kek_id = pending_decryptor5.kek_id().unwrap();
     println!("Found KEK ID in parallel stream: '{}'", found_kek_id);
     let decryption_key5 = key_store.get(found_kek_id).unwrap();

@@ -53,15 +53,13 @@ fn main() -> Result<()> {
 
     // 加密内存中的数据
     let ciphertext = seal
-        .in_memory::<Aes256Gcm>()
-        .encrypt(&key, plaintext, key_id)?;
+        .encrypt::<Aes256Gcm>(&key, key_id)
+        .to_vec(plaintext)?;
 
     // 解密内存中的数据
     // API 推荐一个更安全的两步解密流程。
     // 首先，创建一个待定解密器，在不解密的情况下检查元数据。
-    let pending_decryptor = seal
-        .in_memory::<Aes256Gcm>()
-        .decrypt(&ciphertext)?;
+    let pending_decryptor = seal.decrypt().from_slice(&ciphertext)?;
 
     // 现在你可以从头部检查密钥ID，以找到正确的密钥。
     // 在此示例中，我们将使用已有的密钥。
@@ -98,14 +96,13 @@ fn main() -> Result<()> {
 
     // 2. 使用特定的密钥ID加密数据
     let ciphertext = seal
-        .in_memory::<Aes256Gcm>()
-        .encrypt(key_store.get(&key_id).unwrap(), plaintext, key_id)?;
+        .encrypt::<Aes256Gcm>(key_store.get(&key_id).unwrap(), key_id)
+        .to_vec(plaintext)?;
 
     // --- 解密工作流 ---
 
     // 3. 通过从读取器创建一个待定解密器来开始解密过程
-    let pending_decryptor = seal
-        .streaming_decryptor_from_reader(Cursor::new(&ciphertext))?;
+    let pending_decryptor = seal.decrypt().from_reader(Cursor::new(&ciphertext))?;
 
     // 4. 从加密头部获取密钥ID。这是一个廉价的操作。
     let found_key_id = pending_decryptor.key_id().expect("在头部未找到密钥ID！");
@@ -150,10 +147,10 @@ cargo run --example mid_level_hybrid --features=async
 
 ### 高层API (`seal` module)
 
-使用无状态工厂以实现最大程度的简洁性和灵活性。
+使用无状态工厂以实现最大程度的简洁性和灵活性。所有操作都从 `encrypt` 或 `decrypt` 开始。
 
--   **对称加密:** `SymmetricSeal::new().<mode>.<operation>(&key, ...)`
--   **混合加密:** `HybridSeal::new().<mode>.encrypt(&pk, ...)` 或 `HybridSeal::new().<mode>.decrypt(&sk, ...)`
+-   **对称加密:** `SymmetricSeal::new().encrypt(&key, ...).to_vec(plaintext)?`
+-   **混合加密:** `HybridSeal::new().encrypt(&pk, ...).to_vec(plaintext)?`
 
 ### 中层API (`flows` module)
 

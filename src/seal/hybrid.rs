@@ -15,136 +15,175 @@ impl HybridSeal {
         Self
     }
 
-    /// Configures the operation to run in-memory.
-    pub fn in_memory<A, S>(&self) -> HybridInMemoryExecutor<A, S>
-    where
-        A: AsymmetricAlgorithm,
-        S: SymmetricAlgorithm,
-    {
-        HybridInMemoryExecutor {
-            _phantom: PhantomData,
-        }
-    }
-
-    /// Configures the operation to run in-memory using parallel processing.
-    pub fn in_memory_parallel<A, S>(&self) -> HybridInMemoryParallelExecutor<A, S>
-    where
-        A: AsymmetricAlgorithm,
-        S: SymmetricAlgorithm,
-    {
-        HybridInMemoryParallelExecutor {
-            _phantom: PhantomData,
-        }
-    }
-
-    /// Configures a synchronous streaming encryption operation.
-    pub fn streaming_encryptor<A, S, W>(
+    /// Begins a hybrid encryption operation.
+    ///
+    /// This captures the essential encryption parameters (algorithms, public key, KEK ID)
+    /// and returns a context object. You can then call methods on this context
+    /// to select the desired execution mode (e.g., in-memory, streaming).
+    pub fn encrypt<'a, A, S>(
         &self,
-        writer: W,
-        pk: &A::PublicKey,
+        pk: &'a A::PublicKey,
         kek_id: String,
-    ) -> crate::Result<crate::hybrid::streaming::Encryptor<W, A, S>>
-    where
-        A: AsymmetricAlgorithm,
-        S: SymmetricAlgorithm,
-        W: Write,
-        Vec<u8>: From<<A as seal_crypto::prelude::Kem>::EncapsulatedKey>,
-        S::Key: From<Zeroizing<Vec<u8>>> + Clone,
-    {
-        crate::hybrid::streaming::Encryptor::new(writer, pk, kek_id)
-    }
-
-    /// Begins a synchronous streaming decryption operation.
-    pub fn streaming_decryptor_from_reader<R>(
-        &self,
-        reader: R,
-    ) -> crate::Result<PendingStreamingDecryptor<R>>
-    where
-        R: Read,
-    {
-        let mid_level_pending = crate::hybrid::streaming::PendingDecryptor::from_reader(reader)?;
-        Ok(PendingStreamingDecryptor {
-            inner: mid_level_pending,
-        })
-    }
-
-    /// Configures a parallel streaming operation.
-    pub fn parallel_streaming<A, S>(&self) -> HybridParallelStreamingExecutor<A, S>
+    ) -> HybridEncryptor<'a, A, S>
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
     {
-        HybridParallelStreamingExecutor {
+        HybridEncryptor {
+            pk,
+            kek_id,
             _phantom: PhantomData,
         }
     }
 
-    /// Configures an asynchronous streaming encryption operation.
-    #[cfg(feature = "async")]
-    pub async fn asynchronous_encryptor<A, S, W>(
-        &self,
-        writer: W,
-        pk: A::PublicKey,
-        kek_id: String,
-    ) -> crate::Result<crate::hybrid::asynchronous::Encryptor<W, A, S>>
-    where
-        A: AsymmetricAlgorithm,
-        A::EncapsulatedKey: Into<Vec<u8>> + Send,
-        S: SymmetricAlgorithm,
-        W: AsyncWrite + Unpin,
-    {
-        crate::hybrid::asynchronous::Encryptor::new(writer, pk, kek_id).await
-    }
-
-    /// Begins an asynchronous streaming decryption operation.
-    #[cfg(feature = "async")]
-    pub async fn asynchronous_decryptor_from_reader<R>(
-        &self,
-        reader: R,
-    ) -> crate::Result<PendingAsyncStreamingDecryptor<R>>
-    where
-        R: AsyncRead + Unpin,
-    {
-        let mid_level_pending =
-            crate::hybrid::asynchronous::PendingDecryptor::from_reader(reader).await?;
-        Ok(PendingAsyncStreamingDecryptor {
-            inner: mid_level_pending,
-        })
+    /// Begins a hybrid decryption operation.
+    ///
+    /// This returns a builder that you can use to configure the decryptor
+    /// based on the source of the ciphertext (e.g., from a slice or a stream).
+    pub fn decrypt(&self) -> HybridDecryptorBuilder {
+        HybridDecryptorBuilder::new()
     }
 }
 
-/// An executor for in-memory hybrid operations.
-pub struct HybridInMemoryExecutor<A, S> {
-    _phantom: PhantomData<(A, S)>,
-}
-
-impl<A, S> HybridInMemoryExecutor<A, S>
+/// A context for hybrid encryption operations, allowing selection of execution mode.
+pub struct HybridEncryptor<'a, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
 {
-    /// Encrypts the given plaintext.
-    pub fn encrypt(
-        &self,
-        pk: &A::PublicKey,
-        plaintext: &[u8],
-        kek_id: String,
-    ) -> crate::Result<Vec<u8>>
+    pk: &'a A::PublicKey,
+    kek_id: String,
+    _phantom: PhantomData<(A, S)>,
+}
+
+impl<'a, A, S> HybridEncryptor<'a, A, S>
+where
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+{
+    /// Encrypts the given plaintext in-memory.
+    pub fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
     where
         A::EncapsulatedKey: Into<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        crate::hybrid::ordinary::encrypt::<A, S>(pk, plaintext, kek_id)
+        crate::hybrid::ordinary::encrypt::<A, S>(self.pk, plaintext, self.kek_id)
     }
 
-    /// Begins the decryption process for the given ciphertext.
-    pub fn decrypt<'a>(
+    /// Encrypts the given plaintext in-memory using parallel processing.
+    pub fn to_vec_parallel(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
+    where
+        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + Clone,
+        Vec<u8>: From<<A as seal_crypto::prelude::Kem>::EncapsulatedKey>,
+    {
+        crate::hybrid::parallel::encrypt::<A, S>(self.pk, plaintext, self.kek_id)
+    }
+
+    /// Creates a streaming encryptor that writes to the given `Write` implementation.
+    pub fn into_writer<W: Write>(
+        self,
+        writer: W,
+    ) -> crate::Result<crate::hybrid::streaming::Encryptor<W, A, S>>
+    where
+        Vec<u8>: From<<A as seal_crypto::prelude::Kem>::EncapsulatedKey>,
+        S::Key: From<Zeroizing<Vec<u8>>> + Clone,
+    {
+        crate::hybrid::streaming::Encryptor::new(writer, self.pk, self.kek_id)
+    }
+
+    /// Encrypts data from a reader and writes to a writer using parallel processing.
+    pub fn pipe_parallel<R, W>(self, reader: R, writer: W) -> crate::Result<()>
+    where
+        R: Read + Send + Sync,
+        W: Write + Send + Sync,
+        A::EncapsulatedKey: Into<Vec<u8>> + Send,
+        S::Key: From<Zeroizing<Vec<u8>>>,
+    {
+        crate::hybrid::parallel_streaming::encrypt::<A, S, R, W>(
+            self.pk, reader, writer, self.kek_id,
+        )
+    }
+
+    /// [Async] Creates an asynchronous streaming encryptor.
+    #[cfg(feature = "async")]
+    pub async fn into_async_writer<W: AsyncWrite + Unpin>(
+        self,
+        writer: W,
+    ) -> crate::Result<crate::hybrid::asynchronous::Encryptor<W, A, S>>
+    where
+        A::PublicKey: Clone,
+        A::EncapsulatedKey: Into<Vec<u8>> + Send,
+    {
+        crate::hybrid::asynchronous::Encryptor::new(writer, self.pk.clone(), self.kek_id).await
+    }
+}
+
+/// A builder for hybrid decryption operations.
+#[derive(Default)]
+pub struct HybridDecryptorBuilder;
+
+impl HybridDecryptorBuilder {
+    /// Creates a new `HybridDecryptorBuilder`.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Configures decryption from an in-memory byte slice.
+    pub fn from_slice<'a>(
         &self,
         ciphertext: &'a [u8],
     ) -> crate::Result<PendingInMemoryDecryptor<'a>> {
         let mid_level_pending =
             crate::hybrid::ordinary::PendingDecryptor::from_ciphertext(ciphertext)?;
         Ok(PendingInMemoryDecryptor {
+            inner: mid_level_pending,
+        })
+    }
+
+    /// Configures parallel decryption from an in-memory byte slice.
+    pub fn from_slice_parallel<'a>(
+        &self,
+        ciphertext: &'a [u8],
+    ) -> crate::Result<PendingInMemoryParallelDecryptor<'a>> {
+        let mid_level_pending =
+            crate::hybrid::parallel::PendingDecryptor::from_ciphertext(ciphertext)?;
+        Ok(PendingInMemoryParallelDecryptor {
+            inner: mid_level_pending,
+        })
+    }
+
+    /// Configures decryption from a synchronous `Read` stream.
+    pub fn from_reader<R: Read>(
+        &self,
+        reader: R,
+    ) -> crate::Result<PendingStreamingDecryptor<R>> {
+        let mid_level_pending = crate::hybrid::streaming::PendingDecryptor::from_reader(reader)?;
+        Ok(PendingStreamingDecryptor {
+            inner: mid_level_pending,
+        })
+    }
+
+    /// Configures parallel decryption from a synchronous `Read` stream.
+    pub fn from_reader_parallel<R: Read + Send>(
+        &self,
+        reader: R,
+    ) -> crate::Result<PendingParallelStreamingDecryptor<R>> {
+        let mid_level_pending =
+            crate::hybrid::parallel_streaming::PendingDecryptor::from_reader(reader)?;
+        Ok(PendingParallelStreamingDecryptor {
+            inner: mid_level_pending,
+        })
+    }
+
+    /// [Async] Configures decryption from an asynchronous `Read` stream.
+    #[cfg(feature = "async")]
+    pub async fn from_async_reader<R: AsyncRead + Unpin>(
+        &self,
+        reader: R,
+    ) -> crate::Result<PendingAsyncStreamingDecryptor<R>> {
+        let mid_level_pending =
+            crate::hybrid::asynchronous::PendingDecryptor::from_reader(reader).await?;
+        Ok(PendingAsyncStreamingDecryptor {
             inner: mid_level_pending,
         })
     }
@@ -175,43 +214,6 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
         self.inner.into_plaintext::<A, S>(sk)
-    }
-}
-
-/// An executor for parallel in-memory hybrid operations.
-pub struct HybridInMemoryParallelExecutor<A, S> {
-    _phantom: PhantomData<(A, S)>,
-}
-
-impl<A, S> HybridInMemoryParallelExecutor<A, S>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-{
-    /// Encrypts the given plaintext in parallel.
-    pub fn encrypt(
-        &self,
-        pk: &A::PublicKey,
-        plaintext: &[u8],
-        kek_id: String,
-    ) -> crate::Result<Vec<u8>>
-    where
-        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + Clone,
-        Vec<u8>: From<<A as seal_crypto::prelude::Kem>::EncapsulatedKey>,
-    {
-        crate::hybrid::parallel::encrypt::<A, S>(pk, plaintext, kek_id)
-    }
-
-    /// Begins the decryption process for the given ciphertext, to be run in parallel.
-    pub fn decrypt<'a>(
-        &self,
-        ciphertext: &'a [u8],
-    ) -> crate::Result<PendingInMemoryParallelDecryptor<'a>> {
-        let mid_level_pending =
-            crate::hybrid::parallel::PendingDecryptor::from_ciphertext(ciphertext)?;
-        Ok(PendingInMemoryParallelDecryptor {
-            inner: mid_level_pending,
-        })
     }
 }
 
@@ -273,46 +275,6 @@ impl<R: Read> PendingStreamingDecryptor<R> {
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
         self.inner.into_decryptor::<A, S>(sk)
-    }
-}
-
-/// An executor for parallel streaming hybrid operations.
-pub struct HybridParallelStreamingExecutor<A, S> {
-    _phantom: PhantomData<(A, S)>,
-}
-
-impl<A, S> HybridParallelStreamingExecutor<A, S>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-{
-    /// Encrypts data from a reader and writes to a writer using parallel processing.
-    pub fn encrypt<R, W>(
-        &self,
-        pk: &A::PublicKey,
-        reader: R,
-        writer: W,
-        kek_id: String,
-    ) -> crate::Result<()>
-    where
-        R: Read + Send + Sync,
-        W: Write + Send + Sync,
-        A::EncapsulatedKey: Into<Vec<u8>> + Send,
-        S::Key: From<Zeroizing<Vec<u8>>>,
-    {
-        crate::hybrid::parallel_streaming::encrypt::<A, S, R, W>(pk, reader, writer, kek_id)
-    }
-
-    /// Begins the decryption process for a stream.
-    pub fn decrypt<R>(&self, reader: R) -> crate::Result<PendingParallelStreamingDecryptor<R>>
-    where
-        R: Read + Send,
-    {
-        let mid_level_pending =
-            crate::hybrid::parallel_streaming::PendingDecryptor::from_reader(reader)?;
-        Ok(PendingParallelStreamingDecryptor {
-            inner: mid_level_pending,
-        })
     }
 }
 
@@ -416,10 +378,10 @@ mod tests {
         let seal = HybridSeal::new();
 
         let encrypted = seal
-            .in_memory::<TestKem, TestDek>()
-            .encrypt(&pk, plaintext, kek_id.clone())?;
+            .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
+            .to_vec(plaintext)?;
 
-        let pending = seal.in_memory::<TestKem, TestDek>().decrypt(&encrypted)?;
+        let pending = seal.decrypt().from_slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
         let decrypted = pending.with_private_key::<TestKem, TestDek>(&sk)?;
 
@@ -435,12 +397,10 @@ mod tests {
         let seal = HybridSeal::new();
 
         let encrypted = seal
-            .in_memory_parallel::<TestKem, TestDek>()
-            .encrypt(&pk, plaintext, kek_id.clone())?;
+            .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
+            .to_vec_parallel(plaintext)?;
 
-        let pending = seal
-            .in_memory_parallel::<TestKem, TestDek>()
-            .decrypt(&encrypted)?;
+        let pending = seal.decrypt().from_slice_parallel(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
         let decrypted = pending.with_private_key::<TestKem, TestDek>(&sk)?;
 
@@ -460,18 +420,16 @@ mod tests {
         // Encrypt
         let mut encrypted_data = Vec::new();
         let mut encryptor = seal
-            .streaming_encryptor::<TestKem, TestDek, _>(
-                &mut encrypted_data,
-                &pk,
-                TEST_KEK_ID.to_string(),
-            )
+            .encrypt::<TestKem, TestDek>(&pk, TEST_KEK_ID.to_string())
+            .into_writer(&mut encrypted_data)
             .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
 
         // Decrypt
         let pending = seal
-            .streaming_decryptor_from_reader(Cursor::new(&encrypted_data))
+            .decrypt()
+            .from_reader(Cursor::new(&encrypted_data))
             .unwrap();
         let kek_id = pending.kek_id().unwrap();
         let decryption_key = key_store.get(kek_id).unwrap();
@@ -492,12 +450,10 @@ mod tests {
         let seal = HybridSeal::new();
 
         let mut encrypted = Vec::new();
-        seal.parallel_streaming::<TestKem, TestDek>()
-            .encrypt(&pk, Cursor::new(plaintext), &mut encrypted, kek_id.clone())?;
+        seal.encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
+            .pipe_parallel(Cursor::new(plaintext), &mut encrypted)?;
 
-        let pending = seal
-            .parallel_streaming::<TestKem, TestDek>()
-            .decrypt(Cursor::new(&encrypted))?;
+        let pending = seal.decrypt().from_reader_parallel(Cursor::new(&encrypted))?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
 
         let mut decrypted = Vec::new();
@@ -524,11 +480,8 @@ mod tests {
             // Encrypt
             let mut encrypted_data = Vec::new();
             let mut encryptor = seal
-                .asynchronous_encryptor::<TestKem, TestDek, _>(
-                    &mut encrypted_data,
-                    pk,
-                    TEST_KEK_ID.to_string(),
-                )
+                .encrypt::<TestKem, TestDek>(&pk, TEST_KEK_ID.to_string())
+                .into_async_writer(&mut encrypted_data)
                 .await
                 .unwrap();
             encryptor.write_all(plaintext).await.unwrap();
@@ -536,7 +489,8 @@ mod tests {
 
             // Decrypt
             let pending = seal
-                .asynchronous_decryptor_from_reader(std::io::Cursor::new(&encrypted_data))
+                .decrypt()
+                .from_async_reader(std::io::Cursor::new(&encrypted_data))
                 .await
                 .unwrap();
             let kek_id = pending.kek_id().unwrap();
