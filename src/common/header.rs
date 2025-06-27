@@ -49,6 +49,24 @@ impl HeaderPayload {
             _ => None,
         }
     }
+
+    /// Returns the symmetric algorithm used for data encryption.
+    /// In Hybrid mode, this is the Data-Encrypting-Key (DEK) algorithm.
+    pub fn symmetric_algorithm(&self) -> SymmetricAlgorithm {
+        match self {
+            HeaderPayload::Symmetric { algorithm, .. } => *algorithm,
+            HeaderPayload::Hybrid { dek_algorithm, .. } => *dek_algorithm,
+        }
+    }
+
+    /// Returns the asymmetric algorithm used for key encapsulation, if applicable.
+    /// This is only present in Hybrid mode.
+    pub fn asymmetric_algorithm(&self) -> Option<AsymmetricAlgorithm> {
+        match self {
+            HeaderPayload::Hybrid { kek_algorithm, .. } => Some(*kek_algorithm),
+            _ => None,
+        }
+    }
 }
 
 /// 所有加密数据流的元数据信封

@@ -1,7 +1,7 @@
 use bincode::{Decode, Encode};
 
 /// 对称加密算法枚举
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Decode, Encode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
 pub enum SymmetricAlgorithm {
     Aes128Gcm,
     Aes256Gcm,
@@ -10,7 +10,7 @@ pub enum SymmetricAlgorithm {
 }
 
 /// 非对称加密算法枚举
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Decode, Encode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
 pub enum AsymmetricAlgorithm {
     Rsa2048,
     Rsa4096,
