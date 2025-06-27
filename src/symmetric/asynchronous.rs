@@ -1,19 +1,19 @@
 #![cfg(feature = "async")]
 
+use super::common::{
+    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
+};
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
+use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 use futures::ready;
 use pin_project_lite::pin_project;
-use rand::{rngs::OsRng, TryRngCore};
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::task::JoinHandle;
-
-const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 enum EncryptorState {
     Idle,
@@ -41,21 +41,7 @@ where
     S::Key: Clone + Send + Sync,
 {
     pub async fn new(mut writer: W, key: S::Key, key_id: String) -> Result<Self> {
-        let mut base_nonce = [0u8; 12];
-        OsRng.try_fill_bytes(&mut base_nonce)?;
-
-        let header = Header {
-            version: 1,
-            mode: SealMode::Symmetric,
-            payload: HeaderPayload::Symmetric {
-                key_id,
-                algorithm: S::ALGORITHM,
-                stream_info: Some(StreamInfo {
-                    chunk_size: DEFAULT_CHUNK_SIZE,
-                    base_nonce,
-                }),
-            },
-        };
+        let (header, base_nonce) = create_header::<S>(key_id)?;
 
         let header_bytes = header.encode_to_vec()?;
         use tokio::io::AsyncWriteExt;
@@ -104,11 +90,7 @@ where
 
                     let chunk_len = std::cmp::min(this.buffer.len(), *this.chunk_size);
                     let chunk = this.buffer.drain(..chunk_len).collect::<Vec<u8>>();
-                    let mut nonce = *this.base_nonce;
-                    let counter_bytes = this.chunk_counter.to_le_bytes();
-                    for i in 0..8 {
-                        nonce[4 + i] ^= counter_bytes[i];
-                    }
+                    let nonce = derive_nonce(this.base_nonce, *this.chunk_counter);
 
                     let key = this.symmetric_key.clone();
                     let handle = tokio::task::spawn_blocking(move || {
@@ -168,15 +150,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
     /// Creates a new `PendingDecryptor` by asynchronously reading the header
     /// from the provided reader.
     pub async fn from_reader(mut reader: R) -> Result<Self> {
-        use tokio::io::AsyncReadExt;
-        let mut len_buf = [0u8; 4];
-        reader.read_exact(&mut len_buf).await?;
-        let header_len = u32::from_le_bytes(len_buf) as usize;
-
-        let mut header_bytes = vec![0u8; header_len];
-        reader.read_exact(&mut header_bytes).await?;
-        let (header, _) = Header::decode_from_slice(&header_bytes)?;
-
+        let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
         Ok(Self { reader, header })
     }
 
@@ -302,11 +276,7 @@ where
                         return Poll::Ready(Ok(()));
                     }
 
-                    let mut nonce = *this.base_nonce;
-                    let counter_bytes = this.chunk_counter.to_le_bytes();
-                    for i in 0..8 {
-                        nonce[4 + i] ^= counter_bytes[i];
-                    }
+                    let nonce = derive_nonce(this.base_nonce, *this.chunk_counter);
                     let key = this.symmetric_key.clone();
                     let final_chunk = encrypted_chunk[..n].to_vec();
                     let handle = tokio::task::spawn_blocking(move || {

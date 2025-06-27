@@ -1,5 +1,6 @@
 use seal_crypto::prelude::*;
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+use seal_flow::common::header::Header;
 use seal_flow::error::Result;
 use seal_flow::flows::symmetric::*;
 use std::collections::HashMap;
@@ -24,7 +25,7 @@ async fn main() -> Result<()> {
     let ciphertext1 = ordinary::encrypt::<TheAlgorithm>(key1, plaintext, KEY_ID.to_string())?;
 
     // Demonstrate two-stage decryption
-    let (header1, body1) = ordinary::decode_header(&ciphertext1)?;
+    let (header1, body1) = Header::decode_from_prefixed_slice(&ciphertext1)?;
     let found_key_id1 = header1.payload.key_id().unwrap();
     println!("Found key ID in header: '{}'", found_key_id1);
     let decryption_key1 = key_store.get(found_key_id1).unwrap();
@@ -38,7 +39,7 @@ async fn main() -> Result<()> {
     let key2 = key_store.get(KEY_ID).unwrap();
     let ciphertext2 = parallel::encrypt::<TheAlgorithm>(key2, plaintext, KEY_ID.to_string())?;
 
-    let (header2, body2) = parallel::decode_header(&ciphertext2)?;
+    let (header2, body2) = Header::decode_from_prefixed_slice(&ciphertext2)?;
     let found_key_id2 = header2.payload.key_id().unwrap();
     println!("Found key ID in parallel header: '{}'", found_key_id2);
     let decryption_key2 = key_store.get(found_key_id2).unwrap();
@@ -107,17 +108,13 @@ async fn main() -> Result<()> {
 
     let mut decrypted5 = Vec::new();
     let mut source5 = Cursor::new(&ciphertext5);
-    let header5 =
-        parallel_streaming::decode_header_from_stream(&mut source5)?;
+    let pending_decryptor5 =
+        parallel_streaming::PendingDecryptor::from_reader(&mut source5)?;
+    let header5 = pending_decryptor5.header().clone();
     let found_key_id5 = header5.payload.key_id().unwrap();
     println!("Found key ID in parallel stream: '{}'", found_key_id5);
     let decryption_key5 = key_store.get(found_key_id5).unwrap();
-    parallel_streaming::decrypt_body_stream::<TheAlgorithm, _, _>(
-        decryption_key5,
-        &header5,
-        source5,
-        &mut decrypted5,
-    )?;
+    pending_decryptor5.decrypt_to_writer::<TheAlgorithm, _>(decryption_key5, &mut decrypted5)?;
 
     assert_eq!(plaintext, &decrypted5[..]);
     println!("Parallel Streaming roundtrip successful!");

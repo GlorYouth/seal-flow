@@ -1,10 +1,10 @@
+use super::common::{
+    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
+};
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
+use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
-use rand::{rngs::OsRng, TryRngCore};
 use rayon::prelude::*;
-
-const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Encrypts in-memory data using parallel processing.
 pub fn encrypt<'a, S>(key: &S::Key, plaintext: &[u8], key_id: String) -> Result<Vec<u8>>
@@ -12,22 +12,8 @@ where
     S: SymmetricAlgorithm,
     S::Key: Send + Sync + Clone,
 {
-    // 1. Generate base_nonce, construct Header with chunk_size
-    let mut base_nonce = [0u8; 12];
-    OsRng.try_fill_bytes(&mut base_nonce)?;
-
-    let header = Header {
-        version: 1,
-        mode: SealMode::Symmetric,
-        payload: HeaderPayload::Symmetric {
-            key_id,
-            algorithm: S::ALGORITHM,
-            stream_info: Some(StreamInfo {
-                chunk_size: DEFAULT_CHUNK_SIZE,
-                base_nonce,
-            }),
-        },
-    };
+    // 1. Setup Header
+    let (header, base_nonce) = create_header::<S>(key_id)?;
     let header_bytes = header.encode_to_vec()?;
 
     // 2. Process chunks in parallel using Rayon
@@ -35,19 +21,13 @@ where
         .par_chunks(DEFAULT_CHUNK_SIZE as usize)
         .enumerate()
         .map(|(i, chunk)| {
-            // 3. Derive a deterministic nonce
-            let mut nonce = base_nonce;
-            let counter_bytes = (i as u64).to_le_bytes();
-            for j in 0..8 {
-                nonce[4 + j] ^= counter_bytes[j];
-            }
-
-            // 4. Encrypt the chunk
+            // 3. Derive nonce and encrypt
+            let nonce = derive_nonce(&base_nonce, i as u64);
             S::encrypt(&key.clone().into(), &nonce, chunk, None)
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    // 5. Assemble the final output
+    // 4. Assemble the final output
     let mut final_output = Vec::with_capacity(
         4 + header_bytes.len() + encrypted_chunks.iter().map(Vec::len).sum::<usize>(),
     );
@@ -56,24 +36,6 @@ where
     final_output.extend_from_slice(&encrypted_chunks.concat());
 
     Ok(final_output)
-}
-
-/// Decodes the header from the beginning of a ciphertext slice.
-///
-/// Returns the parsed `Header` and a slice pointing to the remaining ciphertext body.
-pub fn decode_header(ciphertext: &[u8]) -> Result<(Header, &[u8])> {
-    if ciphertext.len() < 4 {
-        return Err(Error::InvalidCiphertextFormat);
-    }
-    let header_len = u32::from_le_bytes(ciphertext[0..4].try_into().unwrap()) as usize;
-    if ciphertext.len() < 4 + header_len {
-        return Err(Error::InvalidCiphertextFormat);
-    }
-    let header_bytes = &ciphertext[4..4 + header_len];
-    let ciphertext_body = &ciphertext[4 + header_len..];
-
-    let (header, _) = Header::decode_from_slice(header_bytes)?;
-    Ok((header, ciphertext_body))
 }
 
 /// Decrypts a ciphertext body in parallel using the provided key and header.
@@ -102,11 +64,7 @@ where
         .enumerate()
         .map(|(i, encrypted_chunk)| {
             // Derive deterministic nonce
-            let mut nonce = base_nonce;
-            let counter_bytes = (i as u64).to_le_bytes();
-            for j in 0..8 {
-                nonce[4 + j] ^= counter_bytes[j];
-            }
+            let nonce = derive_nonce(&base_nonce, i as u64);
 
             // Decrypt the chunk
             S::decrypt(&key.clone().into(), &nonce, encrypted_chunk, None)
@@ -129,7 +87,7 @@ pub struct PendingDecryptor<'a> {
 impl<'a> PendingDecryptor<'a> {
     /// Creates a new `PendingDecryptor` by parsing the header from the ciphertext.
     pub fn from_ciphertext(ciphertext: &'a [u8]) -> Result<Self> {
-        let (header, ciphertext_body) = decode_header(ciphertext)?;
+        let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
         Ok(Self {
             header,
             ciphertext_body,
@@ -171,7 +129,7 @@ mod tests {
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Test the separated functions
-        let (header, body) = decode_header(&encrypted).unwrap();
+        let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
         assert_eq!(header.payload.key_id(), Some("test_key_id"));
         let decrypted_body = decrypt_body::<Aes256Gcm>(&key, &header, body).unwrap();
         assert_eq!(plaintext, decrypted_body.as_slice());
@@ -234,5 +192,18 @@ mod tests {
             result.unwrap_err(),
             FlowError::Crypto(CryptoError::Symmetric(_))
         ));
+    }
+
+    #[test]
+    fn test_internal_functions() {
+        let key = Aes256Gcm::generate_key().unwrap();
+        let plaintext = b"some plaintext for parallel";
+        let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
+
+        // Test the separated functions
+        let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
+        assert_eq!(header.payload.key_id(), Some("test_key_id"));
+        let decrypted_body = decrypt_body::<Aes256Gcm>(&key, &header, body).unwrap();
+        assert_eq!(plaintext, decrypted_body.as_slice());
     }
 }

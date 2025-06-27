@@ -1,13 +1,11 @@
 //! Synchronous, streaming hybrid encryption and decryption implementation.
+use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
+use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
-use rand::{rngs::OsRng, TryRngCore};
 use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{self, Read, Write};
-
-const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Implements `std::io::Write` for synchronous, streaming hybrid encryption.
 pub struct Encryptor<W: Write, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
@@ -26,6 +24,7 @@ where
     S: SymmetricAlgorithm,
     Vec<u8>: From<<A as Kem>::EncapsulatedKey>,
     <S as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>>,
+    A::EncapsulatedKey: Into<Vec<u8>>,
 {
     /// Creates a new streaming encryptor.
     ///
@@ -35,30 +34,11 @@ where
     where
         S::Key: Clone,
     {
-        // 1. KEM Encapsulate: Generate DEK and wrap it.
-        let (shared_secret, encapsulated_key) = A::encapsulate(&pk.clone().into())?;
+        // 1. Create header, nonce, and DEK
+        let (header, base_nonce, shared_secret) =
+            create_header::<A, S>(&pk.clone().into(), kek_id)?;
 
-        // 2. Prepare streaming parameters.
-        let mut base_nonce = [0u8; 12];
-        OsRng.try_fill_bytes(&mut base_nonce)?;
-
-        // 3. Construct the header.
-        let header = Header {
-            version: 1,
-            mode: SealMode::Hybrid,
-            payload: HeaderPayload::Hybrid {
-                kek_id,
-                kek_algorithm: A::ALGORITHM,
-                dek_algorithm: S::ALGORITHM,
-                encrypted_dek: encapsulated_key.into(),
-                stream_info: Some(StreamInfo {
-                    chunk_size: DEFAULT_CHUNK_SIZE,
-                    base_nonce,
-                }),
-            },
-        };
-
-        // 4. Write header to the underlying writer.
+        // 2. Write header to the underlying writer.
         let header_bytes = header.encode_to_vec()?;
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
@@ -81,11 +61,7 @@ where
     pub fn finish(mut self) -> Result<()> {
         if !self.buffer.is_empty() {
             let final_chunk = self.buffer.drain(..).collect::<Vec<u8>>();
-            let mut nonce = self.base_nonce;
-            let counter_bytes = self.chunk_counter.to_le_bytes();
-            for i in 0..8 {
-                nonce[4 + i] ^= counter_bytes[i];
-            }
+            let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
             let encrypted_chunk = S::encrypt(
                 &self.symmetric_key.clone().into(),
@@ -118,11 +94,7 @@ where
             input = &input[fill_len..];
 
             if self.buffer.len() == self.chunk_size {
-                let mut nonce = self.base_nonce;
-                let counter_bytes = self.chunk_counter.to_le_bytes();
-                for i in 0..8 {
-                    nonce[4 + i] ^= counter_bytes[i];
-                }
+                let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
                 let encrypted_chunk =
                     S::encrypt(&self.symmetric_key.clone().into(), &nonce, &self.buffer, None)
@@ -136,11 +108,7 @@ where
         // Process full chunks directly from the input buffer.
         while input.len() >= self.chunk_size {
             let chunk = &input[..self.chunk_size];
-            let mut nonce = self.base_nonce;
-            let counter_bytes = self.chunk_counter.to_le_bytes();
-            for i in 0..8 {
-                nonce[4 + i] ^= counter_bytes[i];
-            }
+            let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
             let encrypted_chunk =
                 S::encrypt(&self.symmetric_key.clone().into(), &nonce, chunk, None)
@@ -173,13 +141,7 @@ pub struct PendingDecryptor<R: Read> {
 impl<R: Read> PendingDecryptor<R> {
     /// Creates a new `PendingDecryptor` by reading the header from the stream.
     pub fn from_reader(mut reader: R) -> Result<Self> {
-        let mut len_buf = [0u8; 4];
-        reader.read_exact(&mut len_buf)?;
-        let header_len = u32::from_le_bytes(len_buf) as usize;
-
-        let mut header_bytes = vec![0u8; header_len];
-        reader.read_exact(&mut header_bytes)?;
-        let (header, _) = Header::decode_from_slice(&header_bytes)?;
+        let header = Header::decode_from_prefixed_reader(&mut reader)?;
 
         Ok(Self { reader, header })
     }
@@ -263,11 +225,7 @@ where
         // Handle cases where the last chunk is smaller than the full chunk size.
         let final_encrypted_chunk = &encrypted_chunk[..bytes_read];
 
-        let mut nonce = self.base_nonce;
-        let counter_bytes = self.chunk_counter.to_le_bytes();
-        for i in 0..8 {
-            nonce[4 + i] ^= counter_bytes[i];
-        }
+        let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
         let plaintext_chunk = S::decrypt(
             &self.symmetric_key.clone().into(),

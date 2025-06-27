@@ -1,24 +1,9 @@
 //! Implements the ordinary (single-threaded, in-memory) symmetric encryption scheme.
 
+use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
+use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
-use rand::{rngs::OsRng, TryRngCore};
-
-const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
-
-/// Derives a nonce for a specific chunk index.
-fn derive_nonce(base_nonce: &[u8; 12], i: u64) -> [u8; 12] {
-    let mut nonce_bytes = *base_nonce;
-    let i_bytes = i.to_le_bytes(); // u64 -> 8 bytes, little-endian
-
-    // XOR the chunk index into the last 8 bytes of the nonce
-    for j in 0..8 {
-        nonce_bytes[4 + j] ^= i_bytes[j];
-    }
-
-    nonce_bytes
-}
 
 /// Encrypts plaintext using a chunking mechanism.
 pub fn encrypt<S: SymmetricAlgorithm>(
@@ -29,22 +14,7 @@ pub fn encrypt<S: SymmetricAlgorithm>(
 where
     S::Key: Clone + Send + Sync,
 {
-    let mut base_nonce_bytes = [0u8; 12];
-    OsRng.try_fill_bytes(&mut base_nonce_bytes)?;
-
-    let header = Header {
-        version: 1,
-        mode: SealMode::Symmetric,
-        payload: HeaderPayload::Symmetric {
-            key_id,
-            algorithm: S::ALGORITHM,
-            stream_info: Some(StreamInfo {
-                chunk_size: DEFAULT_CHUNK_SIZE,
-                base_nonce: base_nonce_bytes,
-            }),
-        },
-    };
-
+    let (header, base_nonce_bytes) = create_header::<S>(key_id)?;
     let header_bytes = header.encode_to_vec()?;
 
     let mut encrypted_body = Vec::with_capacity(
@@ -65,24 +35,6 @@ where
     Ok(final_output)
 }
 
-/// Decodes the header from the beginning of a ciphertext slice.
-///
-/// Returns the parsed `Header` and a slice pointing to the remaining ciphertext body.
-pub fn decode_header(ciphertext: &[u8]) -> Result<(Header, &[u8])> {
-    if ciphertext.len() < 4 {
-        return Err(Error::InvalidCiphertextFormat);
-    }
-    let header_len = u32::from_le_bytes(ciphertext[0..4].try_into().unwrap()) as usize;
-    if ciphertext.len() < 4 + header_len {
-        return Err(Error::InvalidCiphertextFormat);
-    }
-    let header_bytes = &ciphertext[4..4 + header_len];
-    let ciphertext_body = &ciphertext[4 + header_len..];
-
-    let (header, _) = Header::decode_from_slice(header_bytes)?;
-    Ok((header, ciphertext_body))
-}
-
 /// A pending decryptor for in-memory data, waiting for a key.
 ///
 /// This state is entered after the header has been successfully parsed from
@@ -96,7 +48,7 @@ pub struct PendingDecryptor<'a> {
 impl<'a> PendingDecryptor<'a> {
     /// Creates a new `PendingDecryptor` by parsing the header from the ciphertext.
     pub fn from_ciphertext(ciphertext: &'a [u8]) -> Result<Self> {
-        let (header, ciphertext_body) = decode_header(ciphertext)?;
+        let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
         Ok(Self {
             header,
             ciphertext_body,
@@ -186,7 +138,7 @@ mod tests {
         assert_eq!(plaintext, decrypted_full.as_slice());
 
         // Test the separated functions
-        let (header, body) = decode_header(&encrypted).unwrap();
+        let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
         assert_eq!(header.payload.key_id().unwrap(), "test_key_id");
         let decrypted_parts = decrypt_body::<Aes256Gcm>(&key, &header, body).unwrap();
         assert_eq!(plaintext, decrypted_parts.as_slice());
@@ -265,5 +217,18 @@ mod tests {
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
         let result = pending.into_plaintext::<Aes256Gcm>(&key);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_internal_functions() {
+        let key = Aes256Gcm::generate_key().unwrap();
+        let plaintext = b"some plaintext";
+        let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
+
+        // Test the separated functions
+        let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
+        assert_eq!(header.payload.key_id().unwrap(), "test_key_id");
+        let decrypted_parts = decrypt_body::<Aes256Gcm>(&key, &header, body).unwrap();
+        assert_eq!(plaintext, decrypted_parts.as_slice());
     }
 }

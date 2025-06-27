@@ -1,29 +1,20 @@
 //! Implements a parallel streaming hybrid encryption/decryption scheme.
 
-use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
+use super::common::{
+    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
+};
+use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
-use rand::{rngs::OsRng, TryRngCore};
 use rayon::iter::ParallelIterator;
 use rayon::prelude::*;
-
-use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use seal_crypto::zeroize::Zeroizing;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::thread;
 
-const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 const CHANNEL_BOUND: usize = 16;
-
-fn derive_nonce(base_nonce: &[u8; 12], i: u64) -> [u8; 12] {
-    let mut nonce_bytes = *base_nonce;
-    let i_bytes = i.to_le_bytes();
-    for j in 0..8 {
-        nonce_bytes[4 + j] ^= i_bytes[j];
-    }
-    nonce_bytes
-}
 
 pub fn encrypt<A, S, R: Read + Send + Sync, W: Write + Send + Sync>(
     public_key: &A::PublicKey,
@@ -37,25 +28,8 @@ where
     S: SymmetricAlgorithm,
     S::Key: From<Zeroizing<Vec<u8>>>,
 {
-    let (shared_secret, encapsulated_key) = A::encapsulate(&public_key.clone().into())?;
-
-    let mut base_nonce = [0u8; 12];
-    OsRng.try_fill_bytes(&mut base_nonce)?;
-
-    let header = Header {
-        version: 1,
-        mode: SealMode::Hybrid,
-        payload: HeaderPayload::Hybrid {
-            kek_id,
-            kek_algorithm: A::ALGORITHM,
-            dek_algorithm: S::ALGORITHM,
-            encrypted_dek: encapsulated_key.into(),
-            stream_info: Some(StreamInfo {
-                chunk_size: DEFAULT_CHUNK_SIZE,
-                base_nonce,
-            }),
-        },
-    };
+    let (header, base_nonce, shared_secret) =
+        create_header::<A, S>(&public_key.clone().into(), kek_id)?;
 
     let header_bytes = header.encode_to_vec()?;
     writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
@@ -139,18 +113,6 @@ where
     })
 }
 
-/// Reads and decodes the header from the beginning of a reader.
-pub fn decode_header_from_stream<R: Read>(reader: &mut R) -> Result<Header> {
-    let mut header_len_bytes = [0u8; 4];
-    reader.read_exact(&mut header_len_bytes)?;
-    let header_len = u32::from_le_bytes(header_len_bytes);
-
-    let mut header_bytes = vec![0; header_len as usize];
-    reader.read_exact(&mut header_bytes)?;
-    let (header, _) = Header::decode_from_slice(&header_bytes).map_err(Error::from)?;
-    Ok(header)
-}
-
 /// A pending decryptor for a parallel hybrid stream, waiting for the private key.
 ///
 /// This state is entered after the header has been successfully read from the
@@ -170,7 +132,7 @@ where
 {
     /// Creates a new `PendingDecryptor` by reading the header from the stream.
     pub fn from_reader(mut reader: R) -> Result<Self> {
-        let header = decode_header_from_stream(&mut reader)?;
+        let header = Header::decode_from_prefixed_reader(&mut reader)?;
         Ok(Self { reader, header })
     }
 

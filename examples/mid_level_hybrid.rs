@@ -1,5 +1,6 @@
 use seal_crypto::{prelude::*, schemes::asymmetric::traditional::rsa::Rsa2048};
 use seal_crypto::{schemes::hash::Sha256, schemes::symmetric::aes_gcm::Aes256Gcm};
+use seal_flow::common::header::Header;
 use seal_flow::error::Result;
 use seal_flow::flows::hybrid::*;
 use std::collections::HashMap;
@@ -23,7 +24,7 @@ async fn main() -> Result<()> {
     println!("--- Testing Mode: In-Memory (Ordinary) ---");
     let ciphertext1 = ordinary::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string())?;
 
-    let (header1, body1) = ordinary::decode_header(&ciphertext1)?;
+    let (header1, body1) = Header::decode_from_prefixed_slice(&ciphertext1)?;
     let found_kek_id1 = header1.payload.kek_id().unwrap();
     println!("Found KEK ID in header: '{}'", found_kek_id1);
     let decryption_key1 = key_store.get(found_kek_id1).unwrap();
@@ -36,7 +37,7 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Mode: In-Memory Parallel ---");
     let ciphertext2 = parallel::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string())?;
 
-    let (header2, body2) = parallel::decode_header(&ciphertext2)?;
+    let (header2, body2) = Header::decode_from_prefixed_slice(&ciphertext2)?;
     let found_kek_id2 = header2.payload.kek_id().unwrap();
     println!("Found KEK ID in parallel header: '{}'", found_kek_id2);
     let decryption_key2 = key_store.get(found_kek_id2).unwrap();
@@ -100,17 +101,13 @@ async fn main() -> Result<()> {
 
     let mut decrypted5 = Vec::new();
     let mut source5 = Cursor::new(&ciphertext5);
-    let header5 =
-        parallel_streaming::decode_header_from_stream(&mut source5)?;
+    let pending_decryptor5 =
+        parallel_streaming::PendingDecryptor::from_reader(&mut source5)?;
+    let header5 = pending_decryptor5.header().clone();
     let found_kek_id5 = header5.payload.kek_id().unwrap();
     println!("Found KEK ID in parallel stream: '{}'", found_kek_id5);
     let decryption_key5 = key_store.get(found_kek_id5).unwrap();
-    parallel_streaming::decrypt_body_stream::<Kem, Dek, _, _>(
-        decryption_key5,
-        &header5,
-        source5,
-        &mut decrypted5,
-    )?;
+    pending_decryptor5.decrypt_to_writer::<Kem, Dek, _>(decryption_key5, &mut decrypted5)?;
 
     assert_eq!(plaintext, &decrypted5[..]);
     println!("Parallel Streaming roundtrip successful!");

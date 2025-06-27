@@ -1,12 +1,12 @@
 //! Implements `std::io` traits for synchronous, streaming symmetric encryption.
 
+use super::common::{
+    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
+};
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
+use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
-use rand::{rngs::OsRng, TryRngCore};
 use std::io::{self, Read, Write};
-
-const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Implements `std::io::Write` for synchronous, streaming symmetric encryption.
 pub struct Encryptor<W: Write, S: SymmetricAlgorithm>
@@ -27,21 +27,7 @@ where
     S::Key: Send + Sync + Clone,
 {
     pub fn new(mut writer: W, key: S::Key, key_id: String) -> Result<Self> {
-        let mut base_nonce = [0u8; 12];
-        OsRng.try_fill_bytes(&mut base_nonce)?;
-
-        let header = Header {
-            version: 1,
-            mode: SealMode::Symmetric,
-            payload: HeaderPayload::Symmetric {
-                key_id,
-                algorithm: S::ALGORITHM,
-                stream_info: Some(StreamInfo {
-                    chunk_size: DEFAULT_CHUNK_SIZE,
-                    base_nonce,
-                }),
-            },
-        };
+        let (header, base_nonce) = create_header::<S>(key_id)?;
 
         let header_bytes = header.encode_to_vec()?;
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
@@ -65,11 +51,7 @@ where
     pub fn finish(mut self) -> Result<()> {
         if !self.buffer.is_empty() {
             let final_chunk = self.buffer.drain(..).collect::<Vec<u8>>();
-            let mut nonce = self.base_nonce;
-            let counter_bytes = self.chunk_counter.to_le_bytes();
-            for i in 0..8 {
-                nonce[4 + i] ^= counter_bytes[i];
-            }
+            let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
             let encrypted_chunk =
                 S::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
@@ -96,11 +78,7 @@ where
             input = &input[fill_len..];
 
             if self.buffer.len() == self.chunk_size {
-                let mut nonce = self.base_nonce;
-                let counter_bytes = self.chunk_counter.to_le_bytes();
-                for i in 0..8 {
-                    nonce[4 + i] ^= counter_bytes[i];
-                }
+                let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
                 let encrypted_chunk = S::encrypt(&self.symmetric_key, &nonce, &self.buffer, None)
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
@@ -113,11 +91,7 @@ where
         // Process full chunks directly from the input buffer.
         while input.len() >= self.chunk_size {
             let chunk = &input[..self.chunk_size];
-            let mut nonce = self.base_nonce;
-            let counter_bytes = self.chunk_counter.to_le_bytes();
-            for i in 0..8 {
-                nonce[4 + i] ^= counter_bytes[i];
-            }
+            let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
             let encrypted_chunk = S::encrypt(&self.symmetric_key, &nonce, chunk, None)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
@@ -153,14 +127,7 @@ pub struct PendingDecryptor<R: Read> {
 impl<R: Read> PendingDecryptor<R> {
     /// Creates a new `PendingDecryptor` by reading the header from the provided reader.
     pub fn from_reader(mut reader: R) -> Result<Self> {
-        let mut len_buf = [0u8; 4];
-        reader.read_exact(&mut len_buf)?;
-        let header_len = u32::from_le_bytes(len_buf) as usize;
-
-        let mut header_bytes = vec![0u8; header_len];
-        reader.read_exact(&mut header_bytes)?;
-        let (header, _) = Header::decode_from_slice(&header_bytes)?;
-
+        let header = Header::decode_from_prefixed_reader(&mut reader)?;
         Ok(Self { reader, header })
     }
 
@@ -234,11 +201,7 @@ where
             return Ok(0);
         }
 
-        let mut nonce = self.base_nonce;
-        let counter_bytes = self.chunk_counter.to_le_bytes();
-        for i in 0..8 {
-            nonce[4 + i] ^= counter_bytes[i];
-        }
+        let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
         let decrypted_chunk = S::decrypt(
             &self.symmetric_key.clone().into(),

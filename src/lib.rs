@@ -35,7 +35,7 @@ pub mod flows {
 }
 
 mod algorithms;
-mod common;
+pub mod common;
 mod hybrid;
 mod symmetric;
 

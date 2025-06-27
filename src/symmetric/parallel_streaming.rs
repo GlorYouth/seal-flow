@@ -2,28 +2,19 @@
 //! This mode is designed for high-performance processing of large files or data streams
 //! by overlapping I/O with parallel computation.
 
+use super::common::{
+    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
+};
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
+use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
-use rand::{rngs::OsRng, TryRngCore};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::thread;
 
-const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 const CHANNEL_BOUND: usize = 16; // Bound the channel to avoid unbounded memory usage
-
-/// Derives a nonce for a specific chunk index.
-fn derive_nonce(base_nonce: &[u8; 12], i: u64) -> [u8; 12] {
-    let mut nonce_bytes = *base_nonce;
-    let i_bytes = i.to_le_bytes();
-    for j in 0..8 {
-        nonce_bytes[4 + j] ^= i_bytes[j];
-    }
-    nonce_bytes
-}
 
 /// Encrypts data from a reader and writes to a writer using a parallel streaming approach.
 pub fn encrypt<S, R, W>(key: &S::Key, mut reader: R, mut writer: W, key_id: String) -> Result<()>
@@ -34,21 +25,7 @@ where
     W: Write,
 {
     // 1. Setup Header and write it
-    let mut base_nonce = [0u8; 12];
-    OsRng.try_fill_bytes(&mut base_nonce)?;
-
-    let header = Header {
-        version: 1,
-        mode: SealMode::Symmetric,
-        payload: HeaderPayload::Symmetric {
-            key_id,
-            algorithm: S::ALGORITHM,
-            stream_info: Some(StreamInfo {
-                chunk_size: DEFAULT_CHUNK_SIZE,
-                base_nonce,
-            }),
-        },
-    };
+    let (header, base_nonce) = create_header::<S>(key_id)?;
 
     let header_bytes = header.encode_to_vec()?;
     writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
@@ -143,24 +120,6 @@ where
     })
 }
 
-/// Reads and decodes the header from the beginning of a reader.
-///
-/// The reader's position will be advanced past the header.
-///
-/// # Returns
-///
-/// The parsed `Header`.
-pub fn decode_header_from_stream<R: Read>(reader: &mut R) -> Result<Header> {
-    let mut header_len_bytes = [0u8; 4];
-    reader.read_exact(&mut header_len_bytes)?;
-    let header_len = u32::from_le_bytes(header_len_bytes);
-
-    let mut header_bytes = vec![0; header_len as usize];
-    reader.read_exact(&mut header_bytes)?;
-    let (header, _) = Header::decode_from_slice(&header_bytes)?;
-    Ok(header)
-}
-
 /// A pending decryptor for a parallel stream, waiting for a key.
 ///
 /// This state is entered after the header has been successfully read from the
@@ -174,7 +133,7 @@ pub struct PendingDecryptor<R: Read + Send> {
 impl<R: Read + Send> PendingDecryptor<R> {
     /// Creates a new `PendingDecryptor` by reading the header from the stream.
     pub fn from_reader(mut reader: R) -> Result<Self> {
-        let header = decode_header_from_stream(&mut reader)?;
+        let header = Header::decode_from_prefixed_reader(&mut reader)?;
         Ok(Self {
             reader,
             header,

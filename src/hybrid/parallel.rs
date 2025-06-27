@@ -1,12 +1,12 @@
+use super::common::{
+    create_header, derive_nonce, DEFAULT_CHUNK_SIZE,
+};
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
+use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
-use rand::{rngs::OsRng, TryRngCore};
 use rayon::prelude::*;
 use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
-
-const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 
 /// Performs parallel, in-memory hybrid encryption.
 pub fn encrypt<A, S>(pk: &A::PublicKey, plaintext: &[u8], kek_id: String) -> Result<Vec<u8>>
@@ -16,47 +16,23 @@ where
     S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + Clone,
     Vec<u8>: From<<A as Kem>::EncapsulatedKey>,
 {
-    // 1. KEM Encapsulate: Generate DEK and wrap it with the public key.
-    let (shared_secret, encapsulated_key) = A::encapsulate(&pk.clone().into())?;
+    // 1. Create header, nonce, and DEK
+    let (header, base_nonce, shared_secret) = create_header::<A, S>(&pk.clone().into(), kek_id)?;
 
-    // 2. Generate a base_nonce for deterministic nonce derivation.
-    let mut base_nonce = [0u8; 12];
-    OsRng.try_fill_bytes(&mut base_nonce)?;
-
-    // 3. Construct the header.
-    let header = Header {
-        version: 1,
-        mode: SealMode::Hybrid,
-        payload: HeaderPayload::Hybrid {
-            kek_id,
-            kek_algorithm: A::ALGORITHM,
-            dek_algorithm: S::ALGORITHM,
-            encrypted_dek: encapsulated_key.into(),
-            stream_info: Some(StreamInfo {
-                chunk_size: DEFAULT_CHUNK_SIZE,
-                base_nonce,
-            }),
-        },
-    };
-
-    // 4. Serialize the header.
+    // 2. Serialize the header.
     let header_bytes = header.encode_to_vec()?;
 
-    // 5. Encrypt data chunks in parallel using Rayon.
+    // 3. Encrypt data chunks in parallel using Rayon.
     let encrypted_chunks: Vec<Vec<u8>> = plaintext
         .par_chunks(DEFAULT_CHUNK_SIZE as usize)
         .enumerate()
         .map(|(i, chunk)| {
-            let mut nonce = base_nonce;
-            let counter_bytes = (i as u64).to_le_bytes();
-            for j in 0..8 {
-                nonce[4 + j] ^= counter_bytes[j];
-            }
+            let nonce = derive_nonce(&base_nonce, i as u64);
             S::encrypt(&shared_secret.clone().into(), &nonce, chunk, None)
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    // 6. Assemble the final output.
+    // 4. Assemble the final output.
     let final_output = {
         let body = encrypted_chunks.concat();
         let mut output = Vec::with_capacity(4 + header_bytes.len() + body.len());
@@ -67,22 +43,6 @@ where
     };
 
     Ok(final_output)
-}
-
-/// Decodes the header from the beginning of a ciphertext slice.
-pub fn decode_header(ciphertext: &[u8]) -> Result<(Header, &[u8])> {
-    if ciphertext.len() < 4 {
-        return Err(Error::InvalidCiphertextFormat);
-    }
-    let header_len = u32::from_le_bytes(ciphertext[0..4].try_into().unwrap()) as usize;
-    if ciphertext.len() < 4 + header_len {
-        return Err(Error::InvalidCiphertextFormat);
-    }
-    let header_bytes = &ciphertext[4..4 + header_len];
-    let ciphertext_body = &ciphertext[4 + header_len..];
-
-    let (header, _) = Header::decode_from_slice(header_bytes)?;
-    Ok((header, ciphertext_body))
 }
 
 /// A pending decryptor for in-memory hybrid-encrypted data that will be
@@ -100,7 +60,7 @@ pub struct PendingDecryptor<'a> {
 impl<'a> PendingDecryptor<'a> {
     /// Creates a new `PendingDecryptor` by parsing the header from the ciphertext.
     pub fn from_ciphertext(ciphertext: &'a [u8]) -> Result<Self> {
-        let (header, ciphertext_body) = decode_header(ciphertext)?;
+        let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
         Ok(Self {
             header,
             ciphertext_body,
@@ -159,11 +119,7 @@ where
         .par_chunks(encrypted_chunk_size)
         .enumerate()
         .map(|(i, encrypted_chunk)| {
-            let mut nonce = base_nonce;
-            let counter_bytes = (i as u64).to_le_bytes();
-            for j in 0..8 {
-                nonce[4 + j] ^= counter_bytes[j];
-            }
+            let nonce = derive_nonce(&base_nonce, i as u64);
             S::decrypt(&shared_secret.clone().into(), &nonce, encrypted_chunk, None)
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -193,7 +149,7 @@ mod tests {
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Test separated functions
-        let (header, body) = decode_header(&encrypted).unwrap();
+        let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
         assert_eq!(header.payload.kek_id(), Some("test_kek_id"));
         let decrypted_body =
             decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body).unwrap();

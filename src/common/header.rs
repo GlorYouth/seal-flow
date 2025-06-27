@@ -1,6 +1,11 @@
 use bincode::{Decode, Encode};
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享
 use crate::common::algorithms::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::error::{Error, Result};
+use std::io::Read;
+
+#[cfg(feature = "async")]
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// 定义加密操作的模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Decode, Encode)]
@@ -78,13 +83,64 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn encode_to_vec(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
         static CONFIG: bincode::config::Configuration = bincode::config::standard();
-        bincode::encode_to_vec(self, CONFIG)
+        bincode::encode_to_vec(self, CONFIG).map_err(Error::from)
     }
 
-    pub fn decode_from_slice(data: &[u8]) -> Result<(Self, usize), bincode::error::DecodeError> {
+    pub fn decode_from_slice(data: &[u8]) -> Result<(Self, usize)> {
         static CONFIG: bincode::config::Configuration = bincode::config::standard();
-        bincode::decode_from_slice(data, CONFIG)
+        bincode::decode_from_slice(data, CONFIG).map_err(Error::from)
+    }
+
+    /// Decodes a length-prefixed header from a byte slice.
+    ///
+    /// The format is expected to be `[4-byte length (u32 LE)][bincode-encoded Header]`.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing the parsed `Header` and a slice pointing to the remaining data.
+    pub fn decode_from_prefixed_slice(ciphertext: &[u8]) -> Result<(Self, &[u8])> {
+        if ciphertext.len() < 4 {
+            return Err(Error::InvalidCiphertextFormat);
+        }
+        let header_len = u32::from_le_bytes(ciphertext[0..4].try_into().unwrap()) as usize;
+        if ciphertext.len() < 4 + header_len {
+            return Err(Error::InvalidCiphertextFormat);
+        }
+        let header_bytes = &ciphertext[4..4 + header_len];
+        let ciphertext_body = &ciphertext[4 + header_len..];
+
+        let (header, _) = Self::decode_from_slice(header_bytes)?;
+        Ok((header, ciphertext_body))
+    }
+
+    /// Reads and decodes a length-prefixed header from a synchronous reader.
+    pub fn decode_from_prefixed_reader<R: Read>(reader: &mut R) -> Result<Self> {
+        let mut len_buf = [0u8; 4];
+        reader.read_exact(&mut len_buf)?;
+        let header_len = u32::from_le_bytes(len_buf) as usize;
+
+        let mut header_bytes = vec![0u8; header_len];
+        reader.read_exact(&mut header_bytes)?;
+        let (header, _) = Self::decode_from_slice(&header_bytes)?;
+
+        Ok(header)
+    }
+
+    /// Reads and decodes a length-prefixed header from an asynchronous reader.
+    #[cfg(feature = "async")]
+    pub async fn decode_from_prefixed_async_reader<R: AsyncRead + Unpin>(
+        reader: &mut R,
+    ) -> Result<Self> {
+        let mut len_buf = [0u8; 4];
+        reader.read_exact(&mut len_buf).await?;
+        let header_len = u32::from_le_bytes(len_buf) as usize;
+
+        let mut header_bytes = vec![0u8; header_len];
+        reader.read_exact(&mut header_bytes).await?;
+        let (header, _) = Self::decode_from_slice(&header_bytes)?;
+
+        Ok(header)
     }
 }
