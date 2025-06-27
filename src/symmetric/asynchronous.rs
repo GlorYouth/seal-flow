@@ -74,7 +74,6 @@ pin_project! {
         writing_state: WritingState,
 
         // Buffer pools
-        in_pool: Arc<BufferPool>,
         out_pool: Arc<BufferPool>,
 
         _phantom: std::marker::PhantomData<S>,
@@ -97,7 +96,6 @@ where
         writer.write_all(&header_bytes).await?;
 
         let chunk_size = DEFAULT_CHUNK_SIZE as usize;
-        let in_pool = Arc::new(BufferPool::new(chunk_size));
         let out_pool = Arc::new(BufferPool::new(chunk_size + S::TAG_SIZE));
 
         Ok(Self {
@@ -112,7 +110,6 @@ where
             encrypt_tasks: FuturesUnordered::new(),
             pending_chunks: BinaryHeap::new(),
             writing_state: WritingState::Idle,
-            in_pool,
             out_pool,
             _phantom: std::marker::PhantomData,
         })
@@ -134,13 +131,11 @@ where
             }
 
             let chunk_len = std::cmp::min(self.buffer.len(), self.chunk_size);
-            let mut in_buffer = self.in_pool.acquire();
-            in_buffer.extend_from_slice(&self.buffer.split_to(chunk_len));
+            let in_buffer = self.buffer.split_to(chunk_len);
 
             let key = Arc::clone(&self.symmetric_key);
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
             let index = self.chunk_counter;
-            let in_pool = Arc::clone(&self.in_pool);
             let out_pool = Arc::clone(&self.out_pool);
 
             let handle = tokio::task::spawn_blocking(move || {
@@ -153,7 +148,6 @@ where
                         out_buffer
                     })
                     .map_err(Error::from);
-                in_pool.release(in_buffer);
                 result.map(|buf| (index, buf))
             });
 
@@ -377,7 +371,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
     }
 }
 
-type DecryptTask = JoinHandle<Result<(u64, BytesMut)>>;
+type DecryptTask = JoinHandle<(u64, Result<BytesMut>)>;
 
 pin_project! {
     pub struct Decryptor<R: AsyncRead, S: SymmetricAlgorithm> {
@@ -398,7 +392,6 @@ pin_project! {
         decrypt_tasks: FuturesUnordered<DecryptTask>,
         pending_chunks: std::collections::BTreeMap<u64, Result<BytesMut>>,
 
-        in_pool: Arc<BufferPool>,
         out_pool: Arc<BufferPool>,
 
         _phantom: std::marker::PhantomData<S>,
@@ -417,7 +410,6 @@ where
         encrypted_chunk_size: usize,
         decrypted_chunk_size: usize,
     ) -> Self {
-        let in_pool = Arc::new(BufferPool::new(encrypted_chunk_size));
         let out_pool = Arc::new(BufferPool::new(decrypted_chunk_size));
         Self {
             reader,
@@ -432,7 +424,6 @@ where
             reader_done: false,
             decrypt_tasks: FuturesUnordered::new(),
             pending_chunks: std::collections::BTreeMap::new(),
-            in_pool,
             out_pool,
             _phantom: std::marker::PhantomData,
         }
@@ -473,13 +464,11 @@ where
                 }
 
                 let chunk_len = std::cmp::min(self.read_buffer.len(), self.encrypted_chunk_size);
-                let mut in_buffer = self.in_pool.acquire();
-                in_buffer.extend_from_slice(&self.read_buffer.split_to(chunk_len));
+                let in_buffer = self.read_buffer.split_to(chunk_len);
 
                 let key = Arc::clone(&self.symmetric_key);
                 let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
                 let index = self.chunk_counter;
-                let in_pool = Arc::clone(&self.in_pool);
                 let out_pool = Arc::clone(&self.out_pool);
 
                 let handle = tokio::task::spawn_blocking(move || {
@@ -493,8 +482,7 @@ where
                                 out_buffer
                             })
                             .map_err(Error::from);
-                    in_pool.release(in_buffer);
-                    result.map(|buf| (index, buf))
+                    (index, result)
                 });
                 self.decrypt_tasks.push(handle);
                 self.chunk_counter += 1;
@@ -508,16 +496,12 @@ where
         let initial_pending = self.pending_chunks.len();
         while let Poll::Ready(Some(result)) = self.decrypt_tasks.poll_next_unpin(cx) {
             match result {
-                Ok(Ok((index, data))) => {
-                    self.pending_chunks.insert(index, Ok(data));
-                }
-                Ok(Err(e)) => {
-                    self.pending_chunks
-                        .insert(self.chunk_counter, Err(Error::from(e)));
+                Ok((index, dec_result)) => {
+                    self.pending_chunks.insert(index, dec_result);
                 }
                 Err(e) => {
-                    self.pending_chunks
-                        .insert(self.chunk_counter, Err(Error::from(e)));
+                    // Task panicked
+                    return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)));
                 }
             }
         }
