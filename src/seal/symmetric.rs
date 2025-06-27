@@ -54,18 +54,16 @@ impl SymmetricSeal {
     ///
     /// This returns a `PendingDecryptor` which allows inspecting the stream's
     /// header before providing the key required for decryption.
-    pub fn streaming_decryptor_from_reader<S, R>(
+    pub fn streaming_decryptor_from_reader<R>(
         &self,
         reader: R,
-    ) -> crate::Result<PendingStreamingDecryptor<R, S>>
+    ) -> crate::Result<PendingStreamingDecryptor<R>>
     where
-        S: SymmetricAlgorithm,
         R: Read,
     {
         let mid_level_pending = crate::symmetric::streaming::PendingDecryptor::from_reader(reader)?;
         Ok(PendingStreamingDecryptor {
             inner: mid_level_pending,
-            _phantom: PhantomData,
         })
     }
 
@@ -97,19 +95,17 @@ impl SymmetricSeal {
 
     /// Begins an asynchronous streaming decryption operation.
     #[cfg(feature = "async")]
-    pub async fn asynchronous_decryptor_from_reader<S, R>(
+    pub async fn asynchronous_decryptor_from_reader<R>(
         &self,
         reader: R,
-    ) -> crate::Result<PendingAsyncStreamingDecryptor<R, S>>
+    ) -> crate::Result<PendingAsyncStreamingDecryptor<R>>
     where
-        S: SymmetricAlgorithm,
         R: AsyncRead + Unpin,
     {
         let mid_level_pending =
             crate::symmetric::asynchronous::PendingDecryptor::from_reader(reader).await?;
         Ok(PendingAsyncStreamingDecryptor {
             inner: mid_level_pending,
-            _phantom: PhantomData,
         })
     }
 }
@@ -137,7 +133,7 @@ impl<S: SymmetricAlgorithm> SymmetricInMemoryExecutor<S> {
     pub fn decrypt<'a>(
         &self,
         ciphertext: &'a [u8],
-    ) -> crate::Result<PendingInMemoryDecryptor<'a, S>> {
+    ) -> crate::Result<PendingInMemoryDecryptor<'a>> {
         let mid_level_pending =
             crate::symmetric::ordinary::PendingDecryptor::from_ciphertext(ciphertext)?;
         Ok(PendingInMemoryDecryptor {
@@ -147,11 +143,11 @@ impl<S: SymmetricAlgorithm> SymmetricInMemoryExecutor<S> {
 }
 
 /// A pending in-memory decryptor, waiting for a key.
-pub struct PendingInMemoryDecryptor<'a, S: SymmetricAlgorithm> {
-    inner: crate::symmetric::ordinary::PendingDecryptor<'a, S>,
+pub struct PendingInMemoryDecryptor<'a> {
+    inner: crate::symmetric::ordinary::PendingDecryptor<'a>,
 }
 
-impl<'a, S: SymmetricAlgorithm> PendingInMemoryDecryptor<'a, S> {
+impl<'a> PendingInMemoryDecryptor<'a> {
     /// Returns a reference to the header.
     pub fn header(&self) -> &Header {
         self.inner.header()
@@ -163,11 +159,11 @@ impl<'a, S: SymmetricAlgorithm> PendingInMemoryDecryptor<'a, S> {
     }
 
     /// Supplies the key and returns the decrypted plaintext.
-    pub fn with_key(self, key: &S::Key) -> crate::Result<Vec<u8>>
+    pub fn with_key<S: SymmetricAlgorithm>(self, key: &S::Key) -> crate::Result<Vec<u8>>
     where
         S::Key: Clone + Send + Sync,
     {
-        self.inner.into_plaintext(key)
+        self.inner.into_plaintext::<S>(key)
     }
 }
 
@@ -194,7 +190,7 @@ impl<S: SymmetricAlgorithm> SymmetricInMemoryParallelExecutor<S> {
     pub fn decrypt<'a>(
         &self,
         ciphertext: &'a [u8],
-    ) -> crate::Result<PendingInMemoryParallelDecryptor<'a, S>> {
+    ) -> crate::Result<PendingInMemoryParallelDecryptor<'a>> {
         let mid_level_pending =
             crate::symmetric::parallel::PendingDecryptor::from_ciphertext(ciphertext)?;
         Ok(PendingInMemoryParallelDecryptor {
@@ -204,11 +200,11 @@ impl<S: SymmetricAlgorithm> SymmetricInMemoryParallelExecutor<S> {
 }
 
 /// A pending parallel in-memory decryptor, waiting for a key.
-pub struct PendingInMemoryParallelDecryptor<'a, S: SymmetricAlgorithm> {
-    inner: crate::symmetric::parallel::PendingDecryptor<'a, S>,
+pub struct PendingInMemoryParallelDecryptor<'a> {
+    inner: crate::symmetric::parallel::PendingDecryptor<'a>,
 }
 
-impl<'a, S: SymmetricAlgorithm> PendingInMemoryParallelDecryptor<'a, S> {
+impl<'a> PendingInMemoryParallelDecryptor<'a> {
     /// Returns a reference to the header.
     pub fn header(&self) -> &Header {
         self.inner.header()
@@ -220,21 +216,20 @@ impl<'a, S: SymmetricAlgorithm> PendingInMemoryParallelDecryptor<'a, S> {
     }
 
     /// Supplies the key and returns the decrypted plaintext.
-    pub fn with_key(self, key: &S::Key) -> crate::Result<Vec<u8>>
+    pub fn with_key<S: SymmetricAlgorithm>(self, key: &S::Key) -> crate::Result<Vec<u8>>
     where
         S::Key: Clone + Send + Sync,
     {
-        self.inner.into_plaintext(key)
+        self.inner.into_plaintext::<S>(key)
     }
 }
 
 /// A pending synchronous streaming decryptor, waiting for a key.
-pub struct PendingStreamingDecryptor<R: Read, S: SymmetricAlgorithm> {
+pub struct PendingStreamingDecryptor<R: Read> {
     inner: crate::symmetric::streaming::PendingDecryptor<R>,
-    _phantom: PhantomData<S>,
 }
 
-impl<R: Read, S: SymmetricAlgorithm> PendingStreamingDecryptor<R, S> {
+impl<R: Read> PendingStreamingDecryptor<R> {
     /// Returns a reference to the stream's header.
     pub fn header(&self) -> &Header {
         self.inner.header()
@@ -246,7 +241,7 @@ impl<R: Read, S: SymmetricAlgorithm> PendingStreamingDecryptor<R, S> {
     }
 
     /// Supplies the key and returns a fully initialized `Decryptor`.
-    pub fn with_key(
+    pub fn with_key<S: SymmetricAlgorithm>(
         self,
         key: &S::Key,
     ) -> crate::Result<crate::symmetric::streaming::Decryptor<R, S>>
@@ -280,7 +275,7 @@ impl<S: SymmetricAlgorithm> SymmetricParallelStreamingExecutor<S> {
     }
 
     /// Begins the decryption process for a stream.
-    pub fn decrypt<R>(&self, reader: R) -> crate::Result<PendingParallelStreamingDecryptor<R, S>>
+    pub fn decrypt<R>(&self, reader: R) -> crate::Result<PendingParallelStreamingDecryptor<R>>
     where
         R: Read + Send,
     {
@@ -288,25 +283,21 @@ impl<S: SymmetricAlgorithm> SymmetricParallelStreamingExecutor<S> {
             crate::symmetric::parallel_streaming::PendingDecryptor::from_reader(reader)?;
         Ok(PendingParallelStreamingDecryptor {
             inner: mid_level_pending,
-            _phantom: PhantomData,
         })
     }
 }
 
 /// A pending parallel streaming decryptor, waiting for a key.
-pub struct PendingParallelStreamingDecryptor<R, S>
+pub struct PendingParallelStreamingDecryptor<R>
 where
     R: Read + Send,
-    S: SymmetricAlgorithm,
 {
-    inner: crate::symmetric::parallel_streaming::PendingDecryptor<R, S>,
-    _phantom: PhantomData<()>,
+    inner: crate::symmetric::parallel_streaming::PendingDecryptor<R>,
 }
 
-impl<R, S> PendingParallelStreamingDecryptor<R, S>
+impl<R> PendingParallelStreamingDecryptor<R>
 where
     R: Read + Send,
-    S: SymmetricAlgorithm,
 {
     /// Returns a reference to the stream's header.
     pub fn header(&self) -> &Header {
@@ -319,23 +310,22 @@ where
     }
 
     /// Supplies the key and decrypts the stream, writing to the provided writer.
-    pub fn with_key_to_writer<W: Write>(self, key: &S::Key, writer: W) -> crate::Result<()>
+    pub fn with_key_to_writer<S: SymmetricAlgorithm, W: Write>(self, key: &S::Key, writer: W) -> crate::Result<()>
     where
         S::Key: Clone + Send + Sync,
     {
-        self.inner.decrypt_to_writer(key, writer)
+        self.inner.decrypt_to_writer::<S, W>(key, writer)
     }
 }
 
 /// A pending asynchronous streaming decryptor, waiting for a key.
 #[cfg(feature = "async")]
-pub struct PendingAsyncStreamingDecryptor<R: AsyncRead + Unpin, S: SymmetricAlgorithm> {
+pub struct PendingAsyncStreamingDecryptor<R: AsyncRead + Unpin> {
     inner: crate::symmetric::asynchronous::PendingDecryptor<R>,
-    _phantom: PhantomData<S>,
 }
 
 #[cfg(feature = "async")]
-impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> PendingAsyncStreamingDecryptor<R, S> {
+impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
     /// Returns a reference to the stream's header.
     pub fn header(&self) -> &Header {
         self.inner.header()
@@ -347,7 +337,7 @@ impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> PendingAsyncStreamingDecryptor
     }
 
     /// Supplies the key and returns a fully initialized `Decryptor`.
-    pub fn with_key(
+    pub fn with_key<S: SymmetricAlgorithm>(
         self,
         key: &S::Key,
     ) -> crate::Result<crate::symmetric::asynchronous::Decryptor<R, S>>
@@ -386,7 +376,7 @@ mod tests {
             .unwrap();
         let pending = seal.in_memory::<Aes256Gcm>().decrypt(&encrypted).unwrap();
         assert_eq!(pending.key_id(), Some(TEST_KEY_ID));
-        let decrypted = pending.with_key(&key).unwrap();
+        let decrypted = pending.with_key::<Aes256Gcm>(&key).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
     }
 
@@ -405,7 +395,7 @@ mod tests {
             .in_memory_parallel::<Aes256Gcm>()
             .decrypt(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
-        let decrypted = pending.with_key(&key)?;
+        let decrypted = pending.with_key::<Aes256Gcm>(&key)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -434,11 +424,11 @@ mod tests {
 
         // Decrypt
         let pending = seal
-            .streaming_decryptor_from_reader::<Aes256Gcm, _>(Cursor::new(&encrypted_data))
+            .streaming_decryptor_from_reader(Cursor::new(&encrypted_data))
             .unwrap();
         let key_id = pending.key_id().unwrap();
         let decryption_key = key_store.get(key_id).unwrap();
-        let mut decryptor = pending.with_key(decryption_key).unwrap();
+        let mut decryptor = pending.with_key::<Aes256Gcm>(decryption_key).unwrap();
 
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
@@ -462,7 +452,7 @@ mod tests {
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
 
         let mut decrypted = Vec::new();
-        pending.with_key_to_writer(&key, &mut decrypted)?;
+        pending.with_key_to_writer::<Aes256Gcm, _>(&key, &mut decrypted)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -498,12 +488,12 @@ mod tests {
 
             // Decrypt
             let pending = seal
-                .asynchronous_decryptor_from_reader::<Aes256Gcm, _>(Cursor::new(&encrypted_data))
+                .asynchronous_decryptor_from_reader(Cursor::new(&encrypted_data))
                 .await
                 .unwrap();
             let key_id = pending.key_id().unwrap();
             let decryption_key = key_store.get(key_id).unwrap();
-            let mut decryptor = pending.with_key(decryption_key).unwrap();
+            let mut decryptor = pending.with_key::<Aes256Gcm>(decryption_key).unwrap();
 
             let mut decrypted_data = Vec::new();
             decryptor.read_to_end(&mut decrypted_data).await.unwrap();

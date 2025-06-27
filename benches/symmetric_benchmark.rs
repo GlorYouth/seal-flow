@@ -133,7 +133,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
                 .in_memory::<TestDek>()
                 .decrypt(black_box(&in_memory_ciphertext))
                 .unwrap();
-            pending.with_key(&key).unwrap();
+            pending.with_key::<TestDek>(&key).unwrap();
         });
     });
 
@@ -149,7 +149,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
                     .in_memory_parallel::<TestDek>()
                     .decrypt(black_box(&in_memory_ciphertext))
                     .unwrap();
-                pending.with_key(&key).unwrap();
+                pending.with_key::<TestDek>(&key).unwrap();
             });
         });
     });
@@ -158,11 +158,11 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
     group.bench_function("streaming", |b| {
         b.iter(|| {
             let pending = seal
-                .streaming_decryptor_from_reader::<TestDek, _>(Cursor::new(black_box(
+                .streaming_decryptor_from_reader(Cursor::new(black_box(
                     &in_memory_ciphertext,
                 )))
                 .unwrap();
-            let mut decryptor = pending.with_key(&key).unwrap();
+            let mut decryptor = pending.with_key::<TestDek>(&key).unwrap();
             let mut decrypted_data = Vec::with_capacity(PLAINTEXT_SIZE);
             std::io::copy(&mut decryptor, &mut decrypted_data).unwrap();
         });
@@ -173,12 +173,12 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         b.to_async(&runtime).iter(|| async {
             let pending = seal
-                .asynchronous_decryptor_from_reader::<TestDek, _>(Cursor::new(black_box(
+                .asynchronous_decryptor_from_reader(Cursor::new(black_box(
                     &in_memory_ciphertext,
                 )))
                 .await
                 .unwrap();
-            let mut decryptor = pending.with_key(&key).unwrap();
+            let mut decryptor = pending.with_key::<TestDek>(&key).unwrap();
             let mut decrypted_data = Vec::with_capacity(PLAINTEXT_SIZE);
             tokio::io::copy(&mut decryptor, &mut decrypted_data)
                 .await
@@ -200,7 +200,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
                     .decrypt(Cursor::new(black_box(&in_memory_ciphertext)))
                     .unwrap();
                 pending
-                    .with_key_to_writer(&key, &mut decrypted_data)
+                    .with_key_to_writer::<TestDek, _>(&key, &mut decrypted_data)
                     .unwrap();
             });
         });

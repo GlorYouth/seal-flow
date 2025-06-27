@@ -65,7 +65,7 @@ fn main() -> Result<()> {
 
     // 现在你可以从头部检查密钥ID，以找到正确的密钥。
     // 在此示例中，我们将使用已有的密钥。
-    let decrypted_text = pending_decryptor.with_key(&key)?;
+    let decrypted_text = pending_decryptor.with_key::<Aes256Gcm>(&key)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("成功加密和解密数据！");
@@ -105,7 +105,7 @@ fn main() -> Result<()> {
 
     // 3. 通过从读取器创建一个待定解密器来开始解密过程
     let pending_decryptor = seal
-        .streaming_decryptor_from_reader::<Aes256Gcm, _>(Cursor::new(&ciphertext))?;
+        .streaming_decryptor_from_reader(Cursor::new(&ciphertext))?;
 
     // 4. 从加密头部获取密钥ID。这是一个廉价的操作。
     let found_key_id = pending_decryptor.key_id().expect("在头部未找到密钥ID！");
@@ -115,7 +115,7 @@ fn main() -> Result<()> {
     let decryption_key = key_store.get(found_key_id).expect("在存储中未找到密钥！");
 
     // 6. 提供密钥以获得一个功能完备的解密器。
-    let mut decryptor = pending_decryptor.with_key(decryption_key)?;
+    let mut decryptor = pending_decryptor.with_key::<Aes256Gcm>(decryption_key)?;
     
     // 7. 解密数据。
     let mut decrypted_text = Vec::new();

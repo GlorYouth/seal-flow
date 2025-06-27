@@ -88,20 +88,18 @@ pub fn decode_header(ciphertext: &[u8]) -> Result<(Header, &[u8])> {
 /// This state is entered after the header has been successfully parsed from
 /// the ciphertext, allowing the user to inspect the header (e.g., to find
 /// the `key_id`) before supplying the appropriate key to proceed with decryption.
-pub struct PendingDecryptor<'a, S: SymmetricAlgorithm> {
+pub struct PendingDecryptor<'a> {
     header: Header,
     ciphertext_body: &'a [u8],
-    _phantom: std::marker::PhantomData<S>,
 }
 
-impl<'a, S: SymmetricAlgorithm> PendingDecryptor<'a, S> {
+impl<'a> PendingDecryptor<'a> {
     /// Creates a new `PendingDecryptor` by parsing the header from the ciphertext.
     pub fn from_ciphertext(ciphertext: &'a [u8]) -> Result<Self> {
         let (header, ciphertext_body) = decode_header(ciphertext)?;
         Ok(Self {
             header,
             ciphertext_body,
-            _phantom: std::marker::PhantomData,
         })
     }
 
@@ -111,7 +109,7 @@ impl<'a, S: SymmetricAlgorithm> PendingDecryptor<'a, S> {
     }
 
     /// Consumes the `PendingDecryptor` and returns the decrypted plaintext.
-    pub fn into_plaintext(self, key: &S::Key) -> Result<Vec<u8>>
+    pub fn into_plaintext<S: SymmetricAlgorithm>(self, key: &S::Key) -> Result<Vec<u8>>
     where
         S::Key: Clone + Send + Sync,
     {
@@ -183,8 +181,8 @@ mod tests {
         let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
 
         // Test the full convenience function
-        let pending = PendingDecryptor::<Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
-        let decrypted_full = pending.into_plaintext(&key).unwrap();
+        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let decrypted_full = pending.into_plaintext::<Aes256Gcm>(&key).unwrap();
         assert_eq!(plaintext, decrypted_full.as_slice());
 
         // Test the separated functions
@@ -200,8 +198,8 @@ mod tests {
         let plaintext = b"";
 
         let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
-        let pending = PendingDecryptor::<Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext(&key).unwrap();
+        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let decrypted = pending.into_plaintext::<Aes256Gcm>(&key).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -212,8 +210,8 @@ mod tests {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted = encrypt::<Aes256Gcm>(&key, &plaintext, "test_key_id".to_string()).unwrap();
-        let pending = PendingDecryptor::<Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext(&key).unwrap();
+        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let decrypted = pending.into_plaintext::<Aes256Gcm>(&key).unwrap();
 
         assert_eq!(plaintext, decrypted);
     }
@@ -232,8 +230,8 @@ mod tests {
             encrypted[len / 2] ^= 1;
         }
 
-        let pending = PendingDecryptor::<Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext(&key);
+        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let result = pending.into_plaintext::<Aes256Gcm>(&key);
         assert!(result.is_err());
     }
 
@@ -245,8 +243,8 @@ mod tests {
 
         let encrypted =
             encrypt::<Aes256Gcm>(&key1, plaintext, "test_key_id_1".to_string()).unwrap();
-        let pending = PendingDecryptor::<Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext(&key2);
+        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let result = pending.into_plaintext::<Aes256Gcm>(&key2);
         assert!(result.is_err());
     }
 
@@ -264,8 +262,8 @@ mod tests {
             encrypted[20] ^= 1;
         }
 
-        let pending = PendingDecryptor::<Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext(&key);
+        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let result = pending.into_plaintext::<Aes256Gcm>(&key);
         assert!(result.is_err());
     }
 }

@@ -89,28 +89,18 @@ pub fn decode_header(ciphertext: &[u8]) -> Result<(Header, &[u8])> {
 /// the ciphertext, allowing the user to inspect the header (e.g., to find
 /// the `kek_id`) before supplying the appropriate private key to proceed with
 /// decryption.
-pub struct PendingDecryptor<'a, A, S>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-{
+pub struct PendingDecryptor<'a> {
     header: Header,
     ciphertext_body: &'a [u8],
-    _phantom: std::marker::PhantomData<(A, S)>,
 }
 
-impl<'a, A, S> PendingDecryptor<'a, A, S>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-{
+impl<'a> PendingDecryptor<'a> {
     /// Creates a new `PendingDecryptor` by parsing the header from the ciphertext.
     pub fn from_ciphertext(ciphertext: &'a [u8]) -> Result<Self> {
         let (header, ciphertext_body) = decode_header(ciphertext)?;
         Ok(Self {
             header,
             ciphertext_body,
-            _phantom: std::marker::PhantomData,
         })
     }
 
@@ -120,9 +110,11 @@ where
     }
 
     /// Consumes the `PendingDecryptor` and returns the decrypted plaintext.
-    pub fn into_plaintext(self, sk: &A::PrivateKey) -> Result<Vec<u8>>
+    pub fn into_plaintext<A, S>(self, sk: &A::PrivateKey) -> Result<Vec<u8>>
     where
+        A: AsymmetricAlgorithm,
         A::EncapsulatedKey: From<Vec<u8>> + Send,
+        S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
         decrypt_body::<A, S>(sk, &self.header, self.ciphertext_body)
@@ -196,8 +188,8 @@ mod tests {
             encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
         // Test convenience function
-        let pending = PendingDecryptor::<Rsa2048, Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
-        let decrypted_full = pending.into_plaintext(&sk).unwrap();
+        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let decrypted_full = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk).unwrap();
         assert_eq!(plaintext, decrypted_full.as_slice());
 
         // Test separated functions
@@ -216,8 +208,8 @@ mod tests {
         let encrypted =
             encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
-        let pending = PendingDecryptor::<Rsa2048, Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext(&sk).unwrap();
+        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let decrypted = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -230,8 +222,8 @@ mod tests {
         let encrypted =
             encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string()).unwrap();
 
-        let pending = PendingDecryptor::<Rsa2048, Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext(&sk).unwrap();
+        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let decrypted = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk).unwrap();
 
         assert_eq!(plaintext, decrypted);
     }
@@ -249,8 +241,8 @@ mod tests {
             encrypted[300] ^= 1; // Tamper after the header
         }
 
-        let pending = PendingDecryptor::<Rsa2048, Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext(&sk);
+        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let result = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk);
         assert!(result.is_err());
     }
 
@@ -263,8 +255,8 @@ mod tests {
         let encrypted =
             encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
 
-        let pending = PendingDecryptor::<Rsa2048, Aes256Gcm>::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext(&sk2);
+        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let result = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk2);
         assert!(result.is_err());
     }
 }

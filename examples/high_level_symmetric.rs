@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     let pending_decryptor1 = seal.in_memory::<TheAlgorithm>().decrypt(&ciphertext1)?;
     let found_key_id = pending_decryptor1.key_id().unwrap();
     let decryption_key = key_store.get(found_key_id).unwrap();
-    let decrypted1 = pending_decryptor1.with_key(decryption_key)?;
+    let decrypted1 = pending_decryptor1.with_key::<TheAlgorithm>(decryption_key)?;
     assert_eq!(plaintext, &decrypted1[..]);
     println!("In-Memory (Ordinary) roundtrip successful!");
 
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
         .decrypt(&ciphertext2)?;
     let found_key_id = pending_decryptor2.key_id().unwrap();
     let decryption_key = key_store.get(found_key_id).unwrap();
-    let decrypted2 = pending_decryptor2.with_key(decryption_key)?;
+    let decrypted2 = pending_decryptor2.with_key::<TheAlgorithm>(decryption_key)?;
     assert_eq!(plaintext, &decrypted2[..]);
     println!("In-Memory Parallel roundtrip successful!");
 
@@ -57,12 +57,12 @@ async fn main() -> Result<()> {
     encryptor3.write_all(plaintext)?;
     encryptor3.finish()?;
 
-    let pending_decryptor3 = seal
-        .streaming_decryptor_from_reader::<TheAlgorithm, _>(Cursor::new(&ciphertext3))?;
+    let pending_decryptor3 =
+        seal.streaming_decryptor_from_reader(Cursor::new(&ciphertext3))?;
     let found_key_id = pending_decryptor3.key_id().unwrap();
     println!("Found key ID in stream: '{}'", found_key_id);
     let decryption_key = key_store.get(found_key_id).unwrap();
-    let mut decryptor3 = pending_decryptor3.with_key(decryption_key)?;
+    let mut decryptor3 = pending_decryptor3.with_key::<TheAlgorithm>(decryption_key)?;
 
     let mut decrypted3 = Vec::new();
     decryptor3.read_to_end(&mut decrypted3)?;
@@ -83,12 +83,12 @@ async fn main() -> Result<()> {
     encryptor4.shutdown().await?;
 
     let pending_decryptor4 = seal
-        .asynchronous_decryptor_from_reader::<TheAlgorithm, _>(Cursor::new(&ciphertext4))
+        .asynchronous_decryptor_from_reader(Cursor::new(&ciphertext4))
         .await?;
     let found_key_id_async = pending_decryptor4.key_id().unwrap();
     println!("Found key ID in async stream: '{}'", found_key_id_async);
     let decryption_key_async = key_store.get(found_key_id_async).unwrap();
-    let mut decryptor4 = pending_decryptor4.with_key(decryption_key_async)?;
+    let mut decryptor4 = pending_decryptor4.with_key::<TheAlgorithm>(decryption_key_async)?;
 
     let mut decrypted4 = Vec::new();
     decryptor4.read_to_end(&mut decrypted4).await?;
@@ -112,7 +112,7 @@ async fn main() -> Result<()> {
     let found_key_id = pending_decryptor5.key_id().unwrap();
     println!("Found key ID in parallel stream: '{}'", found_key_id);
     let decryption_key = key_store.get(found_key_id).unwrap();
-    pending_decryptor5.with_key_to_writer(decryption_key, &mut decrypted5)?;
+    pending_decryptor5.with_key_to_writer::<TheAlgorithm, _>(decryption_key, &mut decrypted5)?;
     assert_eq!(plaintext, &decrypted5[..]);
     println!("Parallel Streaming roundtrip successful!");
 

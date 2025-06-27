@@ -82,7 +82,9 @@ fn test_symmetric_workflow() {
     let decryption_key = store.get_key(peeked_id).unwrap();
 
     // 3. Decrypt using the retrieved key.
-    let decrypted = pending_decryptor.with_key(decryption_key).unwrap();
+    let decrypted = pending_decryptor
+        .with_key::<TestDek>(decryption_key)
+        .unwrap();
 
     // --- Verification ---
     assert_eq!(plaintext, decrypted.as_slice());
@@ -119,7 +121,7 @@ fn test_hybrid_workflow() {
 
     // 3. Decrypt using the retrieved private key.
     let decrypted = pending_decryptor
-        .with_private_key(decryption_key)
+        .with_private_key::<TestKem, TestDek>(decryption_key)
         .unwrap();
 
     // --- Verification ---
@@ -154,7 +156,7 @@ mod async_workflow_tests {
         // --- Decryption Side (simulated) ---
         // 1. Peek the key ID asynchronously.
         let pending_decryptor = seal
-            .asynchronous_decryptor_from_reader::<TestDek, _>(Cursor::new(&encrypted_data))
+            .asynchronous_decryptor_from_reader(Cursor::new(&encrypted_data))
             .await
             .unwrap();
         let peeked_id = pending_decryptor.key_id().unwrap();
@@ -165,7 +167,9 @@ mod async_workflow_tests {
 
         // 3. Decrypt asynchronously.
         let mut decrypted_data = Vec::new();
-        let mut decryptor = pending_decryptor.with_key(decryption_key).unwrap();
+        let mut decryptor = pending_decryptor
+            .with_key::<TestDek>(decryption_key)
+            .unwrap();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();
 
         // --- Verification ---
@@ -199,9 +203,7 @@ mod async_workflow_tests {
         // --- Decryption Side (simulated) ---
         // 1. Peek the KEK ID asynchronously.
         let pending_decryptor = seal
-            .asynchronous_decryptor_from_reader::<TestKem, TestDek, _>(Cursor::new(
-                &encrypted_data,
-            ))
+            .asynchronous_decryptor_from_reader(Cursor::new(&encrypted_data))
             .await
             .unwrap();
         let peeked_id = pending_decryptor.kek_id().unwrap();
@@ -213,7 +215,7 @@ mod async_workflow_tests {
         // 3. Decrypt asynchronously.
         let mut decrypted_data = Vec::new();
         let mut decryptor = pending_decryptor
-            .with_private_key(decryption_key.clone())
+            .with_private_key::<TestKem, TestDek>(decryption_key.clone())
             .await
             .unwrap();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();

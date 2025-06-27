@@ -165,17 +165,12 @@ where
 }
 
 /// A pending hybrid decryptor that has read the header and is waiting for the private key.
-pub struct PendingDecryptor<R: Read, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
+pub struct PendingDecryptor<R: Read> {
     reader: R,
     header: Header,
-    _phantom: std::marker::PhantomData<(A, S)>,
 }
 
-impl<R: Read, A, S> PendingDecryptor<R, A, S>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-{
+impl<R: Read> PendingDecryptor<R> {
     /// Creates a new `PendingDecryptor` by reading the header from the stream.
     pub fn from_reader(mut reader: R) -> Result<Self> {
         let mut len_buf = [0u8; 4];
@@ -186,11 +181,7 @@ where
         reader.read_exact(&mut header_bytes)?;
         let (header, _) = Header::decode_from_slice(&header_bytes)?;
 
-        Ok(Self {
-            reader,
-            header,
-            _phantom: std::marker::PhantomData,
-        })
+        Ok(Self { reader, header })
     }
 
     /// Returns a reference to the header.
@@ -199,8 +190,10 @@ where
     }
 
     /// Consumes the pending decryptor and returns a full `Decryptor` by providing the private key.
-    pub fn into_decryptor(self, sk: &A::PrivateKey) -> Result<Decryptor<R, A, S>>
+    pub fn into_decryptor<A, S>(self, sk: &A::PrivateKey) -> Result<Decryptor<R, A, S>>
     where
+        A: AsymmetricAlgorithm,
+        S: SymmetricAlgorithm,
         A::PrivateKey: Clone,
         A::EncapsulatedKey: From<Vec<u8>>,
         S::Key: From<Zeroizing<Vec<u8>>>,
@@ -314,17 +307,15 @@ mod tests {
         encryptor.finish().unwrap();
 
         // Decrypt
-        let pending_decryptor =
-            PendingDecryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::from_reader(Cursor::new(
-                &encrypted_data,
-            ))
-            .unwrap();
+        let pending_decryptor = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         assert_eq!(
             pending_decryptor.header().payload.kek_id(),
             Some(kek_id.as_str())
         );
 
-        let mut decryptor = pending_decryptor.into_decryptor(&sk).unwrap();
+        let mut decryptor = pending_decryptor
+            .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(&sk)
+            .unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
 
@@ -370,11 +361,10 @@ mod tests {
             encrypted_data[header_len] ^= 1;
         }
 
-        let pending = PendingDecryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::from_reader(
-            Cursor::new(&encrypted_data),
-        )
-        .unwrap();
-        let mut decryptor = pending.into_decryptor(&sk).unwrap();
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let mut decryptor = pending
+            .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(&sk)
+            .unwrap();
 
         let result = decryptor.read_to_end(&mut Vec::new());
         assert!(result.is_err());
@@ -396,11 +386,8 @@ mod tests {
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
 
-        let pending = PendingDecryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::from_reader(
-            Cursor::new(&encrypted_data),
-        )
-        .unwrap();
-        let result = pending.into_decryptor(&sk2);
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let result = pending.into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(&sk2);
         assert!(result.is_err());
     }
 }

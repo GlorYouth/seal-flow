@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
     let pending_decryptor1 = seal.in_memory::<Kem, Dek>().decrypt(&ciphertext1)?;
     let found_kek_id = pending_decryptor1.kek_id().unwrap();
     let decryption_key1 = key_store.get(found_kek_id).unwrap();
-    let decrypted1 = pending_decryptor1.with_private_key(decryption_key1)?;
+    let decrypted1 = pending_decryptor1.with_private_key::<Kem, Dek>(decryption_key1)?;
     assert_eq!(plaintext, &decrypted1[..]);
     println!("In-Memory (Ordinary) roundtrip successful!");
 
@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
         .decrypt(&ciphertext2)?;
     let found_kek_id = pending_decryptor2.kek_id().unwrap();
     let decryption_key2 = key_store.get(found_kek_id).unwrap();
-    let decrypted2 = pending_decryptor2.with_private_key(decryption_key2)?;
+    let decrypted2 = pending_decryptor2.with_private_key::<Kem, Dek>(decryption_key2)?;
     assert_eq!(plaintext, &decrypted2[..]);
     println!("In-Memory Parallel roundtrip successful!");
 
@@ -53,11 +53,11 @@ async fn main() -> Result<()> {
     seal.streaming_encryptor::<Kem, Dek, _>(&mut ciphertext3, &pk, KEK_ID.to_string())?;
 
     let pending_decryptor3 =
-        seal.streaming_decryptor_from_reader::<Kem, Dek, _>(Cursor::new(&ciphertext3))?;
+        seal.streaming_decryptor_from_reader(Cursor::new(&ciphertext3))?;
     let found_kek_id = pending_decryptor3.kek_id().unwrap();
     println!("Found KEK ID in stream: '{}'", found_kek_id);
     let decryption_key3 = key_store.get(found_kek_id).unwrap();
-    let mut decryptor3 = pending_decryptor3.with_private_key(decryption_key3)?;
+    let mut decryptor3 = pending_decryptor3.with_private_key::<Kem, Dek>(decryption_key3)?;
 
     let mut decrypted3 = Vec::new();
     decryptor3.read_to_end(&mut decrypted3)?;
@@ -71,13 +71,13 @@ async fn main() -> Result<()> {
         .await?;
 
     let pending_decryptor4 = seal
-        .asynchronous_decryptor_from_reader::<Kem, Dek, _>(Cursor::new(&ciphertext4))
+        .asynchronous_decryptor_from_reader(Cursor::new(&ciphertext4))
         .await?;
     let found_kek_id_async = pending_decryptor4.kek_id().unwrap();
     println!("Found KEK ID in async stream: '{}'", found_kek_id_async);
     let decryption_key4 = key_store.get(found_kek_id_async).unwrap();
     let mut decryptor4 = pending_decryptor4
-        .with_private_key(decryption_key4.clone())
+        .with_private_key::<Kem, Dek>(decryption_key4.clone())
         .await?;
 
     let mut decrypted4 = Vec::new();
@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
     let found_kek_id = pending_decryptor5.kek_id().unwrap();
     println!("Found KEK ID in parallel stream: '{}'", found_kek_id);
     let decryption_key5 = key_store.get(found_kek_id).unwrap();
-    pending_decryptor5.with_private_key_to_writer(decryption_key5, &mut decrypted5)?;
+    pending_decryptor5.with_private_key_to_writer::<Kem, Dek, _>(decryption_key5, &mut decrypted5)?;
     assert_eq!(plaintext, &decrypted5[..]);
     println!("Parallel Streaming roundtrip successful!");
 

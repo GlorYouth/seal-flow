@@ -67,7 +67,7 @@ fn main() -> Result<()> {
 
     // You can now inspect the key ID from the header to find the correct key.
     // For this example, we'll use the key we already have.
-    let decrypted_text = pending_decryptor.with_key(&key)?;
+    let decrypted_text = pending_decryptor.with_key::<Aes256Gcm>(&key)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully encrypted and decrypted data!");
@@ -107,7 +107,7 @@ fn main() -> Result<()> {
 
     // 3. Begin the decryption process by creating a pending decryptor from a reader
     let pending_decryptor = seal
-        .streaming_decryptor_from_reader::<Aes256Gcm, _>(Cursor::new(&ciphertext))?;
+        .streaming_decryptor_from_reader(Cursor::new(&ciphertext))?;
 
     // 4. Get the key ID from the encrypted header. This is a cheap operation.
     let found_key_id = pending_decryptor.key_id().expect("Key ID not found in header!");
@@ -117,7 +117,7 @@ fn main() -> Result<()> {
     let decryption_key = key_store.get(found_key_id).expect("Key not found in store!");
 
     // 6. Provide the key to get a fully operational decryptor.
-    let mut decryptor = pending_decryptor.with_key(decryption_key)?;
+    let mut decryptor = pending_decryptor.with_key::<Aes256Gcm>(decryption_key)?;
     
     // 7. Decrypt the data.
     let mut decrypted_text = Vec::new();

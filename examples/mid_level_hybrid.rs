@@ -54,11 +54,11 @@ async fn main() -> Result<()> {
     encryptor3.finish()?;
 
     let pending_decryptor3 =
-        streaming::PendingDecryptor::<_, Kem, Dek>::from_reader(Cursor::new(&ciphertext3))?;
+        streaming::PendingDecryptor::from_reader(Cursor::new(&ciphertext3))?;
     let found_kek_id3 = pending_decryptor3.header().payload.kek_id().unwrap();
     println!("Found KEK ID in stream: '{}'", found_kek_id3);
     let decryption_key3 = key_store.get(found_kek_id3).unwrap();
-    let mut decryptor3 = pending_decryptor3.into_decryptor(decryption_key3)?;
+    let mut decryptor3 = pending_decryptor3.into_decryptor::<Kem, Dek>(decryption_key3)?;
 
     let mut decrypted3 = Vec::new();
     decryptor3.read_to_end(&mut decrypted3)?;
@@ -75,12 +75,12 @@ async fn main() -> Result<()> {
     encryptor4.shutdown().await?;
 
     let pending_decryptor4 =
-        asynchronous::PendingDecryptor::<_, Kem, Dek>::from_reader(Cursor::new(&ciphertext4)).await?;
+        asynchronous::PendingDecryptor::from_reader(Cursor::new(&ciphertext4)).await?;
     let found_kek_id4 = pending_decryptor4.header().payload.kek_id().unwrap();
     println!("Found KEK ID in async stream: '{}'", found_kek_id4);
     let decryption_key4 = key_store.get(found_kek_id4).unwrap();
     let mut decryptor4 = pending_decryptor4
-        .into_decryptor(decryption_key4.clone())
+        .into_decryptor::<Kem, Dek>(decryption_key4.clone())
         .await?;
 
     let mut decrypted4 = Vec::new();

@@ -11,7 +11,6 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::thread;
-use std::marker::PhantomData;
 
 const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
 const CHANNEL_BOUND: usize = 16; // Bound the channel to avoid unbounded memory usage
@@ -167,20 +166,18 @@ pub fn decode_header_from_stream<R: Read>(reader: &mut R) -> Result<Header> {
 /// This state is entered after the header has been successfully read from the
 /// stream, allowing the user to inspect the header (e.g., to find the `key_id`)
 /// before supplying the appropriate key to proceed with decryption.
-pub struct PendingDecryptor<R: Read + Send, S: SymmetricAlgorithm> {
+pub struct PendingDecryptor<R: Read + Send> {
     reader: R,
     header: Header,
-    _phantom: PhantomData<S>,
 }
 
-impl<R: Read + Send, S: SymmetricAlgorithm> PendingDecryptor<R, S> {
+impl<R: Read + Send> PendingDecryptor<R> {
     /// Creates a new `PendingDecryptor` by reading the header from the stream.
     pub fn from_reader(mut reader: R) -> Result<Self> {
         let header = decode_header_from_stream(&mut reader)?;
         Ok(Self {
             reader,
             header,
-            _phantom: PhantomData,
         })
     }
 
@@ -191,7 +188,7 @@ impl<R: Read + Send, S: SymmetricAlgorithm> PendingDecryptor<R, S> {
 
     /// Consumes the `PendingDecryptor` and decrypts the rest of the stream,
     /// writing the plaintext to the provided writer.
-    pub fn decrypt_to_writer<W: Write>(self, key: &S::Key, writer: W) -> Result<()>
+    pub fn decrypt_to_writer<S: SymmetricAlgorithm, W: Write>(self, key: &S::Key, writer: W) -> Result<()>
     where
         S::Key: Sync + Clone + Send,
     {
@@ -342,10 +339,10 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending =
-            PendingDecryptor::<_, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data)).unwrap();
+            PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         assert_eq!(pending.header().payload.key_id(), Some("test_key"));
         pending
-            .decrypt_to_writer(&key, &mut decrypted_data)
+            .decrypt_to_writer::<Aes256Gcm, _>(&key, &mut decrypted_data)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -367,9 +364,9 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending =
-            PendingDecryptor::<_, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data)).unwrap();
+            PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         pending
-            .decrypt_to_writer(&key, &mut decrypted_data)
+            .decrypt_to_writer::<Aes256Gcm, _>(&key, &mut decrypted_data)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data.as_slice());
@@ -391,9 +388,9 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending =
-            PendingDecryptor::<_, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data)).unwrap();
+            PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         pending
-            .decrypt_to_writer(&key, &mut decrypted_data)
+            .decrypt_to_writer::<Aes256Gcm, _>(&key, &mut decrypted_data)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -420,8 +417,8 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending =
-            PendingDecryptor::<_, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending.decrypt_to_writer(&key, &mut decrypted_data);
+            PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let result = pending.decrypt_to_writer::<Aes256Gcm, _>(&key, &mut decrypted_data);
 
         assert!(result.is_err());
     }
@@ -443,8 +440,8 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending =
-            PendingDecryptor::<_, Aes256Gcm>::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending.decrypt_to_writer(&key2, &mut decrypted_data);
+            PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let result = pending.decrypt_to_writer::<Aes256Gcm, _>(&key2, &mut decrypted_data);
         assert!(result.is_err());
     }
 }
