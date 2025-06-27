@@ -7,10 +7,12 @@ use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 use futures::ready;
 use pin_project_lite::pin_project;
+use seal_crypto::prelude::SymmetricKeySet;
 use seal_crypto::zeroize::Zeroizing;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::task::JoinHandle;
@@ -24,10 +26,10 @@ enum EncryptorState {
 }
 
 pin_project! {
-    pub struct Encryptor<W: AsyncWrite, A, S> {
+    pub struct Encryptor<W: AsyncWrite, A, S: SymmetricAlgorithm> {
         #[pin]
         writer: W,
-        symmetric_key: Zeroizing<Vec<u8>>,
+        symmetric_key: Arc<S::Key>,
         base_nonce: [u8; 12],
         chunk_size: usize,
         buffer: Vec<u8>,
@@ -42,6 +44,7 @@ where
     A: AsymmetricAlgorithm,
     A::EncapsulatedKey: Into<Vec<u8>> + Send,
     S: SymmetricAlgorithm,
+    <S as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>>,
 {
     pub async fn new(mut writer: W, pk: A::PublicKey, kek_id: String) -> Result<Self> {
         let (header, base_nonce, shared_secret) =
@@ -57,7 +60,7 @@ where
 
         Ok(Self {
             writer,
-            symmetric_key: shared_secret,
+            symmetric_key: Arc::new(shared_secret.into()),
             base_nonce,
             chunk_size: DEFAULT_CHUNK_SIZE as usize,
             buffer: Vec::with_capacity(DEFAULT_CHUNK_SIZE as usize),
@@ -72,7 +75,7 @@ impl<W: AsyncWrite + Unpin, A, S> AsyncWrite for Encryptor<W, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    S::Key: Clone + Send + Sync + From<Zeroizing<Vec<u8>>>,
+    S::Key: Clone + Send + Sync,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -95,7 +98,7 @@ where
                     let chunk_len = std::cmp::min(this.buffer.len(), *this.chunk_size);
                     let chunk = this.buffer.drain(..chunk_len).collect::<Vec<u8>>();
                     let nonce = derive_nonce(this.base_nonce, *this.chunk_counter);
-                    let key: S::Key = this.symmetric_key.clone().into();
+                    let key = Arc::clone(this.symmetric_key);
                     let handle = tokio::task::spawn_blocking(move || {
                         S::encrypt(&key, &nonce, &chunk, None).map_err(Error::from)
                     });
@@ -184,7 +187,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
 
         Ok(Decryptor::new(
             self.reader,
-            shared_secret,
+            shared_secret.into(),
             base_nonce,
             encrypted_chunk_size,
         ))
@@ -199,10 +202,10 @@ enum DecryptorState {
 }
 
 pin_project! {
-    pub struct Decryptor<R: AsyncRead, A, S> {
+    pub struct Decryptor<R: AsyncRead, A, S: SymmetricAlgorithm> {
         #[pin]
         reader: R,
-        symmetric_key: Zeroizing<Vec<u8>>,
+        symmetric_key: Arc<S::Key>,
         base_nonce: [u8; 12],
         encrypted_chunk_size: usize,
         buffer: io::Cursor<Vec<u8>>,
@@ -220,13 +223,13 @@ where
 {
     pub fn new(
         reader: R,
-        symmetric_key: Zeroizing<Vec<u8>>,
+        symmetric_key: S::Key,
         base_nonce: [u8; 12],
         encrypted_chunk_size: usize,
     ) -> Self {
         Self {
             reader,
-            symmetric_key,
+            symmetric_key: Arc::new(symmetric_key),
             base_nonce,
             encrypted_chunk_size,
             buffer: io::Cursor::new(Vec::new()),
@@ -242,7 +245,7 @@ impl<R: AsyncRead + Unpin, A, S> AsyncRead for Decryptor<R, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    S::Key: Clone + Send + Sync + From<Zeroizing<Vec<u8>>>,
+    S::Key: Clone + Send + Sync,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -284,7 +287,7 @@ where
 
                     let nonce = derive_nonce(this.base_nonce, *this.chunk_counter);
 
-                    let key: S::Key = this.symmetric_key.clone().into();
+                    let key = Arc::clone(this.symmetric_key);
                     let final_encrypted_chunk = final_encrypted_chunk.to_vec();
                     let handle = tokio::task::spawn_blocking(move || {
                         S::decrypt(&key, &nonce, &final_encrypted_chunk, None).map_err(Error::from)

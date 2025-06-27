@@ -88,14 +88,14 @@ impl SymmetricDecryptorMode {
             SymmetricDecryptorMode::Ordinary => seal
                 .decrypt()
                 .from_slice(ciphertext)?
-                .with_key::<TestDek>(key),
+                .with_key::<TestDek>(key.clone()),
             SymmetricDecryptorMode::Parallel => seal
                 .decrypt()
                 .from_slice_parallel(ciphertext)?
-                .with_key::<TestDek>(key),
+                .with_key::<TestDek>(key.clone()),
             SymmetricDecryptorMode::Streaming => {
                 let pending = seal.decrypt().from_reader(Cursor::new(ciphertext))?;
-                let mut decryptor = pending.with_key::<TestDek>(key)?;
+                let mut decryptor = pending.with_key::<TestDek>(key.clone())?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data)?;
                 Ok(decrypted_data)
@@ -105,7 +105,7 @@ impl SymmetricDecryptorMode {
                     .decrypt()
                     .from_async_reader(Cursor::new(ciphertext))
                     .await?;
-                let mut decryptor = pending.with_key::<TestDek>(key)?;
+                let mut decryptor = pending.with_key::<TestDek>(key.clone())?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data).await?;
                 Ok(decrypted_data)
@@ -115,7 +115,7 @@ impl SymmetricDecryptorMode {
                 let pending = seal
                     .decrypt()
                     .from_reader_parallel(Cursor::new(ciphertext))?;
-                pending.with_key_to_writer::<TestDek, _>(key, &mut decrypted_data)?;
+                pending.with_key_to_writer::<TestDek, _>(key.clone(), &mut decrypted_data)?;
                 Ok(decrypted_data)
             }
         }

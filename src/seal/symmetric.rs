@@ -62,12 +62,12 @@ where
 {
     /// Encrypts the given plaintext in-memory.
     pub fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
-        crate::symmetric::ordinary::encrypt::<S>(self.key, plaintext, self.key_id)
+        crate::symmetric::ordinary::encrypt::<S>(self.key.clone(), plaintext, self.key_id)
     }
 
     /// Encrypts the given plaintext in-memory using parallel processing.
     pub fn to_vec_parallel(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
-        crate::symmetric::parallel::encrypt::<S>(self.key, plaintext, self.key_id)
+        crate::symmetric::parallel::encrypt::<S>(self.key.clone(), plaintext, self.key_id)
     }
 
     /// Creates a streaming encryptor that writes to the given `Write` implementation.
@@ -91,10 +91,10 @@ where
     pub fn pipe_parallel<R, W>(self, reader: R, writer: W) -> crate::Result<()>
     where
         R: Read + Send,
-        W: Write + Send,
+        W: Write,
     {
         crate::symmetric::parallel_streaming::encrypt::<S, R, W>(
-            self.key,
+            self.key.clone(),
             reader,
             writer,
             self.key_id,
@@ -197,22 +197,22 @@ impl<'a> PendingInMemoryDecryptor<'a> {
             .ok_or(Error::KeyNotFound)?;
         match self.inner.header().payload.symmetric_algorithm() {
             SymmetricAlgorithmEnum::Aes128Gcm => match key {
-                SymmetricKey::Aes128Gcm(k) => self.inner.into_plaintext::<Aes128Gcm>(k),
+                SymmetricKey::Aes128Gcm(k) => self.inner.into_plaintext::<Aes128Gcm>(k.clone()),
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::Aes256Gcm => match key {
-                SymmetricKey::Aes256Gcm(k) => self.inner.into_plaintext::<Aes256Gcm>(k),
+                SymmetricKey::Aes256Gcm(k) => self.inner.into_plaintext::<Aes256Gcm>(k.clone()),
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
                 SymmetricKey::Chacha20Poly1305(k) => {
-                    self.inner.into_plaintext::<ChaCha20Poly1305>(k)
+                    self.inner.into_plaintext::<ChaCha20Poly1305>(k.clone())
                 }
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
                 SymmetricKey::XChaCha20Poly1305(k) => {
-                    self.inner.into_plaintext::<XChaCha20Poly1305>(k)
+                    self.inner.into_plaintext::<XChaCha20Poly1305>(k.clone())
                 }
                 _ => Err(Error::MismatchedKeyType),
             },
@@ -220,11 +220,11 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     }
 
     /// Supplies the key and returns the decrypted plaintext.
-    pub fn with_key<S: SymmetricAlgorithm>(self, key: &S::Key) -> crate::Result<Vec<u8>>
+    pub fn with_key<S: SymmetricAlgorithm>(self, key: S::Key) -> crate::Result<Vec<u8>>
     where
         S::Key: Clone + Send + Sync,
     {
-        self.inner.into_plaintext::<S>(key)
+        self.inner.into_plaintext::<S>(key.clone())
     }
 }
 
@@ -252,22 +252,22 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
             .ok_or(Error::KeyNotFound)?;
         match self.inner.header().payload.symmetric_algorithm() {
             SymmetricAlgorithmEnum::Aes128Gcm => match key {
-                SymmetricKey::Aes128Gcm(k) => self.inner.into_plaintext::<Aes128Gcm>(k),
+                SymmetricKey::Aes128Gcm(k) => self.inner.into_plaintext::<Aes128Gcm>(k.clone()),
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::Aes256Gcm => match key {
-                SymmetricKey::Aes256Gcm(k) => self.inner.into_plaintext::<Aes256Gcm>(k),
+                SymmetricKey::Aes256Gcm(k) => self.inner.into_plaintext::<Aes256Gcm>(k.clone()),
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
                 SymmetricKey::Chacha20Poly1305(k) => {
-                    self.inner.into_plaintext::<ChaCha20Poly1305>(k)
+                    self.inner.into_plaintext::<ChaCha20Poly1305>(k.clone())
                 }
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
                 SymmetricKey::XChaCha20Poly1305(k) => {
-                    self.inner.into_plaintext::<XChaCha20Poly1305>(k)
+                    self.inner.into_plaintext::<XChaCha20Poly1305>(k.clone())
                 }
                 _ => Err(Error::MismatchedKeyType),
             },
@@ -275,11 +275,11 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     }
 
     /// Supplies the key and returns the decrypted plaintext.
-    pub fn with_key<S: SymmetricAlgorithm>(self, key: &S::Key) -> crate::Result<Vec<u8>>
+    pub fn with_key<S: SymmetricAlgorithm>(self, key: S::Key) -> crate::Result<Vec<u8>>
     where
         S::Key: Clone + Send + Sync,
     {
-        self.inner.into_plaintext::<S>(key)
+        self.inner.into_plaintext::<S>(key.clone())
     }
 }
 
@@ -313,28 +313,28 @@ impl<R: Read> PendingStreamingDecryptor<R> {
             SymmetricAlgorithmEnum::Aes128Gcm => match key {
                 SymmetricKey::Aes128Gcm(k) => self
                     .inner
-                    .into_decryptor::<Aes128Gcm>(k)
+                    .into_decryptor::<Aes128Gcm>(k.clone())
                     .map(|d| Box::new(d) as Box<dyn Read>),
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::Aes256Gcm => match key {
                 SymmetricKey::Aes256Gcm(k) => self
                     .inner
-                    .into_decryptor::<Aes256Gcm>(k)
+                    .into_decryptor::<Aes256Gcm>(k.clone())
                     .map(|d| Box::new(d) as Box<dyn Read>),
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
                 SymmetricKey::Chacha20Poly1305(k) => self
                     .inner
-                    .into_decryptor::<ChaCha20Poly1305>(k)
+                    .into_decryptor::<ChaCha20Poly1305>(k.clone())
                     .map(|d| Box::new(d) as Box<dyn Read>),
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
                 SymmetricKey::XChaCha20Poly1305(k) => self
                     .inner
-                    .into_decryptor::<XChaCha20Poly1305>(k)
+                    .into_decryptor::<XChaCha20Poly1305>(k.clone())
                     .map(|d| Box::new(d) as Box<dyn Read>),
                 _ => Err(Error::MismatchedKeyType),
             },
@@ -343,12 +343,12 @@ impl<R: Read> PendingStreamingDecryptor<R> {
     /// Supplies the key and returns a fully initialized `Decryptor`.
     pub fn with_key<S: SymmetricAlgorithm>(
         self,
-        key: &S::Key,
+        key: S::Key,
     ) -> crate::Result<crate::symmetric::streaming::Decryptor<R, S>>
     where
         S::Key: Clone + Send + Sync,
     {
-        self.inner.into_decryptor(key)
+        self.inner.into_decryptor(key.clone())
     }
 }
 
@@ -387,26 +387,26 @@ where
         match self.inner.header().payload.symmetric_algorithm() {
             SymmetricAlgorithmEnum::Aes128Gcm => match key {
                 SymmetricKey::Aes128Gcm(k) => {
-                    self.inner.decrypt_to_writer::<Aes128Gcm, W>(k, writer)
+                    self.inner.decrypt_to_writer::<Aes128Gcm, W>(k.clone(), writer)
                 }
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::Aes256Gcm => match key {
                 SymmetricKey::Aes256Gcm(k) => {
-                    self.inner.decrypt_to_writer::<Aes256Gcm, W>(k, writer)
+                    self.inner.decrypt_to_writer::<Aes256Gcm, W>(k.clone(), writer)
                 }
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
                 SymmetricKey::Chacha20Poly1305(k) => self
                     .inner
-                    .decrypt_to_writer::<ChaCha20Poly1305, W>(k, writer),
+                    .decrypt_to_writer::<ChaCha20Poly1305, W>(k.clone(), writer),
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
                 SymmetricKey::XChaCha20Poly1305(k) => self
                     .inner
-                    .decrypt_to_writer::<XChaCha20Poly1305, W>(k, writer),
+                    .decrypt_to_writer::<XChaCha20Poly1305, W>(k.clone(), writer),
                 _ => Err(Error::MismatchedKeyType),
             },
         }
@@ -414,13 +414,13 @@ where
     /// Supplies the key and decrypts the stream, writing to the provided writer.
     pub fn with_key_to_writer<S: SymmetricAlgorithm, W: Write>(
         self,
-        key: &S::Key,
+        key: S::Key,
         writer: W,
     ) -> crate::Result<()>
     where
         S::Key: Clone + Send + Sync,
     {
-        self.inner.decrypt_to_writer::<S, W>(key, writer)
+        self.inner.decrypt_to_writer::<S, W>(key.clone(), writer)
     }
 }
 
@@ -459,28 +459,28 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
             SymmetricAlgorithmEnum::Aes128Gcm => match key {
                 SymmetricKey::Aes128Gcm(k) => self
                     .inner
-                    .into_decryptor::<Aes128Gcm>(k)
+                    .into_decryptor::<Aes128Gcm>(k.clone())
                     .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::Aes256Gcm => match key {
                 SymmetricKey::Aes256Gcm(k) => self
                     .inner
-                    .into_decryptor::<Aes256Gcm>(k)
+                    .into_decryptor::<Aes256Gcm>(k.clone())
                     .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
                 SymmetricKey::Chacha20Poly1305(k) => self
                     .inner
-                    .into_decryptor::<ChaCha20Poly1305>(k)
+                    .into_decryptor::<ChaCha20Poly1305>(k.clone())
                     .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
                 SymmetricKey::XChaCha20Poly1305(k) => self
                     .inner
-                    .into_decryptor::<XChaCha20Poly1305>(k)
+                    .into_decryptor::<XChaCha20Poly1305>(k.clone())
                     .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
                 _ => Err(Error::MismatchedKeyType),
             },
@@ -490,12 +490,12 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
     /// Supplies the key and returns a fully initialized `Decryptor`.
     pub fn with_key<S: SymmetricAlgorithm>(
         self,
-        key: &S::Key,
+        key: S::Key,
     ) -> crate::Result<crate::symmetric::asynchronous::Decryptor<R, S>>
     where
         S::Key: Clone + Send + Sync,
     {
-        self.inner.into_decryptor(key)
+        self.inner.into_decryptor(key.clone())
     }
 }
 
@@ -528,7 +528,7 @@ mod tests {
             .unwrap();
         let pending = seal.decrypt().from_slice(&encrypted).unwrap();
         assert_eq!(pending.key_id(), Some(TEST_KEY_ID));
-        let decrypted = pending.with_key::<Aes256Gcm>(&key).unwrap();
+        let decrypted = pending.with_key::<Aes256Gcm>(key.clone()).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
     }
 
@@ -545,7 +545,7 @@ mod tests {
 
         let pending = seal.decrypt().from_slice_parallel(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
-        let decrypted = pending.with_key::<Aes256Gcm>(&key)?;
+        let decrypted = pending.with_key::<Aes256Gcm>(key.clone())?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -576,7 +576,7 @@ mod tests {
             .unwrap();
         let key_id = pending.key_id().unwrap();
         let decryption_key = key_store.get(key_id).unwrap();
-        let mut decryptor = pending.with_key::<Aes256Gcm>(decryption_key).unwrap();
+        let mut decryptor = pending.with_key::<Aes256Gcm>(decryption_key.clone()).unwrap();
 
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
@@ -600,7 +600,7 @@ mod tests {
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
 
         let mut decrypted = Vec::new();
-        pending.with_key_to_writer::<Aes256Gcm, _>(&key, &mut decrypted)?;
+        pending.with_key_to_writer::<Aes256Gcm, _>(key.clone(), &mut decrypted)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -696,7 +696,7 @@ mod tests {
                 .unwrap();
             let key_id = pending.key_id().unwrap();
             let decryption_key = key_store.get(key_id).unwrap();
-            let mut decryptor = pending.with_key::<Aes256Gcm>(decryption_key).unwrap();
+            let mut decryptor = pending.with_key::<Aes256Gcm>(decryption_key.clone()).unwrap();
 
             let mut decrypted_data = Vec::new();
             decryptor.read_to_end(&mut decrypted_data).await.unwrap();

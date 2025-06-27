@@ -19,12 +19,13 @@ where
 
     // 2. Serialize the header.
     let header_bytes = header.encode_to_vec()?;
+    let key_material = shared_secret.into();
 
     // 3. Encrypt data chunks sequentially.
     let mut encrypted_chunks = Vec::new();
     for (i, chunk) in plaintext.chunks(DEFAULT_CHUNK_SIZE as usize).enumerate() {
         let nonce = derive_nonce(&base_nonce, i as u64);
-        let encrypted_chunk = S::encrypt(&shared_secret.clone().into(), &nonce, chunk, None)?;
+        let encrypted_chunk = S::encrypt(&key_material, &nonce, chunk, None)?;
         encrypted_chunks.push(encrypted_chunk);
     }
 
@@ -107,6 +108,7 @@ where
 
     // 2. KEM Decapsulate to recover the DEK.
     let shared_secret = A::decapsulate(sk, &encapsulated_key)?;
+    let key_material = shared_secret.into();
 
     let tag_len = S::TAG_SIZE;
     let encrypted_chunk_size = chunk_size as usize + tag_len;
@@ -116,7 +118,7 @@ where
     for (i, encrypted_chunk) in ciphertext_body.chunks(encrypted_chunk_size).enumerate() {
         let nonce = derive_nonce(&base_nonce, i as u64);
         let decrypted_chunk =
-            S::decrypt(&shared_secret.clone().into(), &nonce, encrypted_chunk, None)?;
+            S::decrypt(&key_material, &nonce, encrypted_chunk, None)?;
         decrypted_chunks.push(decrypted_chunk);
     }
 

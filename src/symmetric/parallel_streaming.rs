@@ -9,21 +9,22 @@ use crate::error::{Error, Result};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::thread;
 
 const CHANNEL_BOUND: usize = 16; // Bound the channel to avoid unbounded memory usage
 
 /// Encrypts data from a reader and writes to a writer using a parallel streaming approach.
-pub fn encrypt<S, R, W>(key: &S::Key, mut reader: R, mut writer: W, key_id: String) -> Result<()>
+pub fn encrypt<S, R, W>(key: S::Key, mut reader: R, mut writer: W, key_id: String) -> Result<()>
 where
     S: SymmetricAlgorithm,
-    S::Key: Sync + Clone + Send,
+    S::Key: Sync + Send,
     R: Read + Send,
     W: Write,
 {
     // 1. Setup Header and write it
     let (header, base_nonce) = create_header::<S>(key_id)?;
+    let key_arc = Arc::new(key.into());
 
     let header_bytes = header.encode_to_vec()?;
     writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
@@ -68,14 +69,14 @@ where
 
         // --- Thread 2: Parallel Encryptor (Consumer/Producer) ---
         let enc_chunk_tx_clone = enc_chunk_tx.clone();
-        let key_clone = key.clone();
+        let key_clone = Arc::clone(&key_arc);
         s.spawn(move || {
             raw_chunk_rx
                 .into_iter()
                 .par_bridge()
                 .for_each(|(index, chunk)| {
                     let nonce = derive_nonce(&base_nonce, index);
-                    let encrypted = S::encrypt(&key_clone.clone().into(), &nonce, &chunk, None)
+                    let encrypted = S::encrypt(&key_clone, &nonce, &chunk, None)
                         .map_err(Error::from);
                     if enc_chunk_tx_clone.send((index, encrypted)).is_err() {
                         return;
@@ -144,11 +145,11 @@ impl<R: Read + Send> PendingDecryptor<R> {
     /// writing the plaintext to the provided writer.
     pub fn decrypt_to_writer<S: SymmetricAlgorithm, W: Write>(
         self,
-        key: &S::Key,
+        key: S::Key,
         writer: W,
     ) -> Result<()>
     where
-        S::Key: Sync + Clone + Send,
+        S::Key: Sync + Send,
     {
         decrypt_body_stream::<S, R, W>(key, &self.header, self.reader, writer)
     }
@@ -158,14 +159,14 @@ impl<R: Read + Send> PendingDecryptor<R> {
 ///
 /// This function assumes the header has already been read and consumed from the reader.
 pub fn decrypt_body_stream<S, R, W>(
-    key: &S::Key,
+    key: S::Key,
     header: &Header,
     mut reader: R,
     mut writer: W,
 ) -> Result<()>
 where
     S: SymmetricAlgorithm,
-    S::Key: Sync + Clone + Send,
+    S::Key: Sync + Send,
     R: Read + Send,
     W: Write,
 {
@@ -178,6 +179,7 @@ where
     };
 
     let encrypted_chunk_size = (chunk_size as usize) + S::TAG_SIZE;
+    let key_arc = Arc::new(key.into());
 
     // 2. Setup channels
     let (enc_chunk_tx, enc_chunk_rx) = mpsc::sync_channel::<(u64, Vec<u8>)>(CHANNEL_BOUND);
@@ -219,14 +221,14 @@ where
 
         // --- Thread 2: Parallel Decryptor ---
         let dec_chunk_tx_clone = dec_chunk_tx.clone();
-        let key_clone = key.clone();
+        let key_clone = Arc::clone(&key_arc);
         s.spawn(move || {
             enc_chunk_rx
                 .into_iter()
                 .par_bridge()
                 .for_each(|(index, chunk)| {
                     let nonce = derive_nonce(&base_nonce, index);
-                    let decrypted = S::decrypt(&key_clone.clone().into(), &nonce, &chunk, None)
+                    let decrypted = S::decrypt(&key_clone, &nonce, &chunk, None)
                         .map_err(Error::from);
                     if dec_chunk_tx_clone.send((index, decrypted)).is_err() {
                         return;
@@ -288,7 +290,7 @@ mod tests {
 
         let mut encrypted_data = Vec::new();
         encrypt::<Aes256Gcm, _, _>(
-            &key,
+            key.clone(),
             Cursor::new(&plaintext),
             &mut encrypted_data,
             "test_key".to_string(),
@@ -299,7 +301,7 @@ mod tests {
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         assert_eq!(pending.header().payload.key_id(), Some("test_key"));
         pending
-            .decrypt_to_writer::<Aes256Gcm, _>(&key, &mut decrypted_data)
+            .decrypt_to_writer::<Aes256Gcm, _>(key, &mut decrypted_data)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -312,7 +314,7 @@ mod tests {
 
         let mut encrypted_data = Vec::new();
         encrypt::<Aes256Gcm, _, _>(
-            &key,
+            key.clone(),
             Cursor::new(&plaintext),
             &mut encrypted_data,
             "test_key".to_string(),
@@ -322,7 +324,7 @@ mod tests {
         let mut decrypted_data = Vec::new();
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         pending
-            .decrypt_to_writer::<Aes256Gcm, _>(&key, &mut decrypted_data)
+            .decrypt_to_writer::<Aes256Gcm, _>(key, &mut decrypted_data)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data.as_slice());
@@ -335,7 +337,7 @@ mod tests {
 
         let mut encrypted_data = Vec::new();
         encrypt::<Aes256Gcm, _, _>(
-            &key,
+            key.clone(),
             Cursor::new(&plaintext),
             &mut encrypted_data,
             "test_key".to_string(),
@@ -345,7 +347,7 @@ mod tests {
         let mut decrypted_data = Vec::new();
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         pending
-            .decrypt_to_writer::<Aes256Gcm, _>(&key, &mut decrypted_data)
+            .decrypt_to_writer::<Aes256Gcm, _>(key, &mut decrypted_data)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -358,7 +360,7 @@ mod tests {
 
         let mut encrypted_data = Vec::new();
         encrypt::<Aes256Gcm, _, _>(
-            &key,
+            key.clone(),
             Cursor::new(&plaintext),
             &mut encrypted_data,
             "test_key".to_string(),
@@ -371,7 +373,7 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending.decrypt_to_writer::<Aes256Gcm, _>(&key, &mut decrypted_data);
+        let result = pending.decrypt_to_writer::<Aes256Gcm, _>(key, &mut decrypted_data);
 
         assert!(result.is_err());
     }
@@ -384,7 +386,7 @@ mod tests {
 
         let mut encrypted_data = Vec::new();
         encrypt::<Aes256Gcm, _, _>(
-            &key1,
+            key1,
             Cursor::new(&plaintext),
             &mut encrypted_data,
             "key1".to_string(),
@@ -393,7 +395,7 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending.decrypt_to_writer::<Aes256Gcm, _>(&key2, &mut decrypted_data);
+        let result = pending.decrypt_to_writer::<Aes256Gcm, _>(key2, &mut decrypted_data);
         assert!(result.is_err());
     }
 }

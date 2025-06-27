@@ -127,7 +127,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
                 .decrypt()
                 .from_slice(black_box(&in_memory_ciphertext))
                 .unwrap();
-            pending.with_key::<TestDek>(&key).unwrap();
+            pending.with_key::<TestDek>(key.clone()).unwrap();
         });
     });
 
@@ -143,7 +143,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
                     .decrypt()
                     .from_slice_parallel(black_box(&in_memory_ciphertext))
                     .unwrap();
-                pending.with_key::<TestDek>(&key).unwrap();
+                pending.with_key::<TestDek>(key.clone()).unwrap();
             });
         });
     });
@@ -155,7 +155,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
                 .decrypt()
                 .from_reader(Cursor::new(black_box(&in_memory_ciphertext)))
                 .unwrap();
-            let mut decryptor = pending.with_key::<TestDek>(&key).unwrap();
+            let mut decryptor = pending.with_key::<TestDek>(key.clone()).unwrap();
             let mut decrypted_data = Vec::with_capacity(PLAINTEXT_SIZE);
             std::io::copy(&mut decryptor, &mut decrypted_data).unwrap();
         });
@@ -170,7 +170,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
                 .from_async_reader(Cursor::new(black_box(&in_memory_ciphertext)))
                 .await
                 .unwrap();
-            let mut decryptor = pending.with_key::<TestDek>(&key).unwrap();
+            let mut decryptor = pending.with_key::<TestDek>(key.clone()).unwrap();
             let mut decrypted_data = Vec::with_capacity(PLAINTEXT_SIZE);
             tokio::io::copy(&mut decryptor, &mut decrypted_data)
                 .await
@@ -192,7 +192,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
                     .from_reader_parallel(Cursor::new(black_box(&in_memory_ciphertext)))
                     .unwrap();
                 pending
-                    .with_key_to_writer::<TestDek, _>(&key, &mut decrypted_data)
+                    .with_key_to_writer::<TestDek, _>(key.clone(), &mut decrypted_data)
                     .unwrap();
             });
         });

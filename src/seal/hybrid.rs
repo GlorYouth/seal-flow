@@ -119,7 +119,8 @@ where
     ) -> crate::Result<crate::hybrid::asynchronous::Encryptor<W, A, S>>
     where
         A::PublicKey: Clone,
-        A::EncapsulatedKey: Into<Vec<u8>> + Send,
+        A::EncapsulatedKey: Into<Vec<u8>> + Send, 
+        <S as seal_crypto::prelude::SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>>
     {
         crate::hybrid::asynchronous::Encryptor::new(writer, self.pk.clone(), self.kek_id).await
     }

@@ -10,7 +10,7 @@ use std::io::{self, Read, Write};
 /// Implements `std::io::Write` for synchronous, streaming hybrid encryption.
 pub struct Encryptor<W: Write, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
     writer: W,
-    symmetric_key: Zeroizing<Vec<u8>>, // This is the derived DEK
+    symmetric_key: S::Key, // This is the derived DEK
     base_nonce: [u8; 12],
     chunk_size: usize,
     buffer: Vec<u8>,
@@ -37,6 +37,7 @@ where
         // 1. Create header, nonce, and DEK
         let (header, base_nonce, shared_secret) =
             create_header::<A, S>(&pk.clone().into(), kek_id)?;
+        let key_material = shared_secret.into();
 
         // 2. Write header to the underlying writer.
         let header_bytes = header.encode_to_vec()?;
@@ -45,7 +46,7 @@ where
 
         Ok(Self {
             writer,
-            symmetric_key: shared_secret,
+            symmetric_key: key_material,
             base_nonce,
             chunk_size: DEFAULT_CHUNK_SIZE as usize,
             buffer: Vec::with_capacity(DEFAULT_CHUNK_SIZE as usize),
@@ -63,13 +64,9 @@ where
             let final_chunk = self.buffer.drain(..).collect::<Vec<u8>>();
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-            let encrypted_chunk = S::encrypt(
-                &self.symmetric_key.clone().into(),
-                &nonce,
-                &final_chunk,
-                None,
-            )
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let encrypted_chunk =
+                S::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
         }
         self.writer.flush()?;
@@ -96,13 +93,9 @@ where
             if self.buffer.len() == self.chunk_size {
                 let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-                let encrypted_chunk = S::encrypt(
-                    &self.symmetric_key.clone().into(),
-                    &nonce,
-                    &self.buffer,
-                    None,
-                )
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                let encrypted_chunk =
+                    S::encrypt(&self.symmetric_key, &nonce, &self.buffer, None)
+                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
                 self.writer.write_all(&encrypted_chunk)?;
                 self.chunk_counter += 1;
                 self.buffer.clear();
@@ -114,9 +107,8 @@ where
             let chunk = &input[..self.chunk_size];
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-            let encrypted_chunk =
-                S::encrypt(&self.symmetric_key.clone().into(), &nonce, chunk, None)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let encrypted_chunk = S::encrypt(&self.symmetric_key, &nonce, chunk, None)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer.write_all(&encrypted_chunk)?;
 
             self.chunk_counter += 1;
@@ -174,12 +166,13 @@ impl<R: Read> PendingDecryptor<R> {
         };
 
         let shared_secret = A::decapsulate(&sk.clone().into(), &encapsulated_key)?;
+        let key_material = shared_secret.into();
         let tag_len = S::TAG_SIZE;
         let encrypted_chunk_size = chunk_size as usize + tag_len;
 
         Ok(Decryptor {
             reader: self.reader,
-            symmetric_key: shared_secret,
+            symmetric_key: key_material,
             base_nonce,
             encrypted_chunk_size,
             buffer: io::Cursor::new(Vec::new()),
@@ -196,7 +189,7 @@ where
     S::Key: From<Zeroizing<Vec<u8>>>,
 {
     reader: R,
-    symmetric_key: Zeroizing<Vec<u8>>, // The recovered DEK
+    symmetric_key: S::Key, // The recovered DEK
     base_nonce: [u8; 12],
     encrypted_chunk_size: usize,
     buffer: io::Cursor<Vec<u8>>,
@@ -231,13 +224,9 @@ where
 
         let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-        let plaintext_chunk = S::decrypt(
-            &self.symmetric_key.clone().into(),
-            &nonce,
-            final_encrypted_chunk,
-            None,
-        )
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "decryption failed"))?;
+        let plaintext_chunk =
+            S::decrypt(&self.symmetric_key, &nonce, final_encrypted_chunk, None)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "decryption failed"))?;
 
         self.buffer = io::Cursor::new(plaintext_chunk);
         self.chunk_counter += 1;

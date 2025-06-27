@@ -19,6 +19,7 @@ where
 
     // 2. Serialize the header.
     let header_bytes = header.encode_to_vec()?;
+    let key_material = shared_secret.into();
 
     // 3. Encrypt data chunks in parallel using Rayon.
     let encrypted_chunks: Vec<Vec<u8>> = plaintext
@@ -26,7 +27,7 @@ where
         .enumerate()
         .map(|(i, chunk)| {
             let nonce = derive_nonce(&base_nonce, i as u64);
-            S::encrypt(&shared_secret.clone().into(), &nonce, chunk, None)
+            S::encrypt(&key_material, &nonce, chunk, None)
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
 

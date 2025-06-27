@@ -5,14 +5,15 @@ use crate::error::{Error, Result};
 use rayon::prelude::*;
 
 /// Encrypts in-memory data using parallel processing.
-pub fn encrypt<'a, S>(key: &S::Key, plaintext: &[u8], key_id: String) -> Result<Vec<u8>>
+pub fn encrypt<'a, S>(key: S::Key, plaintext: &[u8], key_id: String) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
-    S::Key: Send + Sync + Clone,
+    S::Key: Send + Sync,
 {
     // 1. Setup Header
     let (header, base_nonce) = create_header::<S>(key_id)?;
     let header_bytes = header.encode_to_vec()?;
+    let key_material = key.into();
 
     // 2. Process chunks in parallel using Rayon
     let encrypted_chunks: Vec<Vec<u8>> = plaintext
@@ -21,7 +22,7 @@ where
         .map(|(i, chunk)| {
             // 3. Derive nonce and encrypt
             let nonce = derive_nonce(&base_nonce, i as u64);
-            S::encrypt(&key.clone().into(), &nonce, chunk, None)
+            S::encrypt(&key_material, &nonce, chunk, None)
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
@@ -39,10 +40,10 @@ where
 /// Decrypts a ciphertext body in parallel using the provided key and header.
 ///
 /// This function assumes `decode_header` has been called and its results are provided.
-pub fn decrypt_body<S>(key: &S::Key, header: &Header, ciphertext_body: &[u8]) -> Result<Vec<u8>>
+pub fn decrypt_body<S>(key: S::Key, header: &Header, ciphertext_body: &[u8]) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
-    S::Key: Send + Sync + Clone,
+    S::Key: Send + Sync,
 {
     // Extract stream info from Header
     let (chunk_size, base_nonce) = match &header.payload {
@@ -55,6 +56,7 @@ where
 
     let tag_len = S::TAG_SIZE;
     let encrypted_chunk_size = chunk_size as usize + tag_len;
+    let key_material = key.into();
 
     // Decrypt in parallel
     let decrypted_chunks: Vec<Vec<u8>> = ciphertext_body
@@ -65,7 +67,7 @@ where
             let nonce = derive_nonce(&base_nonce, i as u64);
 
             // Decrypt the chunk
-            S::decrypt(&key.clone().into(), &nonce, encrypted_chunk, None)
+            S::decrypt(&key_material, &nonce, encrypted_chunk, None)
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
@@ -98,9 +100,9 @@ impl<'a> PendingDecryptor<'a> {
     }
 
     /// Consumes the `PendingDecryptor` and returns the decrypted plaintext.
-    pub fn into_plaintext<S: SymmetricAlgorithm>(self, key: &S::Key) -> Result<Vec<u8>>
+    pub fn into_plaintext<S: SymmetricAlgorithm>(self, key: S::Key) -> Result<Vec<u8>>
     where
-        S::Key: Clone + Send + Sync,
+        S::Key: Send + Sync,
     {
         decrypt_body::<S>(key, &self.header, self.ciphertext_body)
     }
@@ -119,17 +121,17 @@ mod tests {
         let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"This is a test message that is longer than one chunk to ensure the chunking logic works correctly. Let's add some more data to be sure.";
 
-        let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
+        let encrypted = encrypt::<Aes256Gcm>(key.clone(), plaintext, "test_key_id".to_string()).unwrap();
 
         // Test the convenience function
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext::<Aes256Gcm>(&key).unwrap();
+        let decrypted = pending.into_plaintext::<Aes256Gcm>(key.clone()).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Test the separated functions
         let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
         assert_eq!(header.payload.key_id(), Some("test_key_id"));
-        let decrypted_body = decrypt_body::<Aes256Gcm>(&key, &header, body).unwrap();
+        let decrypted_body = decrypt_body::<Aes256Gcm>(key.clone(), &header, body).unwrap();
         assert_eq!(plaintext, decrypted_body.as_slice());
 
         // Tamper with the ciphertext body
@@ -144,7 +146,7 @@ mod tests {
         encrypted_tampered[ciphertext_start_index] ^= 1;
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted_tampered).unwrap();
-        let result = pending.into_plaintext::<Aes256Gcm>(&key);
+        let result = pending.into_plaintext::<Aes256Gcm>(key);
         assert!(result.is_err());
     }
 
@@ -153,10 +155,10 @@ mod tests {
         let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"";
 
-        let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
+        let encrypted = encrypt::<Aes256Gcm>(key.clone(), plaintext, "test_key_id".to_string()).unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext::<Aes256Gcm>(&key).unwrap();
+        let decrypted = pending.into_plaintext::<Aes256Gcm>(key).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -166,10 +168,10 @@ mod tests {
         let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
-        let encrypted = encrypt::<Aes256Gcm>(&key, &plaintext, "test_key_id".to_string()).unwrap();
+        let encrypted = encrypt::<Aes256Gcm>(key.clone(), &plaintext, "test_key_id".to_string()).unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext::<Aes256Gcm>(&key).unwrap();
+        let decrypted = pending.into_plaintext::<Aes256Gcm>(key).unwrap();
 
         assert_eq!(plaintext, decrypted);
     }
@@ -181,10 +183,10 @@ mod tests {
         let plaintext = b"some data";
 
         let encrypted =
-            encrypt::<Aes256Gcm>(&key1, plaintext, "test_key_id_1".to_string()).unwrap();
+            encrypt::<Aes256Gcm>(key1, plaintext, "test_key_id_1".to_string()).unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext::<Aes256Gcm>(&key2);
+        let result = pending.into_plaintext::<Aes256Gcm>(key2);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -196,12 +198,12 @@ mod tests {
     fn test_internal_functions() {
         let key = Aes256Gcm::generate_key().unwrap();
         let plaintext = b"some plaintext for parallel";
-        let encrypted = encrypt::<Aes256Gcm>(&key, plaintext, "test_key_id".to_string()).unwrap();
+        let encrypted = encrypt::<Aes256Gcm>(key.clone(), plaintext, "test_key_id".to_string()).unwrap();
 
         // Test the separated functions
         let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
         assert_eq!(header.payload.key_id(), Some("test_key_id"));
-        let decrypted_body = decrypt_body::<Aes256Gcm>(&key, &header, body).unwrap();
+        let decrypted_body = decrypt_body::<Aes256Gcm>(key, &header, body).unwrap();
         assert_eq!(plaintext, decrypted_body.as_slice());
     }
 }

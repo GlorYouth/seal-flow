@@ -83,7 +83,7 @@ fn test_symmetric_workflow() {
 
     // 3. Decrypt using the retrieved key.
     let decrypted = pending_decryptor
-        .with_key::<TestDek>(decryption_key)
+        .with_key::<TestDek>(decryption_key.clone())
         .unwrap();
 
     // --- Verification ---
@@ -167,7 +167,7 @@ mod async_workflow_tests {
         // 3. Decrypt asynchronously.
         let mut decrypted_data = Vec::new();
         let mut decryptor = pending_decryptor
-            .with_key::<TestDek>(decryption_key)
+            .with_key::<TestDek>(decryption_key.clone())
             .unwrap();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();
 
