@@ -1,6 +1,6 @@
 //! Implements the common logic for ordinary (single-threaded, in-memory) encryption and decryption.
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
+use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::error::Result;
 
 /// Encrypts in-memory data sequentially.
@@ -77,4 +77,4 @@ pub fn decrypt_in_memory<S: SymmetricAlgorithm>(
     }
 
     Ok(plaintext)
-} 
+}

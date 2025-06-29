@@ -1,6 +1,6 @@
 //! Implements the common logic for parallel, in-memory encryption and decryption.
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
+use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::error::{Error, Result};
 use rayon::prelude::*;
 
@@ -126,4 +126,4 @@ where
     plaintext.truncate(actual_size);
 
     Ok(plaintext)
-} 
+}

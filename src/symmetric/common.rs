@@ -1,5 +1,6 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo, DEFAULT_CHUNK_SIZE};
+use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
+use crate::common::DEFAULT_CHUNK_SIZE;
 use crate::error::Result;
 use rand::{rngs::OsRng, TryRngCore};
 

@@ -105,11 +105,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::DEFAULT_CHUNK_SIZE;
     use seal_crypto::prelude::KeyGenerator;
     use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-    use crate::common::header::DEFAULT_CHUNK_SIZE;
 
     #[test]
     fn test_hybrid_parallel_roundtrip() {

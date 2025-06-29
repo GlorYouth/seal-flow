@@ -86,9 +86,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::DEFAULT_CHUNK_SIZE;
     use seal_crypto::prelude::SymmetricKeyGenerator;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-    use crate::common::header::DEFAULT_CHUNK_SIZE;
 
     #[test]
     fn test_symmetric_ordinary_roundtrip() {

@@ -1,9 +1,8 @@
 //! Implements the common logic for synchronous, streaming encryption and decryption.
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
+use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::error::Result;
 use std::io::{self, Read, Write};
-
 // --- Encryptor ---
 
 pub struct EncryptorImpl<W: Write, S: SymmetricAlgorithm> {
@@ -208,4 +207,4 @@ impl<R: Read, S: SymmetricAlgorithm> Read for DecryptorImpl<R, S> {
 
         self.buffer.read(buf)
     }
-} 
+}

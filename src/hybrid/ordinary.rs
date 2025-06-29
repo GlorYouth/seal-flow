@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn test_exact_chunk_size() {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let plaintext = vec![42u8; crate::common::header::DEFAULT_CHUNK_SIZE as usize];
+        let plaintext = vec![42u8; crate::common::DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted =
             encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string(), None)

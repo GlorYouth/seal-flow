@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_exact_chunk_size() {
-        let plaintext = vec![42u8; crate::common::header::DEFAULT_CHUNK_SIZE as usize];
+        let plaintext = vec![42u8; crate::common::DEFAULT_CHUNK_SIZE as usize];
         test_streaming_roundtrip(&plaintext, None);
     }
 

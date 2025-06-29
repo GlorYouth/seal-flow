@@ -13,7 +13,6 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-
 // --- Encryptor ---
 
 pin_project! {
@@ -178,13 +177,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::DEFAULT_CHUNK_SIZE;
     use seal_crypto::prelude::KeyGenerator;
     use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::io::Cursor;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use crate::common::header::DEFAULT_CHUNK_SIZE;
 
     async fn test_hybrid_async_streaming_roundtrip(plaintext: &[u8], aad: Option<&[u8]>) {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();

@@ -1,6 +1,6 @@
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::DEFAULT_CHUNK_SIZE;
 use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
+use crate::common::DEFAULT_CHUNK_SIZE;
 use crate::error::Result;
 use rand::{rngs::OsRng, TryRngCore};
 use seal_crypto::zeroize::Zeroizing;

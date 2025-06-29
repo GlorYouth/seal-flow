@@ -1,7 +1,7 @@
 //! Implements the common logic for parallel streaming encryption and decryption.
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::buffer::BufferPool;
-use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
+use crate::common::{derive_nonce, OrderedChunk, CHANNEL_BOUND, DEFAULT_CHUNK_SIZE};
 use crate::error::{Error, Result};
 use bytes::BytesMut;
 use rayon::prelude::*;
@@ -9,35 +9,6 @@ use std::collections::BinaryHeap;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use std::thread;
-
-const CHANNEL_BOUND: usize = 16; // Bound the channel to avoid unbounded memory usage
-
-/// A wrapper for chunks to allow ordering in a min-heap.
-pub(crate) struct OrderedChunk {
-    pub(crate) index: u64,
-    pub(crate) data: Result<BytesMut>,
-}
-
-impl PartialEq for OrderedChunk {
-    fn eq(&self, other: &Self) -> bool {
-        self.index == other.index
-    }
-}
-
-impl Eq for OrderedChunk {}
-
-impl PartialOrd for OrderedChunk {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for OrderedChunk {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Create a min-heap on the index by reversing the comparison
-        other.index.cmp(&self.index)
-    }
-}
 
 /// The core pipeline for parallel streaming encryption.
 pub fn encrypt_pipeline<S, R, W>(
@@ -368,4 +339,4 @@ where
 
         final_result
     })
-} 
+}
