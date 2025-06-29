@@ -277,7 +277,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_wrong_private_key_fails_async() {
-        let (pk, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (pk, _) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
@@ -295,10 +296,23 @@ mod tests {
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
             .await
             .unwrap();
-        let result = pending
+
+        let decryptor_result = pending
             .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk2, None)
             .await;
-        assert!(result.is_err());
+
+        if let Ok(mut decryptor) = decryptor_result {
+            let read_result = decryptor.read_to_end(&mut Vec::new()).await;
+            assert!(
+                read_result.is_err(),
+                "Decryption should fail with wrong private key"
+            );
+        } else {
+            assert!(
+                decryptor_result.is_err(),
+                "Decapsulation should fail with wrong private key"
+            );
+        }
     }
 
     #[tokio::test]
@@ -325,18 +339,22 @@ mod tests {
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
             .await
             .unwrap();
-        let result = pending
+        let mut decryptor = pending
             .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk.clone(), Some(aad2))
-            .await;
+            .await
+            .unwrap();
+        let result = decryptor.read_to_end(&mut Vec::new()).await;
         assert!(result.is_err());
 
         // Decrypt with no aad
         let pending2 = PendingDecryptor::from_reader(Cursor::new(encrypted_data))
             .await
             .unwrap();
-        let result2 = pending2
+        let mut decryptor2 = pending2
             .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk, None)
-            .await;
+            .await
+            .unwrap();
+        let result2 = decryptor2.read_to_end(&mut Vec::new()).await;
         assert!(result2.is_err());
     }
 }
