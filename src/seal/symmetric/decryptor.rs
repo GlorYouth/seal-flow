@@ -1,13 +1,44 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::algorithms::SymmetricAlgorithm as SymmetricAlgorithmEnum;
 use crate::common::header::Header;
-use crate::keys::SymmetricKey;
 use crate::prelude::SymmetricKeyProvider;
 use crate::Error;
-use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};
-use seal_crypto::schemes::symmetric::chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305};
 use std::io::{Read, Write};
 use tokio::io::AsyncRead;
+
+macro_rules! dispatch_symmetric_algorithm {
+    // Internal rule for processing the algorithm list.
+    (@internal $algorithm:expr, $key:expr, $callback:ident, $extra_args:tt,
+     $(($algo_enum:path, $algo_type:ty, $key_enum:path)),*
+    ) => {
+        {
+            use crate::common::algorithms::SymmetricAlgorithm as SymmetricAlgorithmEnum;
+            use crate::keys::SymmetricKey;
+            use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};
+            use seal_crypto::schemes::symmetric::chacha20_poly1305::{
+                ChaCha20Poly1305, XChaCha20Poly1305,
+            };
+
+            match $algorithm {
+                $(
+                    $algo_enum => match $key {
+                        $key_enum(k) => $callback!(k, $algo_type, $extra_args),
+                        _ => Err(Error::MismatchedKeyType),
+                    },
+                )*
+            }
+        }
+    };
+
+    // Public entry point for the macro.
+    ($algorithm:expr, $key:expr, $callback:ident, $($extra_args:tt)*) => {
+        dispatch_symmetric_algorithm!(@internal $algorithm, $key, $callback, ($($extra_args)*),
+            (SymmetricAlgorithmEnum::Aes128Gcm, Aes128Gcm, SymmetricKey::Aes128Gcm),
+            (SymmetricAlgorithmEnum::Aes256Gcm, Aes256Gcm, SymmetricKey::Aes256Gcm),
+            (SymmetricAlgorithmEnum::ChaCha20Poly1305, ChaCha20Poly1305, SymmetricKey::Chacha20Poly1305),
+            (SymmetricAlgorithmEnum::XChaCha20Poly1305, XChaCha20Poly1305, SymmetricKey::XChaCha20Poly1305)
+        )
+    };
+}
 
 /// A builder for symmetric decryption operations.
 #[derive(Default)]
@@ -112,32 +143,16 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         let key = provider
             .get_symmetric_key(key_id)
             .ok_or(Error::KeyNotFound)?;
-        match self.inner.header().payload.symmetric_algorithm() {
-            SymmetricAlgorithmEnum::Aes128Gcm => match key {
-                SymmetricKey::Aes128Gcm(k) => self
-                    .inner
-                    .into_plaintext::<Aes128Gcm>(k.clone(), self.aad.as_deref()),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::Aes256Gcm => match key {
-                SymmetricKey::Aes256Gcm(k) => self
-                    .inner
-                    .into_plaintext::<Aes256Gcm>(k.clone(), self.aad.as_deref()),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
-                SymmetricKey::Chacha20Poly1305(k) => self
-                    .inner
-                    .into_plaintext::<ChaCha20Poly1305>(k.clone(), self.aad.as_deref()),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
-                SymmetricKey::XChaCha20Poly1305(k) => self
-                    .inner
-                    .into_plaintext::<XChaCha20Poly1305>(k.clone(), self.aad.as_deref()),
-                _ => Err(Error::MismatchedKeyType),
-            },
+        let algorithm = self.inner.header().payload.symmetric_algorithm();
+
+        macro_rules! do_decrypt {
+            ($k:ident, $S:ty, ()) => {
+                self.inner
+                    .into_plaintext::<$S>($k.clone(), self.aad.as_deref())
+            };
         }
+
+        dispatch_symmetric_algorithm!(algorithm, key, do_decrypt,)
     }
 
     /// Supplies the key and returns the decrypted plaintext.
@@ -180,32 +195,16 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         let key = provider
             .get_symmetric_key(key_id)
             .ok_or(Error::KeyNotFound)?;
-        match self.inner.header().payload.symmetric_algorithm() {
-            SymmetricAlgorithmEnum::Aes128Gcm => match key {
-                SymmetricKey::Aes128Gcm(k) => self
-                    .inner
-                    .into_plaintext::<Aes128Gcm>(k.clone(), self.aad.as_deref()),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::Aes256Gcm => match key {
-                SymmetricKey::Aes256Gcm(k) => self
-                    .inner
-                    .into_plaintext::<Aes256Gcm>(k.clone(), self.aad.as_deref()),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
-                SymmetricKey::Chacha20Poly1305(k) => self
-                    .inner
-                    .into_plaintext::<ChaCha20Poly1305>(k.clone(), self.aad.as_deref()),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
-                SymmetricKey::XChaCha20Poly1305(k) => self
-                    .inner
-                    .into_plaintext::<XChaCha20Poly1305>(k.clone(), self.aad.as_deref()),
-                _ => Err(Error::MismatchedKeyType),
-            },
+        let algorithm = self.inner.header().payload.symmetric_algorithm();
+
+        macro_rules! do_decrypt {
+            ($k:ident, $S:ty, ()) => {
+                self.inner
+                    .into_plaintext::<$S>($k.clone(), self.aad.as_deref())
+            };
         }
+
+        dispatch_symmetric_algorithm!(algorithm, key, do_decrypt,)
     }
 
     /// Supplies the key and returns the decrypted plaintext.
@@ -252,36 +251,17 @@ impl<R: Read> PendingStreamingDecryptor<R> {
         let key = provider
             .get_symmetric_key(key_id)
             .ok_or(Error::KeyNotFound)?;
-        match self.inner.header().payload.symmetric_algorithm() {
-            SymmetricAlgorithmEnum::Aes128Gcm => match key {
-                SymmetricKey::Aes128Gcm(k) => self
-                    .inner
-                    .into_decryptor::<Aes128Gcm>(k.clone(), self.aad.as_deref())
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::Aes256Gcm => match key {
-                SymmetricKey::Aes256Gcm(k) => self
-                    .inner
-                    .into_decryptor::<Aes256Gcm>(k.clone(), self.aad.as_deref())
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
-                SymmetricKey::Chacha20Poly1305(k) => self
-                    .inner
-                    .into_decryptor::<ChaCha20Poly1305>(k.clone(), self.aad.as_deref())
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
-                SymmetricKey::XChaCha20Poly1305(k) => self
-                    .inner
-                    .into_decryptor::<XChaCha20Poly1305>(k.clone(), self.aad.as_deref())
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                _ => Err(Error::MismatchedKeyType),
-            },
+        let algorithm = self.inner.header().payload.symmetric_algorithm();
+
+        macro_rules! do_decrypt {
+            ($k:ident, $S:ty, ()) => {
+                self.inner
+                    .into_decryptor::<$S>($k.clone(), self.aad.as_deref())
+                    .map(|d| Box::new(d) as Box<dyn Read>)
+            };
         }
+
+        dispatch_symmetric_algorithm!(algorithm, key, do_decrypt,)
     }
     /// Supplies the key and returns a fully initialized `Decryptor`.
     pub fn with_key<S: SymmetricAlgorithm>(
@@ -335,44 +315,19 @@ where
         let key = provider
             .get_symmetric_key(key_id)
             .ok_or(Error::KeyNotFound)?;
-        match self.inner.header().payload.symmetric_algorithm() {
-            SymmetricAlgorithmEnum::Aes128Gcm => match key {
-                SymmetricKey::Aes128Gcm(k) => self.inner.decrypt_to_writer::<Aes128Gcm, W>(
-                    k.clone(),
-                    writer,
+        let algorithm = self.inner.header().payload.symmetric_algorithm();
+
+        macro_rules! do_decrypt {
+            ($k:ident, $S:ty, ($writer:ident)) => {
+                self.inner.decrypt_to_writer::<$S, W>(
+                    $k.clone(),
+                    $writer,
                     self.aad.as_deref(),
-                ),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::Aes256Gcm => match key {
-                SymmetricKey::Aes256Gcm(k) => self.inner.decrypt_to_writer::<Aes256Gcm, W>(
-                    k.clone(),
-                    writer,
-                    self.aad.as_deref(),
-                ),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
-                SymmetricKey::Chacha20Poly1305(k) => {
-                    self.inner.decrypt_to_writer::<ChaCha20Poly1305, W>(
-                        k.clone(),
-                        writer,
-                        self.aad.as_deref(),
-                    )
-                }
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
-                SymmetricKey::XChaCha20Poly1305(k) => {
-                    self.inner.decrypt_to_writer::<XChaCha20Poly1305, W>(
-                        k.clone(),
-                        writer,
-                        self.aad.as_deref(),
-                    )
-                }
-                _ => Err(Error::MismatchedKeyType),
-            },
+                )
+            };
         }
+
+        dispatch_symmetric_algorithm!(algorithm, key, do_decrypt, writer)
     }
     /// Supplies the key and decrypts the stream, writing to the provided writer.
     pub fn with_key_to_writer<S: SymmetricAlgorithm, W: Write>(
@@ -427,36 +382,17 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         let key = provider
             .get_symmetric_key(key_id)
             .ok_or(Error::KeyNotFound)?;
-        match self.inner.header().payload.symmetric_algorithm() {
-            SymmetricAlgorithmEnum::Aes128Gcm => match key {
-                SymmetricKey::Aes128Gcm(k) => self
-                    .inner
-                    .into_decryptor::<Aes128Gcm>(k.clone(), self.aad.as_deref())
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::Aes256Gcm => match key {
-                SymmetricKey::Aes256Gcm(k) => self
-                    .inner
-                    .into_decryptor::<Aes256Gcm>(k.clone(), self.aad.as_deref())
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
-                SymmetricKey::Chacha20Poly1305(k) => self
-                    .inner
-                    .into_decryptor::<ChaCha20Poly1305>(k.clone(), self.aad.as_deref())
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
-                SymmetricKey::XChaCha20Poly1305(k) => self
-                    .inner
-                    .into_decryptor::<XChaCha20Poly1305>(k.clone(), self.aad.as_deref())
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
-                _ => Err(Error::MismatchedKeyType),
-            },
+        let algorithm = self.inner.header().payload.symmetric_algorithm();
+
+        macro_rules! do_decrypt {
+            ($k:ident, $S:ty, ()) => {
+                self.inner
+                    .into_decryptor::<$S>($k.clone(), self.aad.as_deref())
+                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>)
+            };
         }
+
+        dispatch_symmetric_algorithm!(algorithm, key, do_decrypt,)
     }
 
     /// Supplies the key and returns a fully initialized `Decryptor`.

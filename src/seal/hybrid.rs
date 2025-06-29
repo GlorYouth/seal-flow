@@ -1,6 +1,5 @@
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::error::Error;
-use crate::keys::SignaturePublicKey;
+
 use decryptor::HybridDecryptorBuilder;
 use encryptor::HybridEncryptor;
 use std::marker::PhantomData;
@@ -63,6 +62,8 @@ mod tests {
     };
     use std::collections::HashMap;
     use std::io::{Cursor, Read, Write};
+    use crate::Error;
+
     #[cfg(feature = "async")]
     const TEST_KEK_ID: &str = "test-kek";
 

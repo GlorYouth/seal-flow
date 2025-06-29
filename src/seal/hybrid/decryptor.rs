@@ -8,6 +8,63 @@ use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 use tokio::io::AsyncRead;
 
+/// Dispatches a call to a handler macro based on the asymmetric algorithm.
+///
+/// This macro abstracts the repetitive `match` block for handling different
+/// asymmetric algorithms and their corresponding private key types.
+///
+/// # Arguments
+///
+/// * `$algorithm`: An expression that evaluates to `common::algorithms::AsymmetricAlgorithm`.
+/// * `$key`: An expression that evaluates to `keys::AsymmetricPrivateKey`.
+/// * `$callback`: The identifier of a macro to call upon a successful match.
+/// * `$($extra_args:tt)*`: Optional extra arguments to pass to the callback macro.
+///
+/// # Callback Macro Signature
+///
+/// The callback macro will receive:
+/// 1. The unwrapped private key variable (`k`).
+/// 2. The corresponding algorithm type (e.g., `Rsa2048`).
+/// 3. Any extra arguments passed to this macro.
+macro_rules! dispatch_asymmetric_algorithm {
+    // Internal rule for processing the algorithm list.
+    (@internal $algorithm:expr, $key:expr, $callback:ident, $extra_args:tt,
+     $(($algo_enum:path, $algo_type:ty, $key_enum:path)),*
+    ) => {
+        {
+            // Note: The `use` statements are now inside the final expansion,
+            // so they are only included when the macro is used.
+            use crate::common::algorithms::AsymmetricAlgorithm as AsymmetricAlgorithmEnum;
+            use crate::keys::AsymmetricPrivateKey;
+            use seal_crypto::schemes::asymmetric::{
+                post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
+                traditional::rsa::{Rsa2048, Rsa4096},
+            };
+
+            match $algorithm {
+                $(
+                    $algo_enum => match $key {
+                        $key_enum(k) => $callback!(k, $algo_type, $extra_args),
+                        _ => Err(Error::MismatchedKeyType),
+                    },
+                )*
+            }
+        }
+    };
+
+    // Public entry point for the macro.
+    // It "transcribes" the list of algorithms and "pushes down" to the internal rule.
+    ($algorithm:expr, $key:expr, $callback:ident, $($extra_args:tt)*) => {
+        dispatch_asymmetric_algorithm!(@internal $algorithm, $key, $callback, ($($extra_args)*),
+            (AsymmetricAlgorithmEnum::Rsa2048, Rsa2048, AsymmetricPrivateKey::Rsa2048),
+            (AsymmetricAlgorithmEnum::Rsa4096, Rsa4096, AsymmetricPrivateKey::Rsa4096),
+            (AsymmetricAlgorithmEnum::Kyber512, Kyber512, AsymmetricPrivateKey::Kyber512),
+            (AsymmetricAlgorithmEnum::Kyber768, Kyber768, AsymmetricPrivateKey::Kyber768),
+            (AsymmetricAlgorithmEnum::Kyber1024, Kyber1024, AsymmetricPrivateKey::Kyber1024)
+        )
+    };
+}
+
 /// Verifies the header signature if a verification key is provided.
 fn verify_header(
     header: &Header,
@@ -204,35 +261,13 @@ impl<'a> PendingInMemoryDecryptor<'a> {
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
-        use crate::common::algorithms::AsymmetricAlgorithm as AsymmetricAlgorithmEnum;
-        use crate::keys::AsymmetricPrivateKey;
-        use seal_crypto::schemes::asymmetric::{
-            post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
-            traditional::rsa::{Rsa2048, Rsa4096},
-        };
-
-        match algorithm {
-            AsymmetricAlgorithmEnum::Rsa2048 => match key {
-                AsymmetricPrivateKey::Rsa2048(k) => self.with_private_key::<Rsa2048, S>(&k),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Rsa4096 => match key {
-                AsymmetricPrivateKey::Rsa4096(k) => self.with_private_key::<Rsa4096, S>(&k),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber512 => match key {
-                AsymmetricPrivateKey::Kyber512(k) => self.with_private_key::<Kyber512, S>(&k),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber768 => match key {
-                AsymmetricPrivateKey::Kyber768(k) => self.with_private_key::<Kyber768, S>(&k),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber1024 => match key {
-                AsymmetricPrivateKey::Kyber1024(k) => self.with_private_key::<Kyber1024, S>(&k),
-                _ => Err(Error::MismatchedKeyType),
-            },
+        macro_rules! do_decrypt {
+            ($k:ident, $A:ty, ()) => {
+                self.with_private_key::<$A, S>(&$k)
+            };
         }
+
+        dispatch_asymmetric_algorithm!(algorithm, key, do_decrypt,)
     }
 
     /// Supplies the private key and returns the decrypted plaintext.
@@ -318,35 +353,13 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
-        use crate::common::algorithms::AsymmetricAlgorithm as AsymmetricAlgorithmEnum;
-        use crate::keys::AsymmetricPrivateKey;
-        use seal_crypto::schemes::asymmetric::{
-            post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
-            traditional::rsa::{Rsa2048, Rsa4096},
-        };
-
-        match algorithm {
-            AsymmetricAlgorithmEnum::Rsa2048 => match key {
-                AsymmetricPrivateKey::Rsa2048(k) => self.with_private_key::<Rsa2048, S>(&k),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Rsa4096 => match key {
-                AsymmetricPrivateKey::Rsa4096(k) => self.with_private_key::<Rsa4096, S>(&k),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber512 => match key {
-                AsymmetricPrivateKey::Kyber512(k) => self.with_private_key::<Kyber512, S>(&k),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber768 => match key {
-                AsymmetricPrivateKey::Kyber768(k) => self.with_private_key::<Kyber768, S>(&k),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber1024 => match key {
-                AsymmetricPrivateKey::Kyber1024(k) => self.with_private_key::<Kyber1024, S>(&k),
-                _ => Err(Error::MismatchedKeyType),
-            },
+        macro_rules! do_decrypt {
+            ($k:ident, $A:ty, ()) => {
+                self.with_private_key::<$A, S>(&$k)
+            };
         }
+
+        dispatch_asymmetric_algorithm!(algorithm, key, do_decrypt,)
     }
 
     /// Supplies the private key and returns the decrypted plaintext.
@@ -434,45 +447,14 @@ impl<R: Read + 'static> PendingStreamingDecryptor<R> {
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
-        use crate::common::algorithms::AsymmetricAlgorithm as AsymmetricAlgorithmEnum;
-        use crate::keys::AsymmetricPrivateKey;
-        use seal_crypto::schemes::asymmetric::{
-            post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
-            traditional::rsa::{Rsa2048, Rsa4096},
-        };
-
-        match algorithm {
-            AsymmetricAlgorithmEnum::Rsa2048 => match key {
-                AsymmetricPrivateKey::Rsa2048(k) => self
-                    .with_private_key::<Rsa2048, S>(&k)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Rsa4096 => match key {
-                AsymmetricPrivateKey::Rsa4096(k) => self
-                    .with_private_key::<Rsa4096, S>(&k)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber512 => match key {
-                AsymmetricPrivateKey::Kyber512(k) => self
-                    .with_private_key::<Kyber512, S>(&k)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber768 => match key {
-                AsymmetricPrivateKey::Kyber768(k) => self
-                    .with_private_key::<Kyber768, S>(&k)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber1024 => match key {
-                AsymmetricPrivateKey::Kyber1024(k) => self
-                    .with_private_key::<Kyber1024, S>(&k)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                _ => Err(Error::MismatchedKeyType),
-            },
+        macro_rules! do_decrypt {
+            ($k:ident, $A:ty, ()) => {
+                self.with_private_key::<$A, S>(&$k)
+                    .map(|d| Box::new(d) as Box<dyn Read>)
+            };
         }
+
+        dispatch_asymmetric_algorithm!(algorithm, key, do_decrypt,)
     }
 
     /// Supplies the private key and returns a fully initialized `Decryptor`.
@@ -573,45 +555,13 @@ where
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
-        use crate::common::algorithms::AsymmetricAlgorithm as AsymmetricAlgorithmEnum;
-        use crate::keys::AsymmetricPrivateKey;
-        use seal_crypto::schemes::asymmetric::{
-            post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
-            traditional::rsa::{Rsa2048, Rsa4096},
-        };
-
-        match algorithm {
-            AsymmetricAlgorithmEnum::Rsa2048 => match key {
-                AsymmetricPrivateKey::Rsa2048(k) => {
-                    self.with_private_key_to_writer::<Rsa2048, S, W>(&k, writer)
-                }
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Rsa4096 => match key {
-                AsymmetricPrivateKey::Rsa4096(k) => {
-                    self.with_private_key_to_writer::<Rsa4096, S, W>(&k, writer)
-                }
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber512 => match key {
-                AsymmetricPrivateKey::Kyber512(k) => {
-                    self.with_private_key_to_writer::<Kyber512, S, W>(&k, writer)
-                }
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber768 => match key {
-                AsymmetricPrivateKey::Kyber768(k) => {
-                    self.with_private_key_to_writer::<Kyber768, S, W>(&k, writer)
-                }
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber1024 => match key {
-                AsymmetricPrivateKey::Kyber1024(k) => {
-                    self.with_private_key_to_writer::<Kyber1024, S, W>(&k, writer)
-                }
-                _ => Err(Error::MismatchedKeyType),
-            },
+        macro_rules! do_decrypt {
+            ($k:ident, $A:ty, ($writer:ident)) => {
+                self.with_private_key_to_writer::<$A, S, W>(&$k, $writer)
+            };
         }
+
+        dispatch_asymmetric_algorithm!(algorithm, key, do_decrypt, writer)
     }
 
     /// Supplies the private key and decrypts the stream, writing to the provided writer.
@@ -710,50 +660,15 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
-        use crate::common::algorithms::AsymmetricAlgorithm as AsymmetricAlgorithmEnum;
-        use crate::keys::AsymmetricPrivateKey;
-        use seal_crypto::schemes::asymmetric::{
-            post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
-            traditional::rsa::{Rsa2048, Rsa4096},
-        };
-
-        match algorithm {
-            AsymmetricAlgorithmEnum::Rsa2048 => match key {
-                AsymmetricPrivateKey::Rsa2048(k) => self
-                    .with_private_key::<Rsa2048, S>(k.clone())
+        macro_rules! do_decrypt {
+            ($k:ident, $A:ty, ()) => {
+                self.with_private_key::<$A, S>($k.clone())
                     .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Rsa4096 => match key {
-                AsymmetricPrivateKey::Rsa4096(k) => self
-                    .with_private_key::<Rsa4096, S>(k.clone())
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber512 => match key {
-                AsymmetricPrivateKey::Kyber512(k) => self
-                    .with_private_key::<Kyber512, S>(k.clone())
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber768 => match key {
-                AsymmetricPrivateKey::Kyber768(k) => self
-                    .with_private_key::<Kyber768, S>(k.clone())
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            AsymmetricAlgorithmEnum::Kyber1024 => match key {
-                AsymmetricPrivateKey::Kyber1024(k) => self
-                    .with_private_key::<Kyber1024, S>(k.clone())
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                _ => Err(Error::MismatchedKeyType),
-            },
+                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>)
+            };
         }
+
+        dispatch_asymmetric_algorithm!(algorithm, key, do_decrypt,)
     }
 
     /// Supplies the private key and returns a fully initialized `Decryptor`.
