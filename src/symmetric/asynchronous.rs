@@ -76,6 +76,7 @@ pin_project! {
         // Buffer pools
         out_pool: Arc<BufferPool>,
 
+        aad: Option<Arc<Vec<u8>>>,
         _phantom: std::marker::PhantomData<S>,
     }
 }
@@ -85,7 +86,12 @@ where
     S: SymmetricAlgorithm + 'static,
     S::Key: Send + Sync + 'static,
 {
-    pub async fn new(mut writer: W, key: S::Key, key_id: String) -> Result<Self> {
+    pub async fn new(
+        mut writer: W,
+        key: S::Key,
+        key_id: String,
+        aad: Option<&[u8]>,
+    ) -> Result<Self> {
         let (header, base_nonce) = create_header::<S>(key_id)?;
 
         let header_bytes = header.encode_to_vec()?;
@@ -111,6 +117,7 @@ where
             pending_chunks: BinaryHeap::new(),
             writing_state: WritingState::Idle,
             out_pool,
+            aad: aad.map(|d| Arc::new(d.to_vec())),
             _phantom: std::marker::PhantomData,
         })
     }
@@ -137,17 +144,24 @@ where
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
             let index = self.chunk_counter;
             let out_pool = Arc::clone(&self.out_pool);
+            let aad_clone = self.aad.clone();
 
             let handle = tokio::task::spawn_blocking(move || {
                 let mut out_buffer = out_pool.acquire();
                 out_buffer.resize(out_buffer.capacity(), 0);
 
-                let result = S::encrypt_to_buffer(&key, &nonce, &in_buffer, &mut out_buffer, None)
-                    .map(|bytes_written| {
-                        out_buffer.truncate(bytes_written);
-                        out_buffer
-                    })
-                    .map_err(Error::from);
+                let result = S::encrypt_to_buffer(
+                    &key,
+                    &nonce,
+                    &in_buffer,
+                    &mut out_buffer,
+                    aad_clone.as_deref().map(|v| v.as_slice()),
+                )
+                .map(|bytes_written| {
+                    out_buffer.truncate(bytes_written);
+                    out_buffer
+                })
+                .map_err(Error::from);
                 result.map(|buf| (index, buf))
             });
 
@@ -345,7 +359,11 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
 
     /// Consumes the `PendingDecryptor` and returns a full `Decryptor` instance,
     /// ready to decrypt the stream.
-    pub fn into_decryptor<S: SymmetricAlgorithm>(self, key: S::Key) -> Result<Decryptor<R, S>>
+    pub fn into_decryptor<S: SymmetricAlgorithm>(
+        self,
+        key: S::Key,
+        aad: Option<&[u8]>,
+    ) -> Result<Decryptor<R, S>>
     where
         S: SymmetricAlgorithm + 'static,
         S::Key: Send + Sync + 'static,
@@ -367,6 +385,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
             base_nonce,
             encrypted_chunk_size,
             chunk_size as usize,
+            aad,
         ))
     }
 }
@@ -394,6 +413,7 @@ pin_project! {
 
         out_pool: Arc<BufferPool>,
 
+        aad: Option<Arc<Vec<u8>>>,
         _phantom: std::marker::PhantomData<S>,
     }
 }
@@ -409,6 +429,7 @@ where
         base_nonce: [u8; 12],
         encrypted_chunk_size: usize,
         decrypted_chunk_size: usize,
+        aad: Option<&[u8]>,
     ) -> Self {
         let out_pool = Arc::new(BufferPool::new(decrypted_chunk_size));
         Self {
@@ -425,6 +446,7 @@ where
             decrypt_tasks: FuturesUnordered::new(),
             pending_chunks: std::collections::BTreeMap::new(),
             out_pool,
+            aad: aad.map(|d| Arc::new(d.to_vec())),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -470,18 +492,24 @@ where
                 let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
                 let index = self.chunk_counter;
                 let out_pool = Arc::clone(&self.out_pool);
+                let aad_clone = self.aad.clone();
 
                 let handle = tokio::task::spawn_blocking(move || {
                     let mut out_buffer = out_pool.acquire();
                     out_buffer.resize(out_buffer.capacity(), 0);
 
-                    let result =
-                        S::decrypt_to_buffer(&key, &nonce, &in_buffer, &mut out_buffer, None)
-                            .map(|bytes_written| {
-                                out_buffer.truncate(bytes_written);
-                                out_buffer
-                            })
-                            .map_err(Error::from);
+                    let result = S::decrypt_to_buffer(
+                        &key,
+                        &nonce,
+                        &in_buffer,
+                        &mut out_buffer,
+                        aad_clone.as_deref().map(|v| v.as_slice()),
+                    )
+                    .map(|bytes_written| {
+                        out_buffer.truncate(bytes_written);
+                        out_buffer
+                    })
+                    .map_err(Error::from);
                     (index, result)
                 });
                 self.decrypt_tasks.push(handle);
@@ -641,16 +669,20 @@ mod tests {
     use std::io::Cursor;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    async fn test_async_streaming_roundtrip(plaintext: &[u8]) {
+    async fn test_async_streaming_roundtrip(plaintext: &[u8], aad: Option<&[u8]>) {
         let key = Aes256Gcm::generate_key().unwrap();
         let key_id = "test_key_id".to_string();
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::<_, Aes256Gcm>::new(&mut encrypted_data, key.clone(), key_id.clone())
-                .await
-                .unwrap();
+        let mut encryptor = Encryptor::<_, Aes256Gcm>::new(
+            &mut encrypted_data,
+            key.clone(),
+            key_id.clone(),
+            aad,
+        )
+        .await
+        .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
         encryptor.shutdown().await.unwrap();
 
@@ -663,7 +695,9 @@ mod tests {
             Some(key_id.as_str())
         );
 
-        let mut decryptor = pending_decryptor.into_decryptor::<Aes256Gcm>(key).unwrap();
+        let mut decryptor = pending_decryptor
+            .into_decryptor::<Aes256Gcm>(key, aad)
+            .unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();
 
@@ -673,18 +707,25 @@ mod tests {
     #[tokio::test]
     async fn test_roundtrip_long_message_async() {
         let plaintext = b"This is a very long test message to test the async streaming encryption and decryption. It should be longer than a single chunk to ensure that the chunking logic is working correctly. Let's add more data to make sure it spans multiple chunks. Lorem ipsum dolor sit amet, consectetur adipiscing elit.";
-        test_async_streaming_roundtrip(plaintext).await;
+        test_async_streaming_roundtrip(plaintext, None).await;
     }
 
     #[tokio::test]
     async fn test_roundtrip_empty_message_async() {
-        test_async_streaming_roundtrip(b"").await;
+        test_async_streaming_roundtrip(b"", None).await;
     }
 
     #[tokio::test]
     async fn test_roundtrip_exact_chunk_size_async() {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
-        test_async_streaming_roundtrip(&plaintext).await;
+        test_async_streaming_roundtrip(&plaintext, None).await;
+    }
+
+    #[tokio::test]
+    async fn test_aad_roundtrip_async() {
+        let plaintext = b"secret async message";
+        let aad = b"public async context";
+        test_async_streaming_roundtrip(plaintext, Some(aad)).await;
     }
 
     #[tokio::test]
@@ -697,6 +738,7 @@ mod tests {
             &mut encrypted_data,
             key.clone(),
             "test_key_id".to_string(),
+            None,
         )
         .await
         .unwrap();
@@ -712,7 +754,7 @@ mod tests {
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
             .await
             .unwrap();
-        let mut decryptor = pending.into_decryptor::<Aes256Gcm>(key).unwrap();
+        let mut decryptor = pending.into_decryptor::<Aes256Gcm>(key, None).unwrap();
         let result = decryptor.read_to_end(&mut Vec::new()).await;
         assert!(result.is_err());
     }
@@ -726,7 +768,7 @@ mod tests {
         // Encrypt
         let mut encrypted_data = Vec::new();
         let mut encryptor =
-            Encryptor::<_, Aes256Gcm>::new(&mut encrypted_data, key1, "key1".to_string())
+            Encryptor::<_, Aes256Gcm>::new(&mut encrypted_data, key1, "key1".to_string(), None)
                 .await
                 .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
@@ -736,9 +778,48 @@ mod tests {
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
             .await
             .unwrap();
-        let mut decryptor = pending.into_decryptor::<Aes256Gcm>(key2).unwrap();
+        let mut decryptor = pending.into_decryptor::<Aes256Gcm>(key2, None).unwrap();
         let result = decryptor.read_to_end(&mut Vec::new()).await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_wrong_aad_fails_async() {
+        let key = Aes256Gcm::generate_key().unwrap();
+        let plaintext = b"some data";
+        let aad1 = b"correct async aad";
+        let aad2 = b"wrong async aad";
+
+        // Encrypt
+        let mut encrypted_data = Vec::new();
+        let mut encryptor = Encryptor::<_, Aes256Gcm>::new(
+            &mut encrypted_data,
+            key.clone(),
+            "key1".to_string(),
+            Some(aad1),
+        )
+        .await
+        .unwrap();
+        encryptor.write_all(plaintext).await.unwrap();
+        encryptor.shutdown().await.unwrap();
+
+        // Decrypt with the wrong aad
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
+            .await
+            .unwrap();
+        let mut decryptor = pending
+            .into_decryptor::<Aes256Gcm>(key.clone(), Some(aad2))
+            .unwrap();
+        let result = decryptor.read_to_end(&mut Vec::new()).await;
+        assert!(result.is_err());
+
+        // Decrypt with no aad
+        let pending2 = PendingDecryptor::from_reader(Cursor::new(encrypted_data))
+            .await
+            .unwrap();
+        let mut decryptor2 = pending2.into_decryptor::<Aes256Gcm>(key, None).unwrap();
+        let result2 = decryptor2.read_to_end(&mut Vec::new()).await;
+        assert!(result2.is_err());
     }
 }

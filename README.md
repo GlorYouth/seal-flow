@@ -182,6 +182,53 @@ fn main() -> Result<()> {
 }
 ```
 
+### Using Associated Data (AAD)
+
+`seal-flow` supports Associated Data (AAD), which is data that is authenticated but not encrypted. This is useful for binding ciphertext to its context, such as a version number, filename, or other metadata, without needing to encrypt the metadata itself.
+
+The `with_aad()` method can be chained during both encryption and decryption. The AAD must be identical during both processes for decryption to succeed.
+
+```rust
+use seal_flow::prelude::*;
+use seal_crypto::prelude::SymmetricKeyGenerator;
+use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+
+fn main() -> Result<()> {
+    let key = Aes256Gcm::generate_key()?;
+    let key_id = "my-aad-key".to_string();
+    let plaintext = b"This data is secret.";
+    let aad = b"This is my context metadata.";
+
+    let seal = SymmetricSeal::new();
+
+    // Encrypt with AAD
+    let ciphertext = seal
+        .encrypt::<Aes256Gcm>(&key, key_id)
+        .with_aad(aad)
+        .to_vec(plaintext)?;
+
+    // To decrypt, you MUST provide the same AAD.
+    let pending_decryptor = seal.decrypt().from_slice(&ciphertext)?;
+    let decrypted_text = pending_decryptor
+        .with_aad(aad) // Provide the same AAD
+        .with_key::<Aes256Gcm>(&key)?;
+
+    assert_eq!(plaintext, &decrypted_text[..]);
+    println!("Successfully decrypted with AAD!");
+
+    // Attempting to decrypt with wrong or missing AAD will fail.
+    let pending_fail = seal.decrypt().from_slice(&ciphertext)?;
+    assert!(pending_fail.with_aad(b"wrong aad").with_key::<Aes256Gcm>(&key).is_err());
+    
+    let pending_fail2 = seal.decrypt().from_slice(&ciphertext)?;
+    assert!(pending_fail2.with_key::<Aes256Gcm>(&key).is_err());
+    
+    println!("Correctly failed to decrypt with wrong/missing AAD.");
+
+    Ok(())
+}
+```
+
 For more detailed examples covering all modes and API layers, please see the `examples/` directory.
 
 ## Running Examples

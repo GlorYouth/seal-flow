@@ -37,11 +37,13 @@ impl Ord for OrderedChunk {
     }
 }
 
+/// Encrypts data from a reader and writes to a writer using a parallel streaming approach.
 pub fn encrypt<A, S, R, W>(
-    public_key: &A::PublicKey,
+    pk: &A::PublicKey,
     mut reader: R,
     mut writer: W,
     kek_id: String,
+    aad: Option<&[u8]>,
 ) -> Result<()>
 where
     A: AsymmetricAlgorithm,
@@ -51,9 +53,9 @@ where
     R: Read + Send,
     W: Write,
 {
-    let (header, base_nonce, shared_secret) =
-        create_header::<A, S>(&public_key.clone().into(), kek_id)?;
-    let key_arc = Arc::new(shared_secret.into());
+    let (header, base_nonce, symmetric_key) = create_header::<A, S>(pk, kek_id)?;
+    let key_arc = Arc::new(symmetric_key.into());
+    let aad_arc = Arc::new(aad.map(|d| d.to_vec()));
     let pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize));
 
     let header_bytes = header.encode_to_vec()?;
@@ -102,10 +104,12 @@ where
             }
         });
 
+        let enc_chunk_tx_clone = enc_chunk_tx.clone();
+        let key_clone = Arc::clone(&key_arc);
+        let aad_clone = Arc::clone(&aad_arc);
         let in_pool = Arc::clone(&pool);
         let out_pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE));
         let writer_pool = Arc::clone(&out_pool);
-        let enc_chunk_tx_clone = enc_chunk_tx.clone();
         s.spawn(move || {
             raw_chunk_rx
                 .into_iter()
@@ -113,18 +117,19 @@ where
                 .for_each(|(index, in_buffer)| {
                     let mut out_buffer = out_pool.acquire();
                     let nonce = derive_nonce(&base_nonce, index);
+                    let aad_val = aad_clone.as_deref();
                     let capacity = out_buffer.capacity();
                     out_buffer.resize(capacity, 0);
 
                     let result = S::encrypt_to_buffer(
-                        &key_arc,
+                        &key_clone,
                         &nonce,
                         &in_buffer,
                         &mut out_buffer,
-                        None,
+                        aad_val,
                     )
-                    .map(|written| {
-                        out_buffer.truncate(written);
+                    .map(|bytes_written| {
+                        out_buffer.truncate(bytes_written);
                         out_buffer
                     })
                     .map_err(Error::from);
@@ -211,26 +216,28 @@ where
         &self.header
     }
 
-    /// Consumes the `PendingDecryptor` and decrypts the rest of the stream,
-    /// writing the plaintext to the provided writer.
-    pub fn decrypt_to_writer<A, S, W: Write>(self, sk: &A::PrivateKey, writer: W) -> Result<()>
+    /// Consumes the pending decryptor, decrypts the stream with the provided private key,
+    /// and writes the plaintext to the writer.
+    pub fn decrypt_to_writer<A, S, W>(self, sk: &A::PrivateKey, writer: W, aad: Option<&[u8]>) -> Result<()>
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
         A::PrivateKey: Clone,
-        A::EncapsulatedKey: From<Vec<u8>>,
+        A::EncapsulatedKey: From<Vec<u8>> + Send, 
+        W: Write
     {
-        decrypt_body_stream::<A, S, _, _>(sk, &self.header, self.reader, writer)
+        decrypt_body_stream::<A, S, R, W>(sk, &self.header, self.reader, writer, aad)
     }
 }
 
 /// Decrypts a data stream body and writes to a writer using a parallel streaming approach.
 pub fn decrypt_body_stream<A, S, R, W>(
-    private_key: &A::PrivateKey,
+    sk: &A::PrivateKey,
     header: &Header,
     mut reader: R,
     mut writer: W,
+    aad: Option<&[u8]>,
 ) -> Result<()>
 where
     A: AsymmetricAlgorithm,
@@ -254,9 +261,12 @@ where
         _ => return Err(Error::InvalidHeader),
     };
 
-    let shared_secret = A::decapsulate(&private_key.clone().into(), &encapsulated_key)?;
-    let key_arc = Arc::new(shared_secret.into());
+    let shared_secret = A::decapsulate(&sk.clone().into(), &encapsulated_key)?;
+    let key_material = shared_secret.into();
+
     let encrypted_chunk_size = (chunk_size as usize) + S::TAG_SIZE;
+    let key_arc = Arc::new(key_material);
+    let aad_arc = Arc::new(aad.map(|d| d.to_vec()));
     let pool = Arc::new(BufferPool::new(encrypted_chunk_size));
 
     let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
@@ -301,10 +311,12 @@ where
             }
         });
 
+        let dec_chunk_tx_clone = dec_chunk_tx.clone();
+        let key_clone = Arc::clone(&key_arc);
+        let aad_clone = Arc::clone(&aad_arc);
         let in_pool = Arc::clone(&pool);
         let out_pool = Arc::new(BufferPool::new(chunk_size as usize));
         let writer_pool = Arc::clone(&out_pool);
-        let dec_chunk_tx_clone = dec_chunk_tx.clone();
         s.spawn(move || {
             enc_chunk_rx
                 .into_iter()
@@ -312,18 +324,19 @@ where
                 .for_each(|(index, in_buffer)| {
                     let mut out_buffer = out_pool.acquire();
                     let nonce = derive_nonce(&base_nonce, index);
+                    let aad_val = aad_clone.as_deref();
                     let capacity = out_buffer.capacity();
                     out_buffer.resize(capacity, 0);
 
                     let result = S::decrypt_to_buffer(
-                        &key_arc,
+                        &key_clone,
                         &nonce,
                         &in_buffer,
                         &mut out_buffer,
-                        None,
+                        aad_val,
                     )
-                    .map(|written| {
-                        out_buffer.truncate(written);
+                    .map(|bytes_written| {
+                        out_buffer.truncate(bytes_written);
                         out_buffer
                     })
                     .map_err(Error::from);
@@ -407,6 +420,7 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
+            None,
         )
         .unwrap();
 
@@ -414,7 +428,7 @@ mod tests {
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending
-            .decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk, &mut decrypted_data)
+            .decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk, &mut decrypted_data, None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -432,6 +446,7 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
+            None,
         )
         .unwrap();
 
@@ -439,7 +454,7 @@ mod tests {
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending
-            .decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk, &mut decrypted_data)
+            .decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk, &mut decrypted_data, None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -457,6 +472,7 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
+            None,
         )
         .unwrap();
 
@@ -467,7 +483,7 @@ mod tests {
         let mut decrypted_data = Vec::new();
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         let result =
-            pending.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk, &mut decrypted_data);
+            pending.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk, &mut decrypted_data, None);
 
         assert!(result.is_err());
     }
@@ -485,13 +501,60 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
+            None,
         )
         .unwrap();
 
         let mut decrypted_data = Vec::new();
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         let result =
-            pending.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk2, &mut decrypted_data);
+            pending.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk2, &mut decrypted_data, None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_aad_roundtrip() {
+        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let plaintext = get_test_data(1024 * 256); // 256 KiB
+        let aad = b"parallel streaming aad";
+
+        let mut encrypted_data = Vec::new();
+        encrypt::<Rsa2048, Aes256Gcm, _, _>(
+            &pk,
+            Cursor::new(&plaintext),
+            &mut encrypted_data,
+            "test_kek_id_aad".to_string(),
+            Some(aad),
+        )
+        .unwrap();
+
+        // Decrypt with correct AAD
+        let mut decrypted_data = Vec::new();
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        assert_eq!(
+            pending.header().payload.kek_id(),
+            Some("test_kek_id_aad")
+        );
+        pending
+            .decrypt_to_writer::<Rsa2048, Aes256Gcm, _>(&sk, &mut decrypted_data, Some(aad))
+            .unwrap();
+        assert_eq!(plaintext, decrypted_data);
+
+        // Decrypt with wrong AAD fails
+        let mut decrypted_data_fail = Vec::new();
+        let pending_fail = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let result = pending_fail.decrypt_to_writer::<Rsa2048, Aes256Gcm, _>(
+            &sk,
+            &mut decrypted_data_fail,
+            Some(b"wrong aad"),
+        );
+        assert!(result.is_err());
+
+        // Decrypt with no AAD fails
+        let mut decrypted_data_fail2 = Vec::new();
+        let pending_fail2 = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let result2 = pending_fail2
+            .decrypt_to_writer::<Rsa2048, Aes256Gcm, _>(&sk, &mut decrypted_data_fail2, None);
+        assert!(result2.is_err());
     }
 }

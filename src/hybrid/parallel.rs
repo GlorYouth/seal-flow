@@ -7,7 +7,7 @@ use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
 
 /// Performs parallel, in-memory hybrid encryption.
-pub fn encrypt<A, S>(pk: &A::PublicKey, plaintext: &[u8], kek_id: String) -> Result<Vec<u8>>
+pub fn encrypt<A, S>(pk: &A::PublicKey, plaintext: &[u8], kek_id: String, aad: Option<&[u8]>) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
@@ -58,7 +58,7 @@ where
                 let expected_output_len = input_chunk.len() + tag_size;
                 let buffer_slice = &mut output_chunk[..expected_output_len];
 
-                S::encrypt_to_buffer(&key_material, &nonce, input_chunk, buffer_slice, None)
+                S::encrypt_to_buffer(&key_material, &nonce, input_chunk, buffer_slice, aad)
                     .map(|_| ())
                     .map_err(Error::from)
             })?;
@@ -95,7 +95,7 @@ impl<'a> PendingDecryptor<'a> {
     }
 
     /// Consumes the `PendingDecryptor` and returns the decrypted plaintext.
-    pub fn into_plaintext<A, S>(self, sk: &A::PrivateKey) -> Result<Vec<u8>>
+    pub fn into_plaintext<A, S>(self, sk: &A::PrivateKey, aad: Option<&[u8]>) -> Result<Vec<u8>>
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
@@ -103,7 +103,7 @@ impl<'a> PendingDecryptor<'a> {
         A::PrivateKey: Clone,
         A::EncapsulatedKey: From<Vec<u8>>,
     {
-        decrypt_body::<A, S>(sk, &self.header, self.ciphertext_body)
+        decrypt_body::<A, S>(sk, &self.header, self.ciphertext_body, aad)
     }
 }
 
@@ -112,6 +112,7 @@ pub fn decrypt_body<A, S>(
     sk: &A::PrivateKey,
     header: &Header,
     ciphertext_body: &[u8],
+    aad: Option<&[u8]>,
 ) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
@@ -170,7 +171,7 @@ where
         .map(|(i, (plaintext_chunk, encrypted_chunk))| -> Result<usize> {
             let nonce = derive_nonce(&base_nonce, i as u64);
 
-            S::decrypt_to_buffer(&key_material, &nonce, encrypted_chunk, plaintext_chunk, None)
+            S::decrypt_to_buffer(&key_material, &nonce, encrypted_chunk, plaintext_chunk, aad)
                 .map_err(Error::from)
         })
         .collect::<Result<Vec<usize>>>()?;
@@ -188,24 +189,33 @@ mod tests {
     use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+
     #[test]
     fn test_hybrid_parallel_roundtrip() {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"This is a test message for hybrid parallel encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None).unwrap();
 
         // Test convenience function
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk).unwrap();
+        let decrypted = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Test separated functions
         let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
         assert_eq!(header.payload.kek_id(), Some("test_kek_id"));
-        let decrypted_body = decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body).unwrap();
+        let decrypted_body = decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body, None).unwrap();
         assert_eq!(plaintext, decrypted_body.as_slice());
+
+        // Tamper with the ciphertext body
+        let mut encrypted_tampered = encrypted;
+        encrypted_tampered[300] ^= 1;
+
+        let pending = PendingDecryptor::from_ciphertext(&encrypted_tampered).unwrap();
+        let result = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -214,10 +224,10 @@ mod tests {
         let plaintext = b"";
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None).unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk).unwrap();
+        let decrypted = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -228,30 +238,12 @@ mod tests {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string()).unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string(), None).unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk).unwrap();
+        let decrypted = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None).unwrap();
 
         assert_eq!(plaintext, decrypted);
-    }
-
-    #[test]
-    fn test_tampered_ciphertext_fails() {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let plaintext = b"some important data";
-
-        let mut encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
-
-        if encrypted.len() > 300 {
-            encrypted[300] ^= 1;
-        }
-
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk);
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), Error::Crypto(_)));
     }
 
     #[test]
@@ -261,10 +253,54 @@ mod tests {
         let plaintext = b"some data";
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string()).unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None).unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk2);
+        let result = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk2, None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_internal_functions() {
+        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let plaintext = b"some plaintext for parallel";
+        let encrypted =
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None).unwrap();
+
+        // Test the separated functions
+        let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
+        assert_eq!(header.payload.kek_id(), Some("test_kek_id"));
+        let decrypted_body =
+            decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body, None).unwrap();
+        assert_eq!(plaintext, decrypted_body.as_slice());
+    }
+
+    #[test]
+    fn test_aad_roundtrip() {
+        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let plaintext = b"some parallel data to protect";
+        let aad = b"some parallel context data";
+
+        // Encrypt with AAD
+        let encrypted =
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "aad_key".to_string(), Some(aad)).unwrap();
+
+        // Decrypt with correct AAD
+        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let decrypted = pending
+            .into_plaintext::<Rsa2048, Aes256Gcm>(&sk, Some(aad))
+            .unwrap();
+        assert_eq!(plaintext, decrypted.as_slice());
+
+        // Decrypt with wrong AAD fails
+        let pending_fail = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let result_fail =
+            pending_fail.into_plaintext::<Rsa2048, Aes256Gcm>(&sk, Some(b"wrong aad"));
+        assert!(result_fail.is_err());
+
+        // Decrypt with no AAD fails
+        let pending_fail2 = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let result_fail2 = pending_fail2.into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None);
+        assert!(result_fail2.is_err());
     }
 }

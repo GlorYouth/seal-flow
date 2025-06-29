@@ -121,5 +121,36 @@ async fn main() -> Result<()> {
     println!("Parallel Streaming roundtrip successful!");
 
     println!("\nAll high-level hybrid modes are interoperable and successful.");
+
+    // --- Mode 6: In-Memory with AAD ---
+    println!("\n--- Testing Mode: In-Memory with AAD ---");
+    let aad = b"Authenticated but not encrypted hybrid data";
+    let ciphertext6 = seal
+        .encrypt::<Kem, Dek>(&pk, KEK_ID.to_string())
+        .with_aad(aad)
+        .to_vec(plaintext)?;
+
+    // Decrypt with correct AAD
+    let pending_decryptor6 = seal.decrypt().from_slice(&ciphertext6)?;
+    let decrypted6 = pending_decryptor6
+        .with_aad(aad)
+        .with_provider::<_, Dek>(&provider)?;
+    assert_eq!(plaintext, &decrypted6[..]);
+    println!("In-Memory with AAD roundtrip successful!");
+
+    // Decrypt with wrong AAD should fail
+    let pending_fail = seal.decrypt().from_slice(&ciphertext6)?;
+    let result_fail = pending_fail
+        .with_aad(b"wrong aad")
+        .with_provider::<_, Dek>(&provider);
+    assert!(result_fail.is_err());
+    println!("In-Memory with wrong AAD correctly failed!");
+
+    // Decrypt with no AAD should also fail
+    let pending_fail2 = seal.decrypt().from_slice(&ciphertext6)?;
+    let result_fail2 = pending_fail2.with_provider::<_, Dek>(&provider);
+    assert!(result_fail2.is_err());
+    println!("In-Memory with no AAD correctly failed!");
+
     Ok(())
 }

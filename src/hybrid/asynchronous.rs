@@ -66,6 +66,7 @@ pin_project! {
         pending_chunks: BinaryHeap<OrderedChunk>,
         writing_state: WritingState,
         out_pool: Arc<BufferPool>,
+        aad: Option<Arc<Vec<u8>>>,
         _phantom: std::marker::PhantomData<(A, S)>,
     }
 }
@@ -78,7 +79,12 @@ where
     S: SymmetricAlgorithm + 'static,
     S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
 {
-    pub async fn new(mut writer: W, pk: A::PublicKey, kek_id: String) -> Result<Self> {
+    pub async fn new(
+        mut writer: W,
+        pk: A::PublicKey,
+        kek_id: String,
+        aad: Option<&[u8]>,
+    ) -> Result<Self> {
         let (header, base_nonce, shared_secret) =
             tokio::task::spawn_blocking(move || create_header::<A, S>(&pk.into(), kek_id))
                 .await??;
@@ -106,6 +112,7 @@ where
             pending_chunks: BinaryHeap::new(),
             writing_state: WritingState::Idle,
             out_pool,
+            aad: aad.map(|d| Arc::new(d.to_vec())),
             _phantom: std::marker::PhantomData,
         })
     }
@@ -127,16 +134,23 @@ where
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
             let index = self.chunk_counter;
             let out_pool = Arc::clone(&self.out_pool);
+            let aad_clone = self.aad.clone();
 
             let handle = tokio::task::spawn_blocking(move || {
                 let mut out_buffer = out_pool.acquire();
                 out_buffer.resize(out_buffer.capacity(), 0);
-                let result = S::encrypt_to_buffer(&key, &nonce, &in_buffer, &mut out_buffer, None)
-                    .map(|written| {
-                        out_buffer.truncate(written);
-                        out_buffer
-                    })
-                    .map_err(Error::from);
+                let result = S::encrypt_to_buffer(
+                    &key,
+                    &nonce,
+                    &in_buffer,
+                    &mut out_buffer,
+                    aad_clone.as_deref().map(|v| v.as_slice()),
+                )
+                .map(|written| {
+                    out_buffer.truncate(written);
+                    out_buffer
+                })
+                .map_err(Error::from);
                 result.map(|buf| (index, buf))
             });
 
@@ -281,7 +295,11 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
         &self.header
     }
 
-    pub async fn into_decryptor<A, S>(self, sk: A::PrivateKey) -> Result<Decryptor<R, A, S>>
+    pub async fn into_decryptor<A, S>(
+        self,
+        sk: A::PrivateKey,
+        aad: Option<&[u8]>,
+    ) -> Result<Decryptor<R, A, S>>
     where
         A: AsymmetricAlgorithm + 'static,
         A::PrivateKey: Send,
@@ -311,6 +329,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
             base_nonce,
             encrypted_chunk_size,
             chunk_size as usize,
+            aad,
         ))
     }
 }
@@ -335,6 +354,7 @@ pin_project! {
         decrypt_tasks: FuturesUnordered<DecryptTask>,
         pending_chunks: std::collections::BTreeMap<u64, Result<BytesMut>>,
         out_pool: Arc<BufferPool>,
+        aad: Option<Arc<Vec<u8>>>,
         _phantom: std::marker::PhantomData<(A, S)>,
     }
 }
@@ -351,6 +371,7 @@ where
         base_nonce: [u8; 12],
         encrypted_chunk_size: usize,
         decrypted_chunk_size: usize,
+        aad: Option<&[u8]>,
     ) -> Self {
         Self {
             reader,
@@ -366,6 +387,7 @@ where
             decrypt_tasks: FuturesUnordered::new(),
             pending_chunks: std::collections::BTreeMap::new(),
             out_pool: Arc::new(BufferPool::new(decrypted_chunk_size)),
+            aad: aad.map(|d| Arc::new(d.to_vec())),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -403,16 +425,23 @@ where
                 let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
                 let index = self.chunk_counter;
                 let out_pool = Arc::clone(&self.out_pool);
+                let aad_clone = self.aad.clone();
 
                 let handle = tokio::task::spawn_blocking(move || {
                     let mut out_buffer = out_pool.acquire();
                     out_buffer.resize(out_buffer.capacity(), 0);
-                    let result = S::decrypt_to_buffer(&key, &nonce, &in_buffer, &mut out_buffer, None)
-                        .map(|written| {
-                            out_buffer.truncate(written);
-                            out_buffer
-                        })
-                        .map_err(Error::from);
+                    let result = S::decrypt_to_buffer(
+                        &key,
+                        &nonce,
+                        &in_buffer,
+                        &mut out_buffer,
+                        aad_clone.as_deref().map(|v| v.as_slice()),
+                    )
+                    .map(|written| {
+                        out_buffer.truncate(written);
+                        out_buffer
+                    })
+                    .map_err(Error::from);
                     (index, result)
                 });
                 self.decrypt_tasks.push(handle);
@@ -508,7 +537,7 @@ mod tests {
     use std::io::Cursor;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    async fn test_hybrid_async_streaming_roundtrip(plaintext: &[u8]) {
+    async fn test_hybrid_async_streaming_roundtrip(plaintext: &[u8], aad: Option<&[u8]>) {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let kek_id = "test-rsa-key".to_string();
 
@@ -518,6 +547,7 @@ mod tests {
             &mut encrypted_data,
             pk,
             kek_id.clone(),
+            aad,
         )
         .await
         .unwrap();
@@ -531,7 +561,7 @@ mod tests {
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
 
         let mut decryptor = pending
-            .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk)
+            .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk, aad)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -542,18 +572,25 @@ mod tests {
     #[tokio::test]
     async fn test_roundtrip_long_message_async() {
         let plaintext = b"This is a very long test message to test the async hybrid streaming encryption and decryption. It needs to be longer than a single chunk to ensure the chunking logic is working correctly.";
-        test_hybrid_async_streaming_roundtrip(plaintext).await;
+        test_hybrid_async_streaming_roundtrip(plaintext, None).await;
     }
 
     #[tokio::test]
     async fn test_roundtrip_empty_message_async() {
-        test_hybrid_async_streaming_roundtrip(b"").await;
+        test_hybrid_async_streaming_roundtrip(b"", None).await;
     }
 
     #[tokio::test]
     async fn test_roundtrip_exact_chunk_size_async() {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
-        test_hybrid_async_streaming_roundtrip(&plaintext).await;
+        test_hybrid_async_streaming_roundtrip(&plaintext, None).await;
+    }
+
+    #[tokio::test]
+    async fn test_aad_roundtrip_async() {
+        let plaintext = b"secret async hybrid message";
+        let aad = b"public async hybrid context";
+        test_hybrid_async_streaming_roundtrip(plaintext, Some(aad)).await;
     }
 
     #[tokio::test]
@@ -566,6 +603,7 @@ mod tests {
             &mut encrypted_data,
             pk,
             "test-kek-id".to_string(),
+            None,
         )
         .await
         .unwrap();
@@ -581,7 +619,7 @@ mod tests {
             .await
             .unwrap();
         let mut decryptor = pending
-            .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk)
+            .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk, None)
             .await
             .unwrap();
         let result = decryptor.read_to_end(&mut Vec::new()).await;
@@ -590,8 +628,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_wrong_private_key_fails_async() {
-        let (pk, _) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (pk, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
@@ -599,6 +636,7 @@ mod tests {
             &mut encrypted_data,
             pk,
             "test_kek_id".to_string(),
+            None,
         )
         .await
         .unwrap();
@@ -609,8 +647,47 @@ mod tests {
             .await
             .unwrap();
         let result = pending
-            .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk2)
+            .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk2, None)
             .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_wrong_aad_fails_async() {
+        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let plaintext = b"some data";
+        let aad1 = b"correct async aad";
+        let aad2 = b"wrong async aad";
+
+        // Encrypt
+        let mut encrypted_data = Vec::new();
+        let mut encryptor = Encryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::new(
+            &mut encrypted_data,
+            pk,
+            "key1".to_string(),
+            Some(aad1),
+        )
+        .await
+        .unwrap();
+        encryptor.write_all(plaintext).await.unwrap();
+        encryptor.shutdown().await.unwrap();
+
+        // Decrypt with the wrong aad
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
+            .await
+            .unwrap();
+        let result = pending
+            .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk.clone(), Some(aad2))
+            .await;
+        assert!(result.is_err());
+
+        // Decrypt with no aad
+        let pending2 = PendingDecryptor::from_reader(Cursor::new(encrypted_data))
+            .await
+            .unwrap();
+        let result2 = pending2
+            .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk, None)
+            .await;
+        assert!(result2.is_err());
     }
 }

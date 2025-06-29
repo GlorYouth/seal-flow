@@ -36,6 +36,7 @@ impl HybridSeal {
         HybridEncryptor {
             pk,
             kek_id,
+            aad: None,
             _phantom: PhantomData,
         }
     }
@@ -57,6 +58,7 @@ where
 {
     pk: &'a A::PublicKey,
     kek_id: String,
+    aad: Option<Vec<u8>>,
     _phantom: PhantomData<(A, S)>,
 }
 
@@ -65,13 +67,24 @@ where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
 {
+    /// Sets the Associated Data (AAD) for this encryption operation.
+    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
+        self.aad = Some(aad.into());
+        self
+    }
+
     /// Encrypts the given plaintext in-memory.
     pub fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
     where
         A::EncapsulatedKey: Into<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        crate::hybrid::ordinary::encrypt::<A, S>(self.pk, plaintext, self.kek_id)
+        crate::hybrid::ordinary::encrypt::<A, S>(
+            self.pk,
+            plaintext,
+            self.kek_id,
+            self.aad.as_deref(),
+        )
     }
 
     /// Encrypts the given plaintext in-memory using parallel processing.
@@ -80,7 +93,7 @@ where
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + Clone,
         Vec<u8>: From<<A as seal_crypto::prelude::Kem>::EncapsulatedKey>,
     {
-        crate::hybrid::parallel::encrypt::<A, S>(self.pk, plaintext, self.kek_id)
+        crate::hybrid::parallel::encrypt::<A, S>(self.pk, plaintext, self.kek_id, self.aad.as_deref())
     }
 
     /// Creates a streaming encryptor that writes to the given `Write` implementation.
@@ -92,14 +105,14 @@ where
         Vec<u8>: From<<A as seal_crypto::prelude::Kem>::EncapsulatedKey>,
         S::Key: From<Zeroizing<Vec<u8>>> + Clone,
     {
-        crate::hybrid::streaming::Encryptor::new(writer, self.pk, self.kek_id)
+        crate::hybrid::streaming::Encryptor::new(writer, self.pk, self.kek_id, self.aad.as_deref())
     }
 
     /// Encrypts data from a reader and writes to a writer using parallel processing.
     pub fn pipe_parallel<R, W>(self, reader: R, writer: W) -> crate::Result<()>
     where
-        R: Read + Send + Sync,
-        W: Write + Send + Sync,
+        R: Read + Send,
+        W: Write,
         A::EncapsulatedKey: Into<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
@@ -108,6 +121,7 @@ where
             reader,
             writer,
             self.kek_id,
+            self.aad.as_deref(),
         )
     }
 
@@ -118,11 +132,19 @@ where
         writer: W,
     ) -> crate::Result<crate::hybrid::asynchronous::Encryptor<W, A, S>>
     where
-        A::PublicKey: Clone,
+        A: AsymmetricAlgorithm + 'static,
+        A::PublicKey: Send,
         A::EncapsulatedKey: Into<Vec<u8>> + Send,
-        <S as seal_crypto::prelude::SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
+        S: SymmetricAlgorithm + 'static,
+        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
     {
-        crate::hybrid::asynchronous::Encryptor::new(writer, self.pk.clone(), self.kek_id).await
+        crate::hybrid::asynchronous::Encryptor::new(
+            writer,
+            self.pk.clone().into(),
+            self.kek_id,
+            self.aad.as_deref(),
+        )
+        .await
     }
 }
 
@@ -145,6 +167,7 @@ impl HybridDecryptorBuilder {
             crate::hybrid::ordinary::PendingDecryptor::from_ciphertext(ciphertext)?;
         Ok(PendingInMemoryDecryptor {
             inner: mid_level_pending,
+            aad: None,
         })
     }
 
@@ -157,6 +180,7 @@ impl HybridDecryptorBuilder {
             crate::hybrid::parallel::PendingDecryptor::from_ciphertext(ciphertext)?;
         Ok(PendingInMemoryParallelDecryptor {
             inner: mid_level_pending,
+            aad: None,
         })
     }
 
@@ -165,6 +189,7 @@ impl HybridDecryptorBuilder {
         let mid_level_pending = crate::hybrid::streaming::PendingDecryptor::from_reader(reader)?;
         Ok(PendingStreamingDecryptor {
             inner: mid_level_pending,
+            aad: None,
         })
     }
 
@@ -177,6 +202,7 @@ impl HybridDecryptorBuilder {
             crate::hybrid::parallel_streaming::PendingDecryptor::from_reader(reader)?;
         Ok(PendingParallelStreamingDecryptor {
             inner: mid_level_pending,
+            aad: None,
         })
     }
 
@@ -190,6 +216,7 @@ impl HybridDecryptorBuilder {
             crate::hybrid::asynchronous::PendingDecryptor::from_reader(reader).await?;
         Ok(PendingAsyncStreamingDecryptor {
             inner: mid_level_pending,
+            aad: None,
         })
     }
 }
@@ -197,6 +224,7 @@ impl HybridDecryptorBuilder {
 /// A pending in-memory hybrid decryptor, waiting for the private key.
 pub struct PendingInMemoryDecryptor<'a> {
     inner: crate::hybrid::ordinary::PendingDecryptor<'a>,
+    aad: Option<Vec<u8>>,
 }
 
 impl<'a> PendingInMemoryDecryptor<'a> {
@@ -208,6 +236,13 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     /// Returns the Key-Encrypting-Key ID from the header.
     pub fn kek_id(&self) -> Option<&str> {
         self.header().payload.kek_id()
+    }
+
+    /// Sets the Associated Data (AAD) for this decryption operation.
+    /// The AAD must match the value provided during encryption.
+    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
+        self.aad = Some(aad.into());
+        self
     }
 
     /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and decrypt.
@@ -265,13 +300,15 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        self.inner.into_plaintext::<A, S>(sk)
+        self.inner
+            .into_plaintext::<A, S>(sk, self.aad.as_deref())
     }
 }
 
 /// A pending parallel in-memory hybrid decryptor, waiting for the private key.
 pub struct PendingInMemoryParallelDecryptor<'a> {
     inner: crate::hybrid::parallel::PendingDecryptor<'a>,
+    aad: Option<Vec<u8>>,
 }
 
 impl<'a> PendingInMemoryParallelDecryptor<'a> {
@@ -283,6 +320,13 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     /// Returns the Key-Encrypting-Key ID from the header.
     pub fn kek_id(&self) -> Option<&str> {
         self.header().payload.kek_id()
+    }
+
+    /// Sets the Associated Data (AAD) for this decryption operation.
+    /// The AAD must match the value provided during encryption.
+    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
+        self.aad = Some(aad.into());
+        self
     }
 
     /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and decrypt.
@@ -341,13 +385,15 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         A::PrivateKey: Clone,
         A::EncapsulatedKey: From<Vec<u8>>,
     {
-        self.inner.into_plaintext::<A, S>(sk)
+        self.inner
+            .into_plaintext::<A, S>(sk, self.aad.as_deref())
     }
 }
 
 /// A pending synchronous streaming hybrid decryptor.
 pub struct PendingStreamingDecryptor<R: Read> {
     inner: crate::hybrid::streaming::PendingDecryptor<R>,
+    aad: Option<Vec<u8>>,
 }
 
 impl<R: Read> PendingStreamingDecryptor<R> {
@@ -359,6 +405,13 @@ impl<R: Read> PendingStreamingDecryptor<R> {
     /// Returns the Key-Encrypting-Key ID from the stream's header.
     pub fn kek_id(&self) -> Option<&str> {
         self.header().payload.kek_id()
+    }
+
+    /// Sets the Associated Data (AAD) for this decryption operation.
+    /// The AAD must match the value provided during encryption.
+    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
+        self.aad = Some(aad.into());
+        self
     }
 
     /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and create a decryptor.
@@ -428,10 +481,11 @@ impl<R: Read> PendingStreamingDecryptor<R> {
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
         A::PrivateKey: Clone,
-        A::EncapsulatedKey: From<Vec<u8>>,
+        A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        self.inner.into_decryptor::<A, S>(sk)
+        self.inner
+            .into_decryptor::<A, S>(sk, self.aad.as_deref())
     }
 }
 
@@ -441,6 +495,7 @@ where
     R: Read + Send,
 {
     inner: crate::hybrid::parallel_streaming::PendingDecryptor<R>,
+    aad: Option<Vec<u8>>,
 }
 
 impl<R> PendingParallelStreamingDecryptor<R>
@@ -455,6 +510,13 @@ where
     /// Returns the Key-Encrypting-Key ID from the stream's header.
     pub fn kek_id(&self) -> Option<&str> {
         self.header().payload.kek_id()
+    }
+
+    /// Sets the Associated Data (AAD) for this decryption operation.
+    /// The AAD must match the value provided during encryption.
+    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
+        self.aad = Some(aad.into());
+        self
     }
 
     /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and decrypt the stream.
@@ -526,9 +588,10 @@ where
         S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
         A::PrivateKey: Clone,
-        A::EncapsulatedKey: From<Vec<u8>>,
+        A::EncapsulatedKey: From<Vec<u8>> + Send,
     {
-        self.inner.decrypt_to_writer::<A, S, W>(sk, writer)
+        self.inner
+            .decrypt_to_writer::<A, S, W>(sk, writer, self.aad.as_deref())
     }
 }
 
@@ -536,6 +599,7 @@ where
 #[cfg(feature = "async")]
 pub struct PendingAsyncStreamingDecryptor<R: AsyncRead + Unpin> {
     inner: crate::hybrid::asynchronous::PendingDecryptor<R>,
+    aad: Option<Vec<u8>>,
 }
 
 #[cfg(feature = "async")]
@@ -548,6 +612,13 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
     /// Returns the Key-Encrypting-Key ID from the stream's header.
     pub fn kek_id(&self) -> Option<&str> {
         self.header().payload.kek_id()
+    }
+
+    /// Sets the Associated Data (AAD) for this decryption operation.
+    /// The AAD must match the value provided during encryption.
+    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
+        self.aad = Some(aad.into());
+        self
     }
 
     /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and create a decryptor.
@@ -622,12 +693,15 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         sk: A::PrivateKey,
     ) -> crate::Result<crate::hybrid::asynchronous::Decryptor<R, A, S>>
     where
-        A: AsymmetricAlgorithm,
-        S: SymmetricAlgorithm,
+        A: AsymmetricAlgorithm + 'static,
+        S: SymmetricAlgorithm + 'static,
+        A::PrivateKey: Send,
         A::EncapsulatedKey: From<Vec<u8>> + Send,
-        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
+        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
     {
-        self.inner.into_decryptor::<A, S>(sk).await
+        self.inner
+            .into_decryptor::<A, S>(sk, self.aad.as_deref())
+            .await
     }
 }
 
@@ -794,6 +868,43 @@ mod tests {
         let decrypted = pending.with_provider::<_, TestDek>(&provider)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn test_aad_roundtrip() -> crate::Result<()> {
+        let (pk, sk) = TestKem::generate_keypair()?;
+        let plaintext = get_test_data();
+        let aad = b"test-associated-data-for-hybrid";
+        let kek_id = "aad-kek".to_string();
+        let seal = HybridSeal::new();
+
+        // Encrypt with AAD
+        let encrypted = seal
+            .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
+            .with_aad(aad)
+            .to_vec(plaintext)?;
+
+        // Decrypt with correct AAD
+        let pending = seal.decrypt().from_slice(&encrypted)?;
+        assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
+        let decrypted = pending
+            .with_aad(aad)
+            .with_private_key::<TestKem, TestDek>(&sk)?;
+        assert_eq!(plaintext, decrypted.as_slice());
+
+        // Decrypt with wrong AAD fails
+        let pending_fail = seal.decrypt().from_slice(&encrypted)?;
+        let result = pending_fail
+            .with_aad(b"wrong-aad")
+            .with_private_key::<TestKem, TestDek>(&sk);
+        assert!(result.is_err());
+
+        // Decrypt with no AAD fails
+        let pending_fail2 = seal.decrypt().from_slice(&encrypted)?;
+        let result2 = pending_fail2.with_private_key::<TestKem, TestDek>(&sk);
+        assert!(result2.is_err());
+
         Ok(())
     }
 

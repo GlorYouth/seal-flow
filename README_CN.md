@@ -180,6 +180,53 @@ fn main() -> Result<()> {
 }
 ```
 
+### 使用关联数据 (AAD)
+
+`seal-flow` 支持关联数据（Associated Data, AAD），这部分数据会被认证但不会被加密。这对于将密文与其上下文（例如版本号、文件名或其他元数据）绑定非常有用，而无需加密这些元数据本身。
+
+`with_aad()` 方法可以在加密和解密流程中链式调用。为了解密成功，加密和解密过程中使用的 AAD 必须完全相同。
+
+```rust
+use seal_flow::prelude::*;
+use seal_crypto::prelude::SymmetricKeyGenerator;
+use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+
+fn main() -> Result<()> {
+    let key = Aes256Gcm::generate_key()?;
+    let key_id = "my-aad-key".to_string();
+    let plaintext = b"这是机密数据。";
+    let aad = b"这是我的上下文元数据。";
+
+    let seal = SymmetricSeal::new();
+
+    // 使用 AAD 加密
+    let ciphertext = seal
+        .encrypt::<Aes256Gcm>(&key, key_id)
+        .with_aad(aad)
+        .to_vec(plaintext)?;
+
+    // 解密时，你必须提供相同的 AAD。
+    let pending_decryptor = seal.decrypt().from_slice(&ciphertext)?;
+    let decrypted_text = pending_decryptor
+        .with_aad(aad) // 提供相同的 AAD
+        .with_key::<Aes256Gcm>(&key)?;
+
+    assert_eq!(plaintext, &decrypted_text[..]);
+    println!("成功使用AAD解密！");
+
+    // 尝试使用错误或缺失的 AAD 进行解密将会失败。
+    let pending_fail = seal.decrypt().from_slice(&ciphertext)?;
+    assert!(pending_fail.with_aad(b"错误的 aad").with_key::<Aes256Gcm>(&key).is_err());
+    
+    let pending_fail2 = seal.decrypt().from_slice(&ciphertext)?;
+    assert!(pending_fail2.with_key::<Aes256Gcm>(&key).is_err());
+    
+    println!("使用错误/缺失的AAD解密已按预期失败。");
+
+    Ok(())
+}
+```
+
 关于涵盖所有模式和API层级的更详细示例，请参阅 `examples/` 目录。
 
 ## 运行示例

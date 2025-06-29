@@ -7,19 +7,28 @@ use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{self, Read, Write};
 
-/// Implements `std::io::Write` for synchronous, streaming hybrid encryption.
-pub struct Encryptor<W: Write, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
+/// An `std::io::Write` adapter for streaming hybrid encryption.
+pub struct Encryptor<W, A, S>
+where
+    W: Write,
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+    S::Key: From<Zeroizing<Vec<u8>>>,
+{
     writer: W,
-    symmetric_key: S::Key, // This is the derived DEK
+    symmetric_key: S::Key,
     base_nonce: [u8; 12],
     chunk_size: usize,
     buffer: Vec<u8>,
     chunk_counter: u64,
+    encrypted_chunk_buffer: Vec<u8>,
+    aad: Option<Vec<u8>>,
     _phantom: std::marker::PhantomData<(A, S)>,
 }
 
-impl<W: Write, A, S> Encryptor<W, A, S>
+impl<W, A, S> Encryptor<W, A, S>
 where
+    W: Write,
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
     Vec<u8>: From<<A as Kem>::EncapsulatedKey>,
@@ -30,27 +39,29 @@ where
     ///
     /// This will perform the KEM encapsulate operation immediately to generate the DEK,
     /// and write the complete header to the underlying writer.
-    pub fn new(mut writer: W, pk: &A::PublicKey, kek_id: String) -> Result<Self>
-    where
-        S::Key: Clone,
-    {
+    pub fn new(
+        mut writer: W,
+        pk: &A::PublicKey,
+        kek_id: String,
+        aad: Option<&[u8]>,
+    ) -> Result<Self> {
         // 1. Create header, nonce, and DEK
-        let (header, base_nonce, shared_secret) =
-            create_header::<A, S>(&pk.clone().into(), kek_id)?;
-        let key_material = shared_secret.into();
+        let (header, base_nonce, symmetric_key) = create_header::<A, S>(pk, kek_id)?;
 
-        // 2. Write header to the underlying writer.
+        // 2. Write header length and header to the writer
         let header_bytes = header.encode_to_vec()?;
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
 
         Ok(Self {
             writer,
-            symmetric_key: key_material,
+            symmetric_key: symmetric_key.into(),
             base_nonce,
             chunk_size: DEFAULT_CHUNK_SIZE as usize,
             buffer: Vec::with_capacity(DEFAULT_CHUNK_SIZE as usize),
             chunk_counter: 0,
+            encrypted_chunk_buffer: vec![0u8; DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE],
+            aad: aad.map(|d| d.to_vec()),
             _phantom: std::marker::PhantomData,
         })
     }
@@ -61,13 +72,17 @@ where
     /// encrypted and the authentication tag is written to the underlying writer.
     pub fn finish(mut self) -> Result<()> {
         if !self.buffer.is_empty() {
-            let final_chunk = self.buffer.drain(..).collect::<Vec<u8>>();
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
-
-            let encrypted_chunk =
-                S::encrypt(&self.symmetric_key, &nonce, &final_chunk, None)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            self.writer.write_all(&encrypted_chunk)?;
+            let bytes_written = S::encrypt_to_buffer(
+                &self.symmetric_key,
+                &nonce,
+                &self.buffer,
+                &mut self.encrypted_chunk_buffer,
+                self.aad.as_deref(),
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            self.writer
+                .write_all(&self.encrypted_chunk_buffer[..bytes_written])?;
         }
         self.writer.flush()?;
         Ok(())
@@ -92,11 +107,16 @@ where
 
             if self.buffer.len() == self.chunk_size {
                 let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
-
-                let encrypted_chunk =
-                    S::encrypt(&self.symmetric_key, &nonce, &self.buffer, None)
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-                self.writer.write_all(&encrypted_chunk)?;
+                let bytes_written = S::encrypt_to_buffer(
+                    &self.symmetric_key,
+                    &nonce,
+                    &self.buffer,
+                    &mut self.encrypted_chunk_buffer,
+                    self.aad.as_deref(),
+                )
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                self.writer
+                    .write_all(&self.encrypted_chunk_buffer[..bytes_written])?;
                 self.chunk_counter += 1;
                 self.buffer.clear();
             }
@@ -106,10 +126,16 @@ where
         while input.len() >= self.chunk_size {
             let chunk = &input[..self.chunk_size];
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
-
-            let encrypted_chunk = S::encrypt(&self.symmetric_key, &nonce, chunk, None)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            self.writer.write_all(&encrypted_chunk)?;
+            let bytes_written = S::encrypt_to_buffer(
+                &self.symmetric_key,
+                &nonce,
+                chunk,
+                &mut self.encrypted_chunk_buffer,
+                self.aad.as_deref(),
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            self.writer
+                .write_all(&self.encrypted_chunk_buffer[..bytes_written])?;
 
             self.chunk_counter += 1;
             input = &input[self.chunk_size..];
@@ -148,12 +174,16 @@ impl<R: Read> PendingDecryptor<R> {
     }
 
     /// Consumes the pending decryptor and returns a full `Decryptor` by providing the private key.
-    pub fn into_decryptor<A, S>(self, sk: &A::PrivateKey) -> Result<Decryptor<R, A, S>>
+    pub fn into_decryptor<A, S>(
+        self,
+        sk: &A::PrivateKey,
+        aad: Option<&[u8]>,
+    ) -> Result<Decryptor<R, A, S>>
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
         A::PrivateKey: Clone,
-        A::EncapsulatedKey: From<Vec<u8>>,
+        A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
         let (encapsulated_key, chunk_size, base_nonce) = match self.header.payload {
@@ -179,6 +209,7 @@ impl<R: Read> PendingDecryptor<R> {
             encrypted_chunk_buffer: vec![0; encrypted_chunk_size],
             chunk_counter: 0,
             is_done: false,
+            aad: aad.map(|d| d.to_vec()),
             _phantom: std::marker::PhantomData,
         })
     }
@@ -187,16 +218,20 @@ impl<R: Read> PendingDecryptor<R> {
 /// Implements `std::io::Read` for synchronous, streaming hybrid decryption.
 pub struct Decryptor<R: Read, A: AsymmetricAlgorithm, S: SymmetricAlgorithm>
 where
+    R: Read,
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
     S::Key: From<Zeroizing<Vec<u8>>>,
 {
     reader: R,
-    symmetric_key: S::Key, // The recovered DEK
+    symmetric_key: S::Key,
     base_nonce: [u8; 12],
     encrypted_chunk_size: usize,
     buffer: io::Cursor<Vec<u8>>,
     encrypted_chunk_buffer: Vec<u8>,
     chunk_counter: u64,
     is_done: bool,
+    aad: Option<Vec<u8>>,
     _phantom: std::marker::PhantomData<(A, S)>,
 }
 
@@ -254,7 +289,7 @@ where
             &nonce,
             &self.encrypted_chunk_buffer[..total_bytes_read],
             decrypted_buf,
-            None,
+            self.aad.as_deref(),
         )
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
@@ -276,16 +311,17 @@ mod tests {
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::io::Cursor;
 
-    fn test_hybrid_streaming_roundtrip(plaintext: &[u8]) {
+    fn test_hybrid_streaming_roundtrip(plaintext: &[u8], aad: Option<&[u8]>) {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let kek_id = "test-rsa-key".to_string();
+        let kek_id = "test_kek_id".to_string();
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::new(
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
             &mut encrypted_data,
             &pk,
             kek_id.clone(),
+            aad,
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
@@ -300,7 +336,7 @@ mod tests {
         );
 
         let mut decryptor = pending_decryptor
-            .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(&sk)
+            .into_decryptor::<Rsa2048, Aes256Gcm>(&sk, aad)
             .unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
@@ -310,19 +346,26 @@ mod tests {
 
     #[test]
     fn test_roundtrip_long_message() {
-        let plaintext = b"This is a very long test message to test the hybrid streaming encryption and decryption. It needs to be longer than a single chunk to ensure the chunking logic is working correctly.";
-        test_hybrid_streaming_roundtrip(plaintext);
+        let plaintext = b"This is a very long test message to test the streaming encryption and decryption. It should be longer than a single chunk to ensure that the chunking logic is working correctly. Let's add more data to make sure it spans multiple chunks. Lorem ipsum dolor sit amet, consectetur adipiscing elit.";
+        test_hybrid_streaming_roundtrip(plaintext, None);
     }
 
     #[test]
     fn test_roundtrip_empty_message() {
-        test_hybrid_streaming_roundtrip(b"");
+        test_hybrid_streaming_roundtrip(b"", None);
     }
 
     #[test]
     fn test_roundtrip_exact_chunk_size() {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
-        test_hybrid_streaming_roundtrip(&plaintext);
+        test_hybrid_streaming_roundtrip(&plaintext, None);
+    }
+
+    #[test]
+    fn test_aad_roundtrip() {
+        let plaintext = b"streaming hybrid data with aad";
+        let aad = b"streaming hybrid context";
+        test_hybrid_streaming_roundtrip(plaintext, Some(aad));
     }
 
     #[test]
@@ -331,10 +374,11 @@ mod tests {
         let plaintext = b"some important data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::new(
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
             &mut encrypted_data,
             &pk,
             "test_kek_id".to_string(),
+            None,
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
@@ -348,7 +392,7 @@ mod tests {
 
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         let mut decryptor = pending
-            .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(&sk)
+            .into_decryptor::<Rsa2048, Aes256Gcm>(&sk, None)
             .unwrap();
 
         let result = decryptor.read_to_end(&mut Vec::new());
@@ -361,18 +405,58 @@ mod tests {
         let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"some data";
 
+        // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::new(
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
             &mut encrypted_data,
             &pk,
             "test_kek_id".to_string(),
+            None,
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
 
+        // Decrypt with the wrong key
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending.into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(&sk2);
+        let result = pending.into_decryptor::<Rsa2048, Aes256Gcm>(&sk2, None);
+
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_wrong_aad_fails() {
+        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let plaintext = b"some important data";
+        let aad1 = b"correct aad";
+        let aad2 = b"wrong aad";
+
+        let mut encrypted_data = Vec::new();
+        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
+            &mut encrypted_data,
+            &pk,
+            "test_kek_id".to_string(),
+            Some(aad1),
+        )
+        .unwrap();
+        encryptor.write_all(plaintext).unwrap();
+        encryptor.finish().unwrap();
+
+        // Decrypt with wrong AAD
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        
+        let mut decryptor = pending
+            .into_decryptor::<Rsa2048, Aes256Gcm>(&sk, Some(aad2))
+            .unwrap();
+        let result = decryptor.read_to_end(&mut Vec::new());
+        assert!(result.is_err());
+
+        // Decrypt with no AAD
+        let pending2 = PendingDecryptor::from_reader(Cursor::new(encrypted_data)).unwrap();
+        let mut decryptor2 = pending2
+            .into_decryptor::<Rsa2048, Aes256Gcm>(&sk, None)
+            .unwrap();
+        let result2 = decryptor2.read_to_end(&mut Vec::new());
+        assert!(result2.is_err());
     }
 }
