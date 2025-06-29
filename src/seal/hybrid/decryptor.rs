@@ -451,9 +451,6 @@ where
         let verification_key = provider
             .get_signature_key(signer_id)
             .ok_or(Error::KeyNotFound)?;
-        // This is a limitation for now, we need to make the provider own the key
-        // or use other mechanisms to manage lifetime.
-        // For simplicity, we assume static lifetime for keys from provider in streaming mode.
         self.verification_key = Some(verification_key.clone());
         Ok(self)
     }

@@ -25,4 +25,6 @@ pub enum SignatureAlgorithm {
     Dilithium2,
     Dilithium3,
     Dilithium5,
+    Ed25519,
+    EcdsaP256,
 }

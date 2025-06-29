@@ -7,7 +7,10 @@ use seal_crypto::{
                 dilithium::{Dilithium2, Dilithium3, Dilithium5},
                 kyber::{Kyber1024, Kyber512, Kyber768},
             },
-            traditional::rsa::{Rsa2048, Rsa4096},
+            traditional::{
+                rsa::{Rsa2048, Rsa4096},
+                ecc::{Ed25519, EcdsaP256},
+            },
         },
         symmetric::{
             aes_gcm::{Aes128Gcm, Aes256Gcm},
@@ -49,4 +52,6 @@ pub enum SignaturePublicKey {
     Dilithium2(<Dilithium2 as AsymmetricKeySet>::PublicKey),
     Dilithium3(<Dilithium3 as AsymmetricKeySet>::PublicKey),
     Dilithium5(<Dilithium5 as AsymmetricKeySet>::PublicKey),
+    Ed25519(<Ed25519 as AsymmetricKeySet>::PublicKey),
+    EcdsaP256(<EcdsaP256 as AsymmetricKeySet>::PublicKey),
 }

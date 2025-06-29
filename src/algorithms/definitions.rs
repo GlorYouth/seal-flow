@@ -10,7 +10,10 @@ use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
     Dilithium2, Dilithium3, Dilithium5,
 };
 use seal_crypto::schemes::asymmetric::post_quantum::kyber::{Kyber1024, Kyber512, Kyber768};
-use seal_crypto::schemes::asymmetric::traditional::rsa::{Rsa2048, Rsa4096};
+use seal_crypto::schemes::asymmetric::traditional::{
+    rsa::{Rsa2048, Rsa4096},
+    ecc::{Ed25519, EcdsaP256},
+};
 use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};
 use seal_crypto::schemes::symmetric::chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305};
 
@@ -77,4 +80,14 @@ impl SignatureAlgorithmDetails for Dilithium3 {
 impl SignatureAlgorithmDetails for Dilithium5 {
     const ALGORITHM: common::algorithms::SignatureAlgorithm =
         common::algorithms::SignatureAlgorithm::Dilithium5;
+}
+
+impl SignatureAlgorithmDetails for Ed25519 {
+    const ALGORITHM: common::algorithms::SignatureAlgorithm =
+        common::algorithms::SignatureAlgorithm::Ed25519;
+}
+
+impl SignatureAlgorithmDetails for EcdsaP256 {
+    const ALGORITHM: common::algorithms::SignatureAlgorithm =
+        common::algorithms::SignatureAlgorithm::EcdsaP256;
 }

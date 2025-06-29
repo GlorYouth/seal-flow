@@ -227,6 +227,8 @@ impl Header {
             use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
                 Dilithium2, Dilithium3, Dilithium5,
             };
+            use seal_crypto::schemes::asymmetric::traditional::ecc::{Ed25519, EcdsaP256};
+
             // 根据签名算法选择正确的验证方法
             match algo {
                 SignatureAlgorithm::Dilithium2 => match verification_key {
@@ -244,6 +246,18 @@ impl Header {
                 SignatureAlgorithm::Dilithium5 => match verification_key {
                     crate::keys::SignaturePublicKey::Dilithium5(key) => {
                         Dilithium5::verify(&key, &payload_bytes, &Signature(signature))?;
+                    }
+                    _ => return Err(Error::UnsupportedOperation),
+                },
+                SignatureAlgorithm::Ed25519 => match verification_key {
+                    crate::keys::SignaturePublicKey::Ed25519(key) => {
+                        Ed25519::verify(&key, &payload_bytes, &Signature(signature))?;
+                    }
+                    _ => return Err(Error::UnsupportedOperation),
+                },
+                SignatureAlgorithm::EcdsaP256 => match verification_key {
+                    crate::keys::SignaturePublicKey::EcdsaP256(key) => {
+                        EcdsaP256::verify(&key, &payload_bytes, &Signature(signature))?;
                     }
                     _ => return Err(Error::UnsupportedOperation),
                 },
