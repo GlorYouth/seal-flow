@@ -1,6 +1,6 @@
 use bincode::{Decode, Encode};
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享
-use crate::common::algorithms::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::common::algorithms::{AsymmetricAlgorithm, SignatureAlgorithm, SymmetricAlgorithm};
 use crate::error::{Error, Result};
 use std::io::Read;
 
@@ -21,6 +21,13 @@ pub struct StreamInfo {
     pub base_nonce: [u8; 12],
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
+pub struct SingerInfo {
+    pub signer_key_id: String,
+    pub signer_algorithm: SignatureAlgorithm,
+    pub signature: Vec<u8>,
+}
+
 /// HeaderPayload 包含了特定于加密模式的元数据
 #[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
 pub enum HeaderPayload {
@@ -35,6 +42,7 @@ pub enum HeaderPayload {
         dek_algorithm: SymmetricAlgorithm,
         encrypted_dek: Vec<u8>,
         stream_info: Option<StreamInfo>, // 混合模式理论上也可以流式处理
+        signature: Option<SingerInfo>,
     },
 }
 
@@ -55,6 +63,14 @@ impl HeaderPayload {
         }
     }
 
+    /// Returns the signer key ID if the payload is for hybrid encryption.
+    pub fn signer_key_id(&self) -> Option<&str> {
+        match self {
+            HeaderPayload::Hybrid { signature, .. } => signature.as_ref().map(|s| s.signer_key_id.as_str()),
+            _ => None,
+        }
+    }
+
     /// Returns the symmetric algorithm used for data encryption.
     /// In Hybrid mode, this is the Data-Encrypting-Key (DEK) algorithm.
     pub fn symmetric_algorithm(&self) -> SymmetricAlgorithm {
@@ -70,6 +86,44 @@ impl HeaderPayload {
         match self {
             HeaderPayload::Hybrid { kek_algorithm, .. } => Some(*kek_algorithm),
             _ => None,
+        }
+    }
+
+    /// Returns the signature algorithm, if applicable.
+    pub fn signer_algorithm(&self) -> Option<SignatureAlgorithm> {
+        match self {
+            HeaderPayload::Hybrid {
+                signature, ..
+            } => signature.as_ref().map(|s| s.signer_algorithm),
+            _ => None,
+        }
+    }
+
+    /// Returns the signature, if applicable.
+    pub fn signature(&self) -> Option<&[u8]> {
+        match self {
+            HeaderPayload::Hybrid { signature, .. } => signature.as_ref().map(|s| s.signature.as_slice()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn get_signed_payload_and_sig(&self) -> Result<(Vec<u8>, Vec<u8>)> {
+        if let HeaderPayload::Hybrid { .. } = self {
+            let signature = self.signature().ok_or(Error::SignatureMissing)?.to_vec();
+
+            let mut temp_payload = self.clone();
+            if let HeaderPayload::Hybrid {
+                ref mut signature, ..
+            } = temp_payload
+            {
+                *signature = None;
+            }
+
+            let payload_bytes =
+                bincode::encode_to_vec(&temp_payload, bincode::config::standard())?;
+            Ok((payload_bytes, signature))
+        } else {
+            Err(Error::UnsupportedOperation)
         }
     }
 }

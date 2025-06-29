@@ -28,3 +28,16 @@ pub trait AsymmetricAlgorithmDetails: Kem + KeyGenerator + 'static {
 pub trait AsymmetricAlgorithm: AsymmetricAlgorithmDetails {}
 
 impl<T: AsymmetricAlgorithmDetails> AsymmetricAlgorithm for T {}
+
+/// Trait to provide the details for a specific digital signature algorithm.
+/// The implementor of this trait is the scheme itself.
+pub trait SignatureAlgorithmDetails: SignatureScheme + 'static {
+    /// The corresponding algorithm enum.
+    const ALGORITHM: common::algorithms::SignatureAlgorithm;
+}
+
+/// Represents a concrete digital signature scheme.
+/// This is a marker trait that bundles `SignatureAlgorithmDetails`.
+pub trait SignatureAlgorithm: SignatureAlgorithmDetails {}
+
+impl<T: SignatureAlgorithmDetails> SignatureAlgorithm for T {}

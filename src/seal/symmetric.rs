@@ -146,10 +146,10 @@ impl SymmetricDecryptorBuilder {
     ///
     /// Returns a `PendingInMemoryDecryptor` that allows inspecting the header
     /// before providing the key.
-    pub fn from_slice<'a>(
-        &self,
-        ciphertext: &'a [u8],
-    ) -> crate::Result<PendingInMemoryDecryptor<'a>> {
+    pub fn slice(
+        self,
+        ciphertext: &[u8],
+    ) -> crate::Result<PendingInMemoryDecryptor> {
         let mid_level_pending =
             crate::symmetric::ordinary::PendingDecryptor::from_ciphertext(ciphertext)?;
         Ok(PendingInMemoryDecryptor {
@@ -159,10 +159,10 @@ impl SymmetricDecryptorBuilder {
     }
 
     /// Configures parallel decryption from an in-memory byte slice.
-    pub fn from_slice_parallel<'a>(
-        &self,
-        ciphertext: &'a [u8],
-    ) -> crate::Result<PendingInMemoryParallelDecryptor<'a>> {
+    pub fn slice_parallel(
+        self,
+        ciphertext: &[u8],
+    ) -> crate::Result<PendingInMemoryParallelDecryptor> {
         let mid_level_pending =
             crate::symmetric::parallel::PendingDecryptor::from_ciphertext(ciphertext)?;
         Ok(PendingInMemoryParallelDecryptor {
@@ -172,7 +172,7 @@ impl SymmetricDecryptorBuilder {
     }
 
     /// Configures decryption from a synchronous `Read` stream.
-    pub fn from_reader<R: Read>(&self, reader: R) -> crate::Result<PendingStreamingDecryptor<R>> {
+    pub fn reader<R: Read>(self, reader: R) -> crate::Result<PendingStreamingDecryptor<R>> {
         let mid_level_pending = crate::symmetric::streaming::PendingDecryptor::from_reader(reader)?;
         Ok(PendingStreamingDecryptor {
             inner: mid_level_pending,
@@ -181,8 +181,8 @@ impl SymmetricDecryptorBuilder {
     }
 
     /// Configures parallel decryption from a synchronous `Read` stream.
-    pub fn from_reader_parallel<R: Read + Send>(
-        &self,
+    pub fn reader_parallel<R: Read + Send>(
+        self,
         reader: R,
     ) -> crate::Result<PendingParallelStreamingDecryptor<R>> {
         let mid_level_pending =
@@ -195,8 +195,8 @@ impl SymmetricDecryptorBuilder {
 
     /// Begins an asynchronous streaming decryption operation.
     #[cfg(feature = "async")]
-    pub async fn from_async_reader<R: AsyncRead + Unpin>(
-        &self,
+    pub async fn async_reader<R: AsyncRead + Unpin>(
+        self,
         reader: R,
     ) -> crate::Result<PendingAsyncStreamingDecryptor<R>> {
         let mid_level_pending =
@@ -624,7 +624,7 @@ mod tests {
             .encrypt::<Aes256Gcm>(&key, TEST_KEY_ID.to_string())
             .to_vec(plaintext)
             .unwrap();
-        let pending = seal.decrypt().from_slice(&encrypted).unwrap();
+        let pending = seal.decrypt().slice(&encrypted).unwrap();
         assert_eq!(pending.key_id(), Some(TEST_KEY_ID));
         let decrypted = pending.with_key::<Aes256Gcm>(key.clone()).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
@@ -641,7 +641,7 @@ mod tests {
             .encrypt::<Aes256Gcm>(&key, key_id.clone())
             .to_vec_parallel(plaintext)?;
 
-        let pending = seal.decrypt().from_slice_parallel(&encrypted)?;
+        let pending = seal.decrypt().slice_parallel(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
         let decrypted = pending.with_key::<Aes256Gcm>(key.clone())?;
 
@@ -670,7 +670,7 @@ mod tests {
         // Decrypt
         let pending = seal
             .decrypt()
-            .from_reader(Cursor::new(&encrypted_data))
+            .reader(Cursor::new(&encrypted_data))
             .unwrap();
         let key_id = pending.key_id().unwrap();
         let decryption_key = key_store.get(key_id).unwrap();
@@ -696,7 +696,7 @@ mod tests {
 
         let pending = seal
             .decrypt()
-            .from_reader_parallel(Cursor::new(&encrypted))?;
+            .reader_parallel(Cursor::new(&encrypted))?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
 
         let mut decrypted = Vec::new();
@@ -708,7 +708,7 @@ mod tests {
 
     // A mock key provider for testing purposes.
     struct TestKeyProvider {
-        keys: HashMap<String, SymmetricKey<'static>>,
+        keys: HashMap<String, SymmetricKey>,
     }
 
     // Note: This is a bit of a hack for testing.
@@ -724,15 +724,15 @@ mod tests {
             let mut keys = HashMap::new();
             keys.insert(
                 "test-provider-key".to_string(),
-                SymmetricKey::Aes256Gcm(&TEST_KEY_AES256),
+                SymmetricKey::Aes256Gcm(TEST_KEY_AES256.clone()),
             );
             Self { keys }
         }
     }
 
     impl SymmetricKeyProvider for TestKeyProvider {
-        fn get_symmetric_key<'a>(&'a self, key_id: &str) -> Option<SymmetricKey<'a>> {
-            self.keys.get(key_id).copied()
+        fn get_symmetric_key(&self, key_id: &str) -> Option<SymmetricKey> {
+            self.keys.get(key_id).cloned()
         }
     }
 
@@ -752,11 +752,11 @@ mod tests {
         };
 
         let encrypted = seal
-            .encrypt::<Aes256Gcm>(raw_key, key_id.clone())
+            .encrypt::<Aes256Gcm>(&raw_key, key_id.clone())
             .to_vec(plaintext)?;
 
         // Decrypt using the provider
-        let pending = seal.decrypt().from_slice(&encrypted)?;
+        let pending = seal.decrypt().slice(&encrypted)?;
         let decrypted = pending.with_provider(&provider)?;
 
         assert_eq!(plaintext, &decrypted[..]);
@@ -777,20 +777,20 @@ mod tests {
             .to_vec(plaintext)?;
 
         // Decrypt with correct AAD
-        let pending = seal.decrypt().from_slice(&encrypted)?;
+        let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
         let decrypted = pending.with_aad(aad).with_key::<Aes256Gcm>(key.clone())?;
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
-        let pending_fail = seal.decrypt().from_slice(&encrypted)?;
+        let pending_fail = seal.decrypt().slice(&encrypted)?;
         let result = pending_fail
             .with_aad(b"wrong-aad")
             .with_key::<Aes256Gcm>(key.clone());
         assert!(result.is_err());
 
         // Decrypt with no AAD fails
-        let pending_fail2 = seal.decrypt().from_slice(&encrypted)?;
+        let pending_fail2 = seal.decrypt().slice(&encrypted)?;
         let result2 = pending_fail2.with_key::<Aes256Gcm>(key);
         assert!(result2.is_err());
 
@@ -825,7 +825,7 @@ mod tests {
             // Decrypt
             let pending = seal
                 .decrypt()
-                .from_async_reader(Cursor::new(&encrypted_data))
+                .async_reader(Cursor::new(&encrypted_data))
                 .await
                 .unwrap();
             let key_id = pending.key_id().unwrap();

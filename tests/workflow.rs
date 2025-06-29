@@ -74,7 +74,7 @@ fn test_symmetric_workflow() {
 
     // --- Decryption Side (simulated) ---
     // 1. Create a pending decryptor to peek the key ID from the header.
-    let pending_decryptor = seal.decrypt().from_slice(&encrypted).unwrap();
+    let pending_decryptor = seal.decrypt().slice(&encrypted).unwrap();
     let peeked_id = pending_decryptor.key_id().unwrap();
     assert_eq!(key_id, peeked_id);
 
@@ -109,7 +109,7 @@ fn test_hybrid_workflow() {
 
     // --- Decryption Side (simulated) ---
     // 1. Create a pending decryptor to peek the KEK ID from the header.
-    let pending_decryptor = seal.decrypt().from_slice(&encrypted).unwrap();
+    let pending_decryptor = seal.decrypt().slice(&encrypted).unwrap();
     let peeked_id = pending_decryptor.kek_id().unwrap();
     assert_eq!(kek_id, peeked_id);
 
@@ -155,7 +155,7 @@ mod async_workflow_tests {
         // 1. Peek the key ID asynchronously.
         let pending_decryptor = seal
             .decrypt()
-            .from_async_reader(Cursor::new(&encrypted_data))
+            .async_reader(Cursor::new(&encrypted_data))
             .await
             .unwrap();
         let peeked_id = pending_decryptor.key_id().unwrap();
@@ -200,7 +200,7 @@ mod async_workflow_tests {
         // 1. Peek the KEK ID asynchronously.
         let pending_decryptor = seal
             .decrypt()
-            .from_async_reader(Cursor::new(&encrypted_data))
+            .async_reader(Cursor::new(&encrypted_data))
             .await
             .unwrap();
         let peeked_id = pending_decryptor.kek_id().unwrap();

@@ -3,6 +3,7 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::common::SignerSet;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 use crate::impls::asynchronous::{DecryptorImpl, EncryptorImpl};
@@ -37,10 +38,11 @@ where
         mut writer: W,
         pk: A::PublicKey,
         kek_id: String,
+        signer: Option<SignerSet>,
         aad: Option<&[u8]>,
     ) -> Result<Self> {
         let (header, base_nonce, shared_secret) =
-            tokio::task::spawn_blocking(move || create_header::<A, S>(&pk.into(), kek_id))
+            tokio::task::spawn_blocking(move || create_header::<A, S>(&pk.into(), kek_id, signer))
                 .await??;
 
         let header_bytes = header.encode_to_vec()?;
@@ -195,6 +197,7 @@ mod tests {
             &mut encrypted_data,
             pk,
             kek_id.clone(),
+            None,
             aad,
         )
         .await
@@ -252,6 +255,7 @@ mod tests {
             pk,
             "test-kek-id".to_string(),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -285,6 +289,7 @@ mod tests {
             &mut encrypted_data,
             pk,
             "test_kek_id".to_string(),
+            None,
             None,
         )
         .await
@@ -327,6 +332,7 @@ mod tests {
             &mut encrypted_data,
             pk,
             "key1".to_string(),
+            None,
             Some(aad1),
         )
         .await

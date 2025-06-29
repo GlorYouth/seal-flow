@@ -1,7 +1,10 @@
 //! Implements the common logic for ordinary (single-threaded, in-memory) encryption and decryption.
+
+
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::error::Result;
+
 
 /// Encrypts in-memory data sequentially.
 pub fn encrypt_in_memory<S: SymmetricAlgorithm>(
@@ -12,7 +15,7 @@ pub fn encrypt_in_memory<S: SymmetricAlgorithm>(
     aad: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     let key_material = key.into();
-
+    
     let mut encrypted_body = Vec::with_capacity(
         plaintext.len() + (plaintext.len() / DEFAULT_CHUNK_SIZE as usize + 1) * S::TAG_SIZE,
     );

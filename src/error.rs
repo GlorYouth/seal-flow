@@ -62,8 +62,21 @@ pub enum Error {
     #[error("密文中未找到密钥加密密钥（KEK）ID")]
     KekIdNotFound,
 
-    #[error("异步任务错误")]
-    AsyncTaskError(#[from] tokio::task::JoinError),
+    #[error("异步任务错误: {0}")]
+    AsyncTaskError(String),
+
+    #[error("Signature is invalid or verification failed")]
+    SignatureInvalid,
+    #[error("Signature is missing from header where it was expected")]
+    SignatureMissing,
+    #[error("Signer key ID is missing from header for a signed message")]
+    SignerKeyIdMissing,
+}
+
+impl From<tokio::task::JoinError> for Error {
+    fn from(e: tokio::task::JoinError) -> Self {
+        Error::AsyncTaskError(e.to_string())
+    }
 }
 
 impl From<bincode::error::EncodeError> for Error {

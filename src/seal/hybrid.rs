@@ -1,10 +1,15 @@
-use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::algorithms::AsymmetricAlgorithm as AsymmetricAlgorithmEnum;
+use crate::algorithms::traits::{
+    AsymmetricAlgorithm, SignatureAlgorithm, SymmetricAlgorithm,
+};
+use crate::common::algorithms::{
+    AsymmetricAlgorithm as AsymmetricAlgorithmEnum,
+};
+use crate::common::SignerSet;
 use crate::common::header::Header;
 use crate::crypto::zeroize::Zeroizing;
 use crate::error::Error;
-use crate::keys::AsymmetricPrivateKey;
-use crate::provider::AsymmetricKeyProvider;
+use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
+use crate::provider::{AsymmetricKeyProvider, SignatureKeyProvider};
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -37,6 +42,7 @@ impl HybridSeal {
             pk,
             kek_id,
             aad: None,
+            signer: None,
             _phantom: PhantomData,
         }
     }
@@ -50,6 +56,55 @@ impl HybridSeal {
     }
 }
 
+
+/// Verifies the header signature if a verification key is provided.
+fn verify_header(header: &Header, verification_key: Option<SignaturePublicKey>) -> crate::Result<()> {
+    // 如果没有提供验证密钥，跳过验证
+    let verification_key = match verification_key {
+        Some(key) => key,
+        None => return Ok(()),
+    };
+
+    // 如果头部有签名，则进行验证
+    if let Some(algo) = header.payload.signer_algorithm() {
+        // 获取签名载荷和签名本身
+        let (payload_bytes, signature) = header.payload.get_signed_payload_and_sig()?;
+        use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{Dilithium2, Dilithium3, Dilithium5};
+        use seal_crypto::prelude::*;
+        // 根据签名算法选择正确的验证方法
+        match algo {
+            crate::common::algorithms::SignatureAlgorithm::Dilithium2 => {
+                match verification_key {
+                    crate::keys::SignaturePublicKey::Dilithium2(key) => {
+                        Dilithium2::verify(&key, &payload_bytes, &Signature(signature))?;
+                    }
+                    _ => return Err(Error::UnsupportedOperation),
+                }
+            }
+            crate::common::algorithms::SignatureAlgorithm::Dilithium3 => {
+                match verification_key {
+                    crate::keys::SignaturePublicKey::Dilithium3(key) => {
+                        Dilithium3::verify(&key, &payload_bytes, &Signature(signature))?;
+                    }
+                    _ => return Err(Error::UnsupportedOperation),
+                }
+            }
+            crate::common::algorithms::SignatureAlgorithm::Dilithium5 => {
+                match verification_key {
+                    crate::keys::SignaturePublicKey::Dilithium5(key) => {
+                        Dilithium5::verify(&key, &payload_bytes, &Signature(signature))?;
+                    }
+                    _ => return Err(Error::UnsupportedOperation),
+                }
+            }
+        }
+        Ok(())
+    } else {
+        // 没有签名，但提供了验证密钥
+        Err(Error::SignatureMissing)
+    }
+}
+
 /// A context for hybrid encryption operations, allowing selection of execution mode.
 pub struct HybridEncryptor<'a, A, S>
 where
@@ -59,6 +114,7 @@ where
     pk: &'a A::PublicKey,
     kek_id: String,
     aad: Option<Vec<u8>>,
+    signer: Option<SignerSet>,
     _phantom: PhantomData<(A, S)>,
 }
 
@@ -73,6 +129,29 @@ where
         self
     }
 
+    /// Signs the encryption metadata (header) with the given private key.
+    /// The signature ensures the integrity and authenticity of the encryption parameters.
+    pub fn with_signer<SignerAlgo>(
+        mut self,
+        signing_key: SignerAlgo::PrivateKey,
+        signer_key_id: String,
+    ) -> Self
+    where
+        SignerAlgo: SignatureAlgorithm + 'static,
+        SignerAlgo::PrivateKey: Sync + Send,
+    {
+        self.signer = Some(SignerSet {
+            signer_key_id,
+            signer_algorithm: SignerAlgo::ALGORITHM,
+            signer: Box::new(move |message| {
+                SignerAlgo::sign(&signing_key, message)
+                    .map(|s| s.0)
+                    .map_err(|e| e.into())
+            }),
+        });
+        self
+    }
+
     /// Encrypts the given plaintext in-memory.
     pub fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
     where
@@ -83,6 +162,7 @@ where
             self.pk,
             plaintext,
             self.kek_id,
+            self.signer,
             self.aad.as_deref(),
         )
     }
@@ -97,6 +177,7 @@ where
             self.pk,
             plaintext,
             self.kek_id,
+            self.signer,
             self.aad.as_deref(),
         )
     }
@@ -110,7 +191,13 @@ where
         Vec<u8>: From<<A as seal_crypto::prelude::Kem>::EncapsulatedKey>,
         S::Key: From<Zeroizing<Vec<u8>>> + Clone,
     {
-        crate::hybrid::streaming::Encryptor::new(writer, self.pk, self.kek_id, self.aad.as_deref())
+        crate::hybrid::streaming::Encryptor::new(
+            writer,
+            self.pk,
+            self.kek_id,
+            self.signer,
+            self.aad.as_deref(),
+        )
     }
 
     /// Encrypts data from a reader and writes to a writer using parallel processing.
@@ -126,6 +213,7 @@ where
             reader,
             writer,
             self.kek_id,
+            self.signer,
             self.aad.as_deref(),
         )
     }
@@ -147,6 +235,7 @@ where
             writer,
             self.pk.clone().into(),
             self.kek_id,
+            self.signer,
             self.aad.as_deref(),
         )
         .await
@@ -164,43 +253,46 @@ impl HybridDecryptorBuilder {
     }
 
     /// Configures decryption from an in-memory byte slice.
-    pub fn from_slice<'a>(
-        &self,
-        ciphertext: &'a [u8],
-    ) -> crate::Result<PendingInMemoryDecryptor<'a>> {
+    pub fn slice(
+        self,
+        ciphertext: &[u8],
+    ) -> crate::Result<PendingInMemoryDecryptor> {
         let mid_level_pending =
             crate::hybrid::ordinary::PendingDecryptor::from_ciphertext(ciphertext)?;
         Ok(PendingInMemoryDecryptor {
             inner: mid_level_pending,
             aad: None,
+            verification_key: None,
         })
     }
 
     /// Configures parallel decryption from an in-memory byte slice.
-    pub fn from_slice_parallel<'a>(
-        &self,
-        ciphertext: &'a [u8],
-    ) -> crate::Result<PendingInMemoryParallelDecryptor<'a>> {
+    pub fn slice_parallel(
+        self,
+        ciphertext: &[u8],
+    ) -> crate::Result<PendingInMemoryParallelDecryptor> {
         let mid_level_pending =
             crate::hybrid::parallel::PendingDecryptor::from_ciphertext(ciphertext)?;
         Ok(PendingInMemoryParallelDecryptor {
             inner: mid_level_pending,
             aad: None,
+            verification_key: None,
         })
     }
 
     /// Configures decryption from a synchronous `Read` stream.
-    pub fn from_reader<R: Read>(&self, reader: R) -> crate::Result<PendingStreamingDecryptor<R>> {
+    pub fn reader<R: Read>(self, reader: R) -> crate::Result<PendingStreamingDecryptor<R>> {
         let mid_level_pending = crate::hybrid::streaming::PendingDecryptor::from_reader(reader)?;
         Ok(PendingStreamingDecryptor {
             inner: mid_level_pending,
             aad: None,
+            verification_key: None,
         })
     }
 
     /// Configures parallel decryption from a synchronous `Read` stream.
-    pub fn from_reader_parallel<R: Read + Send>(
-        &self,
+    pub fn reader_parallel<R: Read + Send>(
+        self,
         reader: R,
     ) -> crate::Result<PendingParallelStreamingDecryptor<R>> {
         let mid_level_pending =
@@ -208,13 +300,14 @@ impl HybridDecryptorBuilder {
         Ok(PendingParallelStreamingDecryptor {
             inner: mid_level_pending,
             aad: None,
+            verification_key: None,
         })
     }
 
     /// [Async] Configures decryption from an asynchronous `Read` stream.
     #[cfg(feature = "async")]
-    pub async fn from_async_reader<R: AsyncRead + Unpin>(
-        &self,
+    pub async fn async_reader<R: AsyncRead + Unpin>(
+        self,
         reader: R,
     ) -> crate::Result<PendingAsyncStreamingDecryptor<R>> {
         let mid_level_pending =
@@ -222,6 +315,7 @@ impl HybridDecryptorBuilder {
         Ok(PendingAsyncStreamingDecryptor {
             inner: mid_level_pending,
             aad: None,
+            verification_key: None,
         })
     }
 }
@@ -230,6 +324,7 @@ impl HybridDecryptorBuilder {
 pub struct PendingInMemoryDecryptor<'a> {
     inner: crate::hybrid::ordinary::PendingDecryptor<'a>,
     aad: Option<Vec<u8>>,
+    verification_key: Option<SignaturePublicKey>,
 }
 
 impl<'a> PendingInMemoryDecryptor<'a> {
@@ -243,11 +338,31 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         self.header().payload.kek_id()
     }
 
+    /// Returns the Signer-Key-ID from the header.
+    pub fn signer_key_id(&self) -> Option<&str> {
+        self.header().payload.signer_key_id()
+    }
+
     /// Sets the Associated Data (AAD) for this decryption operation.
     /// The AAD must match the value provided during encryption.
     pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.aad = Some(aad.into());
         self
+    }
+
+    /// Supplies a key provider to automatically look up the verification key.
+    pub fn with_verifier<P>(mut self, provider: &'a P) -> crate::Result<Self>
+    where
+        P: SignatureKeyProvider,
+    {
+        let signer_id = self
+            .signer_key_id()
+            .ok_or(Error::SignerKeyIdMissing)?;
+        let verification_key = provider
+            .get_signature_key(signer_id)
+            .ok_or(Error::KeyNotFound)?;
+        self.verification_key = Some(verification_key);
+        Ok(self)
     }
 
     /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and decrypt.
@@ -257,6 +372,8 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
+        verify_header(self.header(), self.verification_key.clone())?;
+
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
             .get_asymmetric_key(kek_id)
@@ -275,23 +392,23 @@ impl<'a> PendingInMemoryDecryptor<'a> {
 
         match algorithm {
             AsymmetricAlgorithmEnum::Rsa2048 => match key {
-                AsymmetricPrivateKey::Rsa2048(k) => self.with_private_key::<Rsa2048, S>(k),
+                AsymmetricPrivateKey::Rsa2048(k) => self.with_private_key::<Rsa2048, S>(&k),
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Rsa4096 => match key {
-                AsymmetricPrivateKey::Rsa4096(k) => self.with_private_key::<Rsa4096, S>(k),
+                AsymmetricPrivateKey::Rsa4096(k) => self.with_private_key::<Rsa4096, S>(&k),
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Kyber512 => match key {
-                AsymmetricPrivateKey::Kyber512(k) => self.with_private_key::<Kyber512, S>(k),
+                AsymmetricPrivateKey::Kyber512(k) => self.with_private_key::<Kyber512, S>(&k),
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Kyber768 => match key {
-                AsymmetricPrivateKey::Kyber768(k) => self.with_private_key::<Kyber768, S>(k),
+                AsymmetricPrivateKey::Kyber768(k) => self.with_private_key::<Kyber768, S>(&k),
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Kyber1024 => match key {
-                AsymmetricPrivateKey::Kyber1024(k) => self.with_private_key::<Kyber1024, S>(k),
+                AsymmetricPrivateKey::Kyber1024(k) => self.with_private_key::<Kyber1024, S>(&k),
                 _ => Err(Error::MismatchedKeyType),
             },
         }
@@ -305,6 +422,7 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
+        verify_header(self.header(), self.verification_key.clone())?;
         self.inner.into_plaintext::<A, S>(sk, self.aad.as_deref())
     }
 }
@@ -313,6 +431,7 @@ impl<'a> PendingInMemoryDecryptor<'a> {
 pub struct PendingInMemoryParallelDecryptor<'a> {
     inner: crate::hybrid::parallel::PendingDecryptor<'a>,
     aad: Option<Vec<u8>>,
+    verification_key: Option<SignaturePublicKey>,
 }
 
 impl<'a> PendingInMemoryParallelDecryptor<'a> {
@@ -326,11 +445,31 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         self.header().payload.kek_id()
     }
 
+    /// Returns the Signer-Key-ID from the header.
+    pub fn signer_key_id(&self) -> Option<&str> {
+        self.header().payload.signer_key_id()
+    }
+
     /// Sets the Associated Data (AAD) for this decryption operation.
     /// The AAD must match the value provided during encryption.
     pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.aad = Some(aad.into());
         self
+    }
+
+    /// Supplies a key provider to automatically look up the verification key.
+    pub fn with_verifier<P>(mut self, provider: &'a P) -> crate::Result<Self>
+    where
+        P: SignatureKeyProvider,
+    {
+        let signer_id = self
+            .signer_key_id()
+            .ok_or(Error::SignerKeyIdMissing)?;
+        let verification_key = provider
+            .get_signature_key(signer_id)
+            .ok_or(Error::KeyNotFound)?;
+        self.verification_key = Some(verification_key);
+        Ok(self)
     }
 
     /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and decrypt.
@@ -340,6 +479,7 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
+        verify_header(self.header(), self.verification_key.clone())?;
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
             .get_asymmetric_key(kek_id)
@@ -358,23 +498,23 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
 
         match algorithm {
             AsymmetricAlgorithmEnum::Rsa2048 => match key {
-                AsymmetricPrivateKey::Rsa2048(k) => self.with_private_key::<Rsa2048, S>(k),
+                AsymmetricPrivateKey::Rsa2048(k) => self.with_private_key::<Rsa2048, S>(&k),
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Rsa4096 => match key {
-                AsymmetricPrivateKey::Rsa4096(k) => self.with_private_key::<Rsa4096, S>(k),
+                AsymmetricPrivateKey::Rsa4096(k) => self.with_private_key::<Rsa4096, S>(&k),
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Kyber512 => match key {
-                AsymmetricPrivateKey::Kyber512(k) => self.with_private_key::<Kyber512, S>(k),
+                AsymmetricPrivateKey::Kyber512(k) => self.with_private_key::<Kyber512, S>(&k),
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Kyber768 => match key {
-                AsymmetricPrivateKey::Kyber768(k) => self.with_private_key::<Kyber768, S>(k),
+                AsymmetricPrivateKey::Kyber768(k) => self.with_private_key::<Kyber768, S>(&k),
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Kyber1024 => match key {
-                AsymmetricPrivateKey::Kyber1024(k) => self.with_private_key::<Kyber1024, S>(k),
+                AsymmetricPrivateKey::Kyber1024(k) => self.with_private_key::<Kyber1024, S>(&k),
                 _ => Err(Error::MismatchedKeyType),
             },
         }
@@ -389,17 +529,19 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         A::PrivateKey: Clone,
         A::EncapsulatedKey: From<Vec<u8>>,
     {
+        verify_header(self.header(), self.verification_key.clone())?;
         self.inner.into_plaintext::<A, S>(sk, self.aad.as_deref())
     }
 }
 
 /// A pending synchronous streaming hybrid decryptor.
-pub struct PendingStreamingDecryptor<R: Read> {
+pub struct PendingStreamingDecryptor<R: Read + 'static> {
     inner: crate::hybrid::streaming::PendingDecryptor<R>,
     aad: Option<Vec<u8>>,
+    verification_key: Option<SignaturePublicKey>,
 }
 
-impl<R: Read> PendingStreamingDecryptor<R> {
+impl<R: Read + 'static> PendingStreamingDecryptor<R> {
     /// Returns a reference to the stream's header.
     pub fn header(&self) -> &Header {
         self.inner.header()
@@ -410,6 +552,11 @@ impl<R: Read> PendingStreamingDecryptor<R> {
         self.header().payload.kek_id()
     }
 
+    /// Returns the Signer-Key-ID from the stream's header.
+    pub fn signer_key_id(&self) -> Option<&str> {
+        self.header().payload.signer_key_id()
+    }
+
     /// Sets the Associated Data (AAD) for this decryption operation.
     /// The AAD must match the value provided during encryption.
     pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
@@ -417,14 +564,30 @@ impl<R: Read> PendingStreamingDecryptor<R> {
         self
     }
 
+    /// Supplies a key provider to automatically look up the verification key.
+    pub fn with_verifier<P>(mut self, provider: &P) -> crate::Result<Self>
+    where
+        P: SignatureKeyProvider,
+    {
+        let signer_id = self
+            .signer_key_id()
+            .ok_or(Error::SignerKeyIdMissing)?;
+        let verification_key = provider
+            .get_signature_key(signer_id)
+            .ok_or(Error::KeyNotFound)?;
+        self.verification_key = Some(verification_key);
+        Ok(self)
+    }
+
     /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and create a decryptor.
-    pub fn with_provider<'s, P, S>(self, provider: &'s P) -> crate::Result<Box<dyn Read + 's>>
+    pub fn with_provider<P, S>(self, provider: &P) -> crate::Result<Box<dyn Read + 'static>>
     where
         P: AsymmetricKeyProvider,
         S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>>,
-        R: 's,
     {
+        verify_header(self.header(), self.verification_key.clone())?;
+
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
             .get_asymmetric_key(kek_id)
@@ -444,31 +607,31 @@ impl<R: Read> PendingStreamingDecryptor<R> {
         match algorithm {
             AsymmetricAlgorithmEnum::Rsa2048 => match key {
                 AsymmetricPrivateKey::Rsa2048(k) => self
-                    .with_private_key::<Rsa2048, S>(k)
+                    .with_private_key::<Rsa2048, S>(&k)
                     .map(|d| Box::new(d) as Box<dyn Read>),
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Rsa4096 => match key {
                 AsymmetricPrivateKey::Rsa4096(k) => self
-                    .with_private_key::<Rsa4096, S>(k)
+                    .with_private_key::<Rsa4096, S>(&k)
                     .map(|d| Box::new(d) as Box<dyn Read>),
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Kyber512 => match key {
                 AsymmetricPrivateKey::Kyber512(k) => self
-                    .with_private_key::<Kyber512, S>(k)
+                    .with_private_key::<Kyber512, S>(&k)
                     .map(|d| Box::new(d) as Box<dyn Read>),
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Kyber768 => match key {
                 AsymmetricPrivateKey::Kyber768(k) => self
-                    .with_private_key::<Kyber768, S>(k)
+                    .with_private_key::<Kyber768, S>(&k)
                     .map(|d| Box::new(d) as Box<dyn Read>),
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Kyber1024 => match key {
                 AsymmetricPrivateKey::Kyber1024(k) => self
-                    .with_private_key::<Kyber1024, S>(k)
+                    .with_private_key::<Kyber1024, S>(&k)
                     .map(|d| Box::new(d) as Box<dyn Read>),
                 _ => Err(Error::MismatchedKeyType),
             },
@@ -487,6 +650,7 @@ impl<R: Read> PendingStreamingDecryptor<R> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
+        verify_header(self.header(), self.verification_key.clone())?;
         self.inner.into_decryptor::<A, S>(sk, self.aad.as_deref())
     }
 }
@@ -498,6 +662,7 @@ where
 {
     inner: crate::hybrid::parallel_streaming::PendingDecryptor<R>,
     aad: Option<Vec<u8>>,
+    verification_key: Option<SignaturePublicKey>,
 }
 
 impl<R> PendingParallelStreamingDecryptor<R>
@@ -514,11 +679,34 @@ where
         self.header().payload.kek_id()
     }
 
+    /// Returns the Signer-Key-ID from the stream's header.
+    pub fn signer_key_id(&self) -> Option<&str> {
+        self.header().payload.signer_key_id()
+    }
+
     /// Sets the Associated Data (AAD) for this decryption operation.
     /// The AAD must match the value provided during encryption.
     pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.aad = Some(aad.into());
         self
+    }
+
+    /// Supplies a key provider to automatically look up the verification key.
+    pub fn with_verifier<P>(mut self, provider: &P) -> crate::Result<Self>
+    where
+        P: SignatureKeyProvider,
+    {
+        let signer_id = self
+            .signer_key_id()
+            .ok_or(Error::SignerKeyIdMissing)?;
+        let verification_key = provider
+            .get_signature_key(signer_id)
+            .ok_or(Error::KeyNotFound)?;
+        // This is a limitation for now, we need to make the provider own the key
+        // or use other mechanisms to manage lifetime.
+        // For simplicity, we assume static lifetime for keys from provider in streaming mode.
+        self.verification_key = Some(verification_key.clone());
+        Ok(self)
     }
 
     /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and decrypt the stream.
@@ -529,6 +717,8 @@ where
         W: Write,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
+        verify_header(self.header(), self.verification_key.clone())?;
+
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
             .get_asymmetric_key(kek_id)
@@ -548,31 +738,31 @@ where
         match algorithm {
             AsymmetricAlgorithmEnum::Rsa2048 => match key {
                 AsymmetricPrivateKey::Rsa2048(k) => {
-                    self.with_private_key_to_writer::<Rsa2048, S, W>(k, writer)
+                    self.with_private_key_to_writer::<Rsa2048, S, W>(&k, writer)
                 }
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Rsa4096 => match key {
                 AsymmetricPrivateKey::Rsa4096(k) => {
-                    self.with_private_key_to_writer::<Rsa4096, S, W>(k, writer)
+                    self.with_private_key_to_writer::<Rsa4096, S, W>(&k, writer)
                 }
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Kyber512 => match key {
                 AsymmetricPrivateKey::Kyber512(k) => {
-                    self.with_private_key_to_writer::<Kyber512, S, W>(k, writer)
+                    self.with_private_key_to_writer::<Kyber512, S, W>(&k, writer)
                 }
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Kyber768 => match key {
                 AsymmetricPrivateKey::Kyber768(k) => {
-                    self.with_private_key_to_writer::<Kyber768, S, W>(k, writer)
+                    self.with_private_key_to_writer::<Kyber768, S, W>(&k, writer)
                 }
                 _ => Err(Error::MismatchedKeyType),
             },
             AsymmetricAlgorithmEnum::Kyber1024 => match key {
                 AsymmetricPrivateKey::Kyber1024(k) => {
-                    self.with_private_key_to_writer::<Kyber1024, S, W>(k, writer)
+                    self.with_private_key_to_writer::<Kyber1024, S, W>(&k, writer)
                 }
                 _ => Err(Error::MismatchedKeyType),
             },
@@ -592,6 +782,7 @@ where
         A::PrivateKey: Clone,
         A::EncapsulatedKey: From<Vec<u8>> + Send,
     {
+        verify_header(self.header(), self.verification_key.clone())?;
         self.inner
             .decrypt_to_writer::<A, S, W>(sk, writer, self.aad.as_deref())
     }
@@ -602,6 +793,7 @@ where
 pub struct PendingAsyncStreamingDecryptor<R: AsyncRead + Unpin> {
     inner: crate::hybrid::asynchronous::PendingDecryptor<R>,
     aad: Option<Vec<u8>>,
+    verification_key: Option<SignaturePublicKey>,
 }
 
 #[cfg(feature = "async")]
@@ -616,11 +808,31 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         self.header().payload.kek_id()
     }
 
+    /// Returns the Signer-Key-ID from the stream's header.
+    pub fn signer_key_id(&self) -> Option<&str> {
+        self.header().payload.signer_key_id()
+    }
+
     /// Sets the Associated Data (AAD) for this decryption operation.
     /// The AAD must match the value provided during encryption.
     pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.aad = Some(aad.into());
         self
+    }
+
+    /// Supplies a key provider to automatically look up the verification key.
+    pub async fn with_verifier<P>(mut self, provider: &P) -> crate::Result<Self>
+    where
+        P: SignatureKeyProvider,
+    {
+        let signer_id = self
+            .signer_key_id()
+            .ok_or(Error::SignerKeyIdMissing)?;
+        let verification_key = provider
+            .get_signature_key(signer_id)
+            .ok_or(Error::KeyNotFound)?;
+        self.verification_key = Some(verification_key.clone());
+        Ok(self)
     }
 
     /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and create a decryptor.
@@ -634,6 +846,8 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         S::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
         R: Send + 's,
     {
+        verify_header(self.header(), self.verification_key.clone())?;
+
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
             .get_asymmetric_key(kek_id)
@@ -701,6 +915,7 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
     {
+        verify_header(self.header(), self.verification_key.clone())?;
         self.inner
             .into_decryptor::<A, S>(sk, self.aad.as_deref())
             .await
@@ -736,7 +951,7 @@ mod tests {
     )> = Lazy::new(|| TestKem::generate_keypair().unwrap());
 
     struct TestKeyProvider {
-        keys: HashMap<String, AsymmetricPrivateKey<'static>>,
+        keys: HashMap<String, AsymmetricPrivateKey>,
     }
 
     impl TestKeyProvider {
@@ -744,15 +959,15 @@ mod tests {
             let mut keys = HashMap::new();
             keys.insert(
                 "test-provider-key".to_string(),
-                AsymmetricPrivateKey::Rsa2048(&TEST_KEY_PAIR_RSA2048.1),
+                AsymmetricPrivateKey::Rsa2048(TEST_KEY_PAIR_RSA2048.1.clone()),
             );
             Self { keys }
         }
     }
 
     impl AsymmetricKeyProvider for TestKeyProvider {
-        fn get_asymmetric_key<'a>(&'a self, kek_id: &str) -> Option<AsymmetricPrivateKey<'a>> {
-            self.keys.get(kek_id).copied()
+        fn get_asymmetric_key<'a>(&'a self, kek_id: &str) -> Option<AsymmetricPrivateKey> {
+            self.keys.get(kek_id).cloned()
         }
     }
 
@@ -767,7 +982,7 @@ mod tests {
             .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
             .to_vec(plaintext)?;
 
-        let pending = seal.decrypt().from_slice(&encrypted)?;
+        let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
         let decrypted = pending.with_private_key::<TestKem, TestDek>(&sk)?;
 
@@ -786,7 +1001,7 @@ mod tests {
             .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
             .to_vec_parallel(plaintext)?;
 
-        let pending = seal.decrypt().from_slice_parallel(&encrypted)?;
+        let pending = seal.decrypt().slice_parallel(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
         let decrypted = pending.with_private_key::<TestKem, TestDek>(&sk)?;
 
@@ -815,7 +1030,7 @@ mod tests {
         // Decrypt
         let pending = seal
             .decrypt()
-            .from_reader(Cursor::new(&encrypted_data))
+            .reader(Cursor::new(encrypted_data))
             .unwrap();
         let kek_id = pending.kek_id().unwrap();
         let decryption_key = key_store.get(kek_id).unwrap();
@@ -841,7 +1056,7 @@ mod tests {
 
         let pending = seal
             .decrypt()
-            .from_reader_parallel(Cursor::new(&encrypted))?;
+            .reader_parallel(Cursor::new(&encrypted))?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
 
         let mut decrypted = Vec::new();
@@ -865,7 +1080,7 @@ mod tests {
             .encrypt::<TestKem, TestDek>(pk, kek_id.clone())
             .to_vec(plaintext)?;
 
-        let pending = seal.decrypt().from_slice(&encrypted)?;
+        let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
         let decrypted = pending.with_provider::<_, TestDek>(&provider)?;
 
@@ -888,7 +1103,7 @@ mod tests {
             .to_vec(plaintext)?;
 
         // Decrypt with correct AAD
-        let pending = seal.decrypt().from_slice(&encrypted)?;
+        let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
         let decrypted = pending
             .with_aad(aad)
@@ -896,14 +1111,14 @@ mod tests {
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
-        let pending_fail = seal.decrypt().from_slice(&encrypted)?;
+        let pending_fail = seal.decrypt().slice(&encrypted)?;
         let result = pending_fail
             .with_aad(b"wrong-aad")
             .with_private_key::<TestKem, TestDek>(&sk);
         assert!(result.is_err());
 
         // Decrypt with no AAD fails
-        let pending_fail2 = seal.decrypt().from_slice(&encrypted)?;
+        let pending_fail2 = seal.decrypt().slice(&encrypted)?;
         let result2 = pending_fail2.with_private_key::<TestKem, TestDek>(&sk);
         assert!(result2.is_err());
 
@@ -937,7 +1152,7 @@ mod tests {
             // Decrypt
             let pending = seal
                 .decrypt()
-                .from_async_reader(std::io::Cursor::new(&encrypted_data))
+                .async_reader(std::io::Cursor::new(&encrypted_data))
                 .await
                 .unwrap();
             let kek_id = pending.kek_id().unwrap();

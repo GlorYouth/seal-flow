@@ -18,3 +18,11 @@ pub enum AsymmetricAlgorithm {
     Kyber768,
     Kyber1024,
 }
+
+/// 数字签名算法枚举
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
+pub enum SignatureAlgorithm {
+    Dilithium2,
+    Dilithium3,
+    Dilithium5,
+}

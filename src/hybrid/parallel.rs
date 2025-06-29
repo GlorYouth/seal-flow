@@ -1,5 +1,6 @@
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::common::SignerSet;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 use crate::impls::parallel::{decrypt_parallel, encrypt_parallel};
@@ -11,6 +12,7 @@ pub fn encrypt<A, S>(
     pk: &A::PublicKey,
     plaintext: &[u8],
     kek_id: String,
+    signer: Option<SignerSet>,
     aad: Option<&[u8]>,
 ) -> Result<Vec<u8>>
 where
@@ -20,7 +22,7 @@ where
     Vec<u8>: From<<A as Kem>::EncapsulatedKey>,
 {
     // 1. Create header, nonce, and DEK
-    let (header, base_nonce, shared_secret) = create_header::<A, S>(&pk.clone().into(), kek_id)?;
+    let (header, base_nonce, shared_secret) = create_header::<A, S>(&pk.clone().into(), kek_id, signer)?;
 
     // 2. Serialize the header and prepare for encryption
     let header_bytes = header.encode_to_vec()?;
@@ -117,7 +119,7 @@ mod tests {
         let plaintext = b"This is a test message for hybrid parallel encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None).unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None, None).unwrap();
 
         // Test convenience function
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
@@ -147,7 +149,7 @@ mod tests {
         let plaintext = b"";
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None).unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None, None).unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
         let decrypted = pending
@@ -163,7 +165,7 @@ mod tests {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string(), None)
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string(), None, None)
                 .unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
@@ -181,7 +183,7 @@ mod tests {
         let plaintext = b"some data";
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None).unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None, None).unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
         let result = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk2, None);
@@ -193,7 +195,7 @@ mod tests {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"some plaintext for parallel";
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None).unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None, None).unwrap();
 
         // Test the separated functions
         let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
@@ -210,7 +212,7 @@ mod tests {
 
         // Encrypt with AAD
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "aad_key".to_string(), Some(aad))
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "aad_key".to_string(), None, Some(aad))
                 .unwrap();
 
         // Decrypt with correct AAD

@@ -125,7 +125,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
         b.iter(|| {
             let pending = seal
                 .decrypt()
-                .from_slice(black_box(&in_memory_ciphertext))
+                .slice(black_box(&in_memory_ciphertext))
                 .unwrap();
             pending.with_key::<TestDek>(key.clone()).unwrap();
         });
@@ -141,7 +141,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
             b.iter(|| {
                 let pending = seal
                     .decrypt()
-                    .from_slice_parallel(black_box(&in_memory_ciphertext))
+                    .slice_parallel(black_box(&in_memory_ciphertext))
                     .unwrap();
                 pending.with_key::<TestDek>(key.clone()).unwrap();
             });
@@ -153,7 +153,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
         b.iter(|| {
             let pending = seal
                 .decrypt()
-                .from_reader(Cursor::new(black_box(&in_memory_ciphertext)))
+                .reader(Cursor::new(black_box(&in_memory_ciphertext)))
                 .unwrap();
             let mut decryptor = pending.with_key::<TestDek>(key.clone()).unwrap();
             let mut decrypted_data = Vec::with_capacity(PLAINTEXT_SIZE);
@@ -167,7 +167,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
         b.to_async(&runtime).iter(|| async {
             let pending = seal
                 .decrypt()
-                .from_async_reader(Cursor::new(black_box(&in_memory_ciphertext)))
+                .async_reader(Cursor::new(black_box(&in_memory_ciphertext)))
                 .await
                 .unwrap();
             let mut decryptor = pending.with_key::<TestDek>(key.clone()).unwrap();
@@ -189,7 +189,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
                 let mut decrypted_data = Vec::with_capacity(PLAINTEXT_SIZE);
                 let pending = seal
                     .decrypt()
-                    .from_reader_parallel(Cursor::new(black_box(&in_memory_ciphertext)))
+                    .reader_parallel(Cursor::new(black_box(&in_memory_ciphertext)))
                     .unwrap();
                 pending
                     .with_key_to_writer::<TestDek, _>(key.clone(), &mut decrypted_data)

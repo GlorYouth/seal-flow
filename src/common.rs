@@ -1,4 +1,5 @@
 use bytes::BytesMut;
+use crate::common::algorithms::SignatureAlgorithm;
 
 pub mod algorithms;
 pub(crate) mod buffer;
@@ -46,4 +47,10 @@ impl Ord for OrderedChunk {
         // Create a min-heap on the index by reversing the comparison
         other.index.cmp(&self.index)
     }
+}
+
+pub struct SignerSet {
+    pub(crate) signer_key_id: String,
+    pub(crate) signer_algorithm: SignatureAlgorithm,
+    pub(crate) signer: Box<dyn Fn(&[u8]) -> crate::Result<Vec<u8>> + Send + Sync>,
 }

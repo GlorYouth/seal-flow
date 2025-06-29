@@ -1,6 +1,7 @@
 //! Synchronous, streaming hybrid encryption and decryption implementation.
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::common::SignerSet;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 use crate::impls::streaming::{DecryptorImpl, EncryptorImpl};
@@ -31,10 +32,11 @@ where
         mut writer: W,
         pk: &A::PublicKey,
         kek_id: String,
+        signer: Option<SignerSet>,
         aad: Option<&[u8]>,
     ) -> Result<Self> {
         // 1. Create header, nonce, and DEK
-        let (header, base_nonce, symmetric_key) = create_header::<A, S>(pk, kek_id)?;
+        let (header, base_nonce, symmetric_key) = create_header::<A, S>(pk, kek_id, signer)?;
 
         // 2. Write header length and header to the writer
         let header_bytes = header.encode_to_vec()?;
@@ -163,7 +165,7 @@ mod tests {
         // Encrypt
         let mut encrypted_data = Vec::new();
         let mut encryptor =
-            Encryptor::<_, Rsa2048, Aes256Gcm>::new(&mut encrypted_data, &pk, kek_id.clone(), aad)
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(&mut encrypted_data, &pk, kek_id.clone(), None, aad)
                 .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
@@ -220,6 +222,7 @@ mod tests {
             &pk,
             "test_kek_id".to_string(),
             None,
+            None,
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
@@ -253,6 +256,7 @@ mod tests {
             &pk,
             "test_kek_id".to_string(),
             None,
+            None,
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
@@ -277,6 +281,7 @@ mod tests {
             &mut encrypted_data,
             &pk,
             "test_kek_id".to_string(),
+            None,
             Some(aad1),
         )
         .unwrap();

@@ -2,6 +2,7 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::common::SignerSet;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 use crate::impls::parallel_streaming::{decrypt_pipeline, encrypt_pipeline};
@@ -14,6 +15,7 @@ pub fn encrypt<A, S, R, W>(
     reader: R,
     mut writer: W,
     kek_id: String,
+    signer: Option<SignerSet>,
     aad: Option<&[u8]>,
 ) -> Result<()>
 where
@@ -24,7 +26,7 @@ where
     R: Read + Send,
     W: Write,
 {
-    let (header, base_nonce, symmetric_key) = create_header::<A, S>(pk, kek_id)?;
+    let (header, base_nonce, symmetric_key) = create_header::<A, S>(pk, kek_id, signer)?;
 
     let header_bytes = header.encode_to_vec()?;
     writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
@@ -143,6 +145,7 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
+            None, 
             None,
         )
         .unwrap();
@@ -169,6 +172,7 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
+            None, 
             None,
         )
         .unwrap();
@@ -195,6 +199,7 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
+            None, 
             None,
         )
         .unwrap();
@@ -227,6 +232,7 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
+            None, 
             None,
         )
         .unwrap();
@@ -253,6 +259,7 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             "test_kek_id_aad".to_string(),
+            None, 
             Some(aad),
         )
         .unwrap();

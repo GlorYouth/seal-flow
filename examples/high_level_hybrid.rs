@@ -15,10 +15,10 @@ struct MyKeyProvider {
 }
 
 impl AsymmetricKeyProvider for MyKeyProvider {
-    fn get_asymmetric_key<'a>(&'a self, kek_id: &str) -> Option<AsymmetricPrivateKey<'a>> {
+    fn get_asymmetric_key(&self, kek_id: &str) -> Option<AsymmetricPrivateKey> {
         self.keys
             .get(kek_id)
-            .map(|k| AsymmetricPrivateKey::Rsa2048(k))
+            .map(|k| AsymmetricPrivateKey::Rsa2048(k.clone()))
     }
 }
 
@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
     let ciphertext1 = seal
         .encrypt::<Kem, Dek>(&pk, KEK_ID.to_string())
         .to_vec(plaintext)?;
-    let pending_decryptor1 = seal.decrypt().from_slice(&ciphertext1)?;
+    let pending_decryptor1 = seal.decrypt().slice(&ciphertext1)?;
     let decrypted1 = pending_decryptor1.with_provider::<_, Dek>(&provider)?;
     assert_eq!(plaintext, &decrypted1[..]);
     println!("In-Memory (Ordinary) roundtrip successful!");
@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
     let ciphertext2 = seal
         .encrypt::<Kem, Dek>(&pk, KEK_ID.to_string())
         .to_vec_parallel(plaintext)?;
-    let pending_decryptor2 = seal.decrypt().from_slice_parallel(&ciphertext2)?;
+    let pending_decryptor2 = seal.decrypt().slice_parallel(&ciphertext2)?;
     let decrypted2 = pending_decryptor2.with_provider::<_, Dek>(&provider)?;
     assert_eq!(plaintext, &decrypted2[..]);
     println!("In-Memory Parallel roundtrip successful!");
@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
     encryptor.write_all(plaintext)?;
     encryptor.finish()?;
 
-    let pending_decryptor3 = seal.decrypt().from_reader(Cursor::new(&ciphertext3))?;
+    let pending_decryptor3 = seal.decrypt().reader(Cursor::new(ciphertext3))?;
     println!(
         "Found KEK ID in stream: '{}'",
         pending_decryptor3.kek_id().unwrap()
@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
 
     let pending_decryptor4 = seal
         .decrypt()
-        .from_async_reader(Cursor::new(&ciphertext4))
+        .async_reader(Cursor::new(&ciphertext4))
         .await?;
     println!(
         "Found KEK ID in async stream: '{}'",
@@ -111,7 +111,7 @@ async fn main() -> Result<()> {
     let mut decrypted5 = Vec::new();
     let pending_decryptor5 = seal
         .decrypt()
-        .from_reader_parallel(Cursor::new(&ciphertext5))?;
+        .reader_parallel(Cursor::new(&ciphertext5))?;
     println!(
         "Found KEK ID in parallel stream: '{}'",
         pending_decryptor5.kek_id().unwrap()
@@ -131,7 +131,7 @@ async fn main() -> Result<()> {
         .to_vec(plaintext)?;
 
     // Decrypt with correct AAD
-    let pending_decryptor6 = seal.decrypt().from_slice(&ciphertext6)?;
+    let pending_decryptor6 = seal.decrypt().slice(&ciphertext6)?;
     let decrypted6 = pending_decryptor6
         .with_aad(aad)
         .with_provider::<_, Dek>(&provider)?;
@@ -139,7 +139,7 @@ async fn main() -> Result<()> {
     println!("In-Memory with AAD roundtrip successful!");
 
     // Decrypt with wrong AAD should fail
-    let pending_fail = seal.decrypt().from_slice(&ciphertext6)?;
+    let pending_fail = seal.decrypt().slice(&ciphertext6)?;
     let result_fail = pending_fail
         .with_aad(b"wrong aad")
         .with_provider::<_, Dek>(&provider);
@@ -147,7 +147,7 @@ async fn main() -> Result<()> {
     println!("In-Memory with wrong AAD correctly failed!");
 
     // Decrypt with no AAD should also fail
-    let pending_fail2 = seal.decrypt().from_slice(&ciphertext6)?;
+    let pending_fail2 = seal.decrypt().slice(&ciphertext6)?;
     let result_fail2 = pending_fail2.with_provider::<_, Dek>(&provider);
     assert!(result_fail2.is_err());
     println!("In-Memory with no AAD correctly failed!");
