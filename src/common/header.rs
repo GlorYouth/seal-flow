@@ -200,4 +200,58 @@ impl Header {
 
         Ok(header)
     }
+
+    /// Verifies the header signature if a verification key is provided.
+    pub fn verify(
+        &self,
+        verification_key: Option<crate::keys::SignaturePublicKey>,
+        aad: Option<&[u8]>,
+    ) -> Result<()> {
+        // 如果没有提供验证密钥，跳过验证
+        let verification_key = match verification_key {
+            Some(key) => key,
+            None => return Ok(()),
+        };
+
+        // 如果头部有签名，则进行验证
+        if let Some(algo) = self.payload.signer_algorithm() {
+            // 获取签名载荷和签名本身
+            let (mut payload_bytes, signature) = self.payload.get_signed_payload_and_sig()?;
+
+            // 将 AAD（如果存在）附加到要验证的负载中
+            if let Some(aad_data) = aad {
+                payload_bytes.extend_from_slice(aad_data);
+            }
+
+            use seal_crypto::prelude::*;
+            use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
+                Dilithium2, Dilithium3, Dilithium5,
+            };
+            // 根据签名算法选择正确的验证方法
+            match algo {
+                SignatureAlgorithm::Dilithium2 => match verification_key {
+                    crate::keys::SignaturePublicKey::Dilithium2(key) => {
+                        Dilithium2::verify(&key, &payload_bytes, &Signature(signature))?;
+                    }
+                    _ => return Err(Error::UnsupportedOperation),
+                },
+                SignatureAlgorithm::Dilithium3 => match verification_key {
+                    crate::keys::SignaturePublicKey::Dilithium3(key) => {
+                        Dilithium3::verify(&key, &payload_bytes, &Signature(signature))?;
+                    }
+                    _ => return Err(Error::UnsupportedOperation),
+                },
+                SignatureAlgorithm::Dilithium5 => match verification_key {
+                    crate::keys::SignaturePublicKey::Dilithium5(key) => {
+                        Dilithium5::verify(&key, &payload_bytes, &Signature(signature))?;
+                    }
+                    _ => return Err(Error::UnsupportedOperation),
+                },
+            }
+            Ok(())
+        } else {
+            // 没有签名，但提供了验证密钥
+            Err(Error::SignatureMissing)
+        }
+    }
 }

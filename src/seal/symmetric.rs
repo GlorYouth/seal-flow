@@ -157,8 +157,8 @@ mod tests {
     // In a real scenario, you wouldn't use static lifetimes like this.
     // We'd likely have keys owned by the provider struct itself.
     // But for a simple test, we can create static keys.
-    use once_cell::sync::Lazy;
     use crate::prelude::SymmetricKey;
+    use once_cell::sync::Lazy;
 
     static TEST_KEY_AES256: Lazy<<Aes256Gcm as SymmetricKeySet>::Key> =
         Lazy::new(|| Aes256Gcm::generate_key().unwrap());

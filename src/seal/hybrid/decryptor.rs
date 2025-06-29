@@ -65,60 +65,6 @@ macro_rules! dispatch_asymmetric_algorithm {
     };
 }
 
-/// Verifies the header signature if a verification key is provided.
-fn verify_header(
-    header: &Header,
-    verification_key: Option<SignaturePublicKey>,
-    aad: Option<&[u8]>,
-) -> crate::Result<()> {
-    // 如果没有提供验证密钥，跳过验证
-    let verification_key = match verification_key {
-        Some(key) => key,
-        None => return Ok(()),
-    };
-
-    // 如果头部有签名，则进行验证
-    if let Some(algo) = header.payload.signer_algorithm() {
-        // 获取签名载荷和签名本身
-        let (mut payload_bytes, signature) = header.payload.get_signed_payload_and_sig()?;
-
-        // 将 AAD（如果存在）附加到要验证的负载中
-        if let Some(aad_data) = aad {
-            payload_bytes.extend_from_slice(aad_data);
-        }
-
-        use seal_crypto::prelude::*;
-        use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
-            Dilithium2, Dilithium3, Dilithium5,
-        };
-        // 根据签名算法选择正确的验证方法
-        match algo {
-            crate::common::algorithms::SignatureAlgorithm::Dilithium2 => match verification_key {
-                crate::keys::SignaturePublicKey::Dilithium2(key) => {
-                    Dilithium2::verify(&key, &payload_bytes, &Signature(signature))?;
-                }
-                _ => return Err(Error::UnsupportedOperation),
-            },
-            crate::common::algorithms::SignatureAlgorithm::Dilithium3 => match verification_key {
-                crate::keys::SignaturePublicKey::Dilithium3(key) => {
-                    Dilithium3::verify(&key, &payload_bytes, &Signature(signature))?;
-                }
-                _ => return Err(Error::UnsupportedOperation),
-            },
-            crate::common::algorithms::SignatureAlgorithm::Dilithium5 => match verification_key {
-                crate::keys::SignaturePublicKey::Dilithium5(key) => {
-                    Dilithium5::verify(&key, &payload_bytes, &Signature(signature))?;
-                }
-                _ => return Err(Error::UnsupportedOperation),
-            },
-        }
-        Ok(())
-    } else {
-        // 没有签名，但提供了验证密钥
-        Err(Error::SignatureMissing)
-    }
-}
-
 /// A builder for hybrid decryption operations.
 #[derive(Default)]
 pub struct HybridDecryptorBuilder;
@@ -244,11 +190,8 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        verify_header(
-            self.header(),
-            self.verification_key.clone(),
-            self.aad.as_deref(),
-        )?;
+        self.header()
+            .verify(self.verification_key.clone(), self.aad.as_deref())?;
 
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
@@ -278,11 +221,8 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        verify_header(
-            self.header(),
-            self.verification_key.clone(),
-            self.aad.as_deref(),
-        )?;
+        self.header()
+            .verify(self.verification_key.clone(), self.aad.as_deref())?;
         self.inner.into_plaintext::<A, S>(sk, self.aad.as_deref())
     }
 }
@@ -337,11 +277,8 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
-        verify_header(
-            self.header(),
-            self.verification_key.clone(),
-            self.aad.as_deref(),
-        )?;
+        self.header()
+            .verify(self.verification_key.clone(), self.aad.as_deref())?;
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
             .get_asymmetric_key(kek_id)
@@ -371,11 +308,8 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         A::PrivateKey: Clone,
         A::EncapsulatedKey: From<Vec<u8>>,
     {
-        verify_header(
-            self.header(),
-            self.verification_key.clone(),
-            self.aad.as_deref(),
-        )?;
+        self.header()
+            .verify(self.verification_key.clone(), self.aad.as_deref())?;
         self.inner.into_plaintext::<A, S>(sk, self.aad.as_deref())
     }
 }
@@ -430,11 +364,8 @@ impl<R: Read + 'static> PendingStreamingDecryptor<R> {
         S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        verify_header(
-            self.header(),
-            self.verification_key.clone(),
-            self.aad.as_deref(),
-        )?;
+        self.header()
+            .verify(self.verification_key.clone(), self.aad.as_deref())?;
 
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
@@ -469,11 +400,8 @@ impl<R: Read + 'static> PendingStreamingDecryptor<R> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        verify_header(
-            self.header(),
-            self.verification_key.clone(),
-            self.aad.as_deref(),
-        )?;
+        self.header()
+            .verify(self.verification_key.clone(), self.aad.as_deref())?;
         self.inner.into_decryptor::<A, S>(sk, self.aad.as_deref())
     }
 }
@@ -538,11 +466,8 @@ where
         W: Write,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
-        verify_header(
-            self.header(),
-            self.verification_key.clone(),
-            self.aad.as_deref(),
-        )?;
+        self.header()
+            .verify(self.verification_key.clone(), self.aad.as_deref())?;
 
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
@@ -577,11 +502,8 @@ where
         A::PrivateKey: Clone,
         A::EncapsulatedKey: From<Vec<u8>> + Send,
     {
-        verify_header(
-            self.header(),
-            self.verification_key.clone(),
-            self.aad.as_deref(),
-        )?;
+        self.header()
+            .verify(self.verification_key.clone(), self.aad.as_deref())?;
         self.inner
             .decrypt_to_writer::<A, S, W>(sk, writer, self.aad.as_deref())
     }
@@ -643,11 +565,8 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         S::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
         R: Send + 's,
     {
-        verify_header(
-            self.header(),
-            self.verification_key.clone(),
-            self.aad.as_deref(),
-        )?;
+        self.header()
+            .verify(self.verification_key.clone(), self.aad.as_deref())?;
 
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
@@ -683,11 +602,8 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
     {
-        verify_header(
-            self.header(),
-            self.verification_key.clone(),
-            self.aad.as_deref(),
-        )?;
+        self.header()
+            .verify(self.verification_key.clone(), self.aad.as_deref())?;
         self.inner
             .into_decryptor::<A, S>(sk, self.aad.as_deref())
             .await

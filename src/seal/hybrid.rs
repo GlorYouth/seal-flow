@@ -54,6 +54,7 @@ mod tests {
     use super::*;
     use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
     use crate::provider::{AsymmetricKeyProvider, SignatureKeyProvider};
+    use crate::Error;
     use once_cell::sync::Lazy;
     use seal_crypto::prelude::*;
     use seal_crypto::schemes::asymmetric::post_quantum::dilithium::Dilithium2;
@@ -62,7 +63,6 @@ mod tests {
     };
     use std::collections::HashMap;
     use std::io::{Cursor, Read, Write};
-    use crate::Error;
 
     #[cfg(feature = "async")]
     const TEST_KEK_ID: &str = "test-kek";
@@ -96,7 +96,7 @@ mod tests {
     }
 
     impl AsymmetricKeyProvider for TestKeyProvider {
-        fn get_asymmetric_key<'a>(&'a self, kek_id: &str) -> Option<AsymmetricPrivateKey> {
+        fn get_asymmetric_key(&self, kek_id: &str) -> Option<AsymmetricPrivateKey> {
             self.keys.get(kek_id).cloned()
         }
     }
@@ -117,7 +117,7 @@ mod tests {
     }
 
     impl SignatureKeyProvider for TestSignatureProvider {
-        fn get_signature_key<'a>(&'a self, signer_key_id: &str) -> Option<SignaturePublicKey> {
+        fn get_signature_key(&self, signer_key_id: &str) -> Option<SignaturePublicKey> {
             self.keys.get(signer_key_id).cloned()
         }
     }
@@ -354,7 +354,7 @@ mod tests {
             // Decrypt
             let pending = seal
                 .decrypt()
-                .async_reader(std::io::Cursor::new(&encrypted_data))
+                .async_reader(Cursor::new(&encrypted_data))
                 .await
                 .unwrap();
             let kek_id = pending.kek_id().unwrap();

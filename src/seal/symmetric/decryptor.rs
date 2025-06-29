@@ -319,11 +319,8 @@ where
 
         macro_rules! do_decrypt {
             ($k:ident, $S:ty, ($writer:ident)) => {
-                self.inner.decrypt_to_writer::<$S, W>(
-                    $k.clone(),
-                    $writer,
-                    self.aad.as_deref(),
-                )
+                self.inner
+                    .decrypt_to_writer::<$S, W>($k.clone(), $writer, self.aad.as_deref())
             };
         }
 
