@@ -1,9 +1,8 @@
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
-use rayon::prelude::*;
+use crate::impls::parallel::{decrypt_parallel, encrypt_parallel};
 use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
 
@@ -26,51 +25,8 @@ where
     // 2. Serialize the header and prepare for encryption
     let header_bytes = header.encode_to_vec()?;
     let key_material: S::Key = shared_secret.into();
-    let chunk_size = DEFAULT_CHUNK_SIZE as usize;
-    let tag_size = S::TAG_SIZE;
 
-    // 3. Pre-allocate the exact size for the output buffer
-    let num_chunks = (plaintext.len() + chunk_size - 1) / chunk_size;
-    let last_chunk_len = if plaintext.len() % chunk_size == 0 {
-        if plaintext.is_empty() {
-            0
-        } else {
-            chunk_size
-        }
-    } else {
-        plaintext.len() % chunk_size
-    };
-
-    let total_body_size = if plaintext.is_empty() {
-        0
-    } else {
-        (num_chunks.saturating_sub(1)) * (chunk_size + tag_size) + (last_chunk_len + tag_size)
-    };
-    let mut final_output = Vec::with_capacity(4 + header_bytes.len() + total_body_size);
-    final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
-    final_output.extend_from_slice(&header_bytes);
-    final_output.resize(4 + header_bytes.len() + total_body_size, 0);
-
-    let (_header_part, body_part) = final_output.split_at_mut(4 + header_bytes.len());
-
-    // 4. Process chunks in parallel, writing directly to the output buffer
-    if !plaintext.is_empty() {
-        body_part
-            .par_chunks_mut(chunk_size + tag_size)
-            .zip(plaintext.par_chunks(chunk_size))
-            .enumerate()
-            .try_for_each(|(i, (output_chunk, input_chunk))| -> Result<()> {
-                let nonce = derive_nonce(&base_nonce, i as u64);
-                let expected_output_len = input_chunk.len() + tag_size;
-                let buffer_slice = &mut output_chunk[..expected_output_len];
-
-                S::encrypt_to_buffer(&key_material, &nonce, input_chunk, buffer_slice, aad)
-                    .map(|_| ())
-                    .map_err(Error::from)
-            })?;
-    }
-
-    Ok(final_output)
+    encrypt_parallel::<S>(key_material, base_nonce, header_bytes, plaintext, aad)
 }
 
 /// A pending decryptor for in-memory hybrid-encrypted data that will be
@@ -142,50 +98,8 @@ where
 
     let shared_secret = A::decapsulate(&sk.clone().into(), &encapsulated_key)?;
     let key_material: S::Key = shared_secret.into();
-    let tag_len = S::TAG_SIZE;
-    let encrypted_chunk_size = chunk_size as usize + tag_len;
 
-    // Pre-allocate plaintext buffer
-    let num_chunks = (ciphertext_body.len() + encrypted_chunk_size - 1) / encrypted_chunk_size;
-    let last_chunk_len = if ciphertext_body.len() % encrypted_chunk_size == 0 {
-        if ciphertext_body.is_empty() {
-            0
-        } else {
-            encrypted_chunk_size
-        }
-    } else {
-        ciphertext_body.len() % encrypted_chunk_size
-    };
-
-    if last_chunk_len > 0 && last_chunk_len <= tag_len {
-        return Err(Error::InvalidCiphertextFormat);
-    }
-
-    let total_size = (num_chunks.saturating_sub(1)) * chunk_size as usize
-        + (if last_chunk_len > tag_len {
-            last_chunk_len - tag_len
-        } else {
-            0
-        });
-    let mut plaintext = vec![0u8; total_size];
-
-    // Decrypt in parallel, writing directly to the plaintext buffer
-    let decrypted_chunk_lengths: Vec<usize> = plaintext
-        .par_chunks_mut(chunk_size as usize)
-        .zip(ciphertext_body.par_chunks(encrypted_chunk_size))
-        .enumerate()
-        .map(|(i, (plaintext_chunk, encrypted_chunk))| -> Result<usize> {
-            let nonce = derive_nonce(&base_nonce, i as u64);
-
-            S::decrypt_to_buffer(&key_material, &nonce, encrypted_chunk, plaintext_chunk, aad)
-                .map_err(Error::from)
-        })
-        .collect::<Result<Vec<usize>>>()?;
-
-    let actual_size = decrypted_chunk_lengths.iter().sum();
-    plaintext.truncate(actual_size);
-
-    Ok(plaintext)
+    decrypt_parallel::<S>(key_material, base_nonce, chunk_size, ciphertext_body, aad)
 }
 
 #[cfg(test)]
@@ -195,6 +109,7 @@ mod tests {
     use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+    use crate::common::header::DEFAULT_CHUNK_SIZE;
 
     #[test]
     fn test_hybrid_parallel_roundtrip() {

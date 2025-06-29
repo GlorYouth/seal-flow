@@ -2,9 +2,9 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
+use crate::impls::ordinary::{decrypt_in_memory, encrypt_in_memory};
 use seal_crypto::zeroize::Zeroizing;
 
 /// Performs hybrid encryption on in-memory data.
@@ -25,28 +25,9 @@ where
 
     // 2. Serialize the header.
     let header_bytes = header.encode_to_vec()?;
-    let key_material = shared_secret.into();
+    let key_material: S::Key = shared_secret.into();
 
-    // 3. Encrypt data chunks sequentially.
-    let mut encrypted_body = Vec::with_capacity(
-        plaintext.len() + (plaintext.len() / DEFAULT_CHUNK_SIZE as usize + 1) * S::TAG_SIZE,
-    );
-    let mut temp_chunk_buffer = vec![0u8; DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE];
-
-    for (i, chunk) in plaintext.chunks(DEFAULT_CHUNK_SIZE as usize).enumerate() {
-        let nonce = derive_nonce(&base_nonce, i as u64);
-        let bytes_written =
-            S::encrypt_to_buffer(&key_material, &nonce, chunk, &mut temp_chunk_buffer, aad)?;
-        encrypted_body.extend_from_slice(&temp_chunk_buffer[..bytes_written]);
-    }
-
-    // 4. Assemble the final output.
-    let mut final_output = Vec::with_capacity(4 + header_bytes.len() + encrypted_body.len());
-    final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
-    final_output.extend_from_slice(&header_bytes);
-    final_output.extend_from_slice(&encrypted_body);
-
-    Ok(final_output)
+    encrypt_in_memory::<S>(key_material, base_nonce, header_bytes, plaintext, aad)
 }
 
 /// A pending decryptor for in-memory hybrid-encrypted data.
@@ -118,28 +99,9 @@ where
 
     // 2. KEM Decapsulate to recover the DEK.
     let shared_secret = A::decapsulate(sk, &encapsulated_key)?;
-    let key_material = shared_secret.into();
+    let key_material: S::Key = shared_secret.into();
 
-    let tag_len = S::TAG_SIZE;
-    let encrypted_chunk_size = chunk_size as usize + tag_len;
-
-    // 3. Decrypt data chunks sequentially.
-    let mut plaintext = Vec::with_capacity(ciphertext_body.len());
-    let mut decrypted_chunk_buffer = vec![0u8; chunk_size as usize];
-
-    for (i, encrypted_chunk) in ciphertext_body.chunks(encrypted_chunk_size).enumerate() {
-        let nonce = derive_nonce(&base_nonce, i as u64);
-        let bytes_written = S::decrypt_to_buffer(
-            &key_material,
-            &nonce,
-            encrypted_chunk,
-            &mut decrypted_chunk_buffer,
-            aad,
-        )?;
-        plaintext.extend_from_slice(&decrypted_chunk_buffer[..bytes_written]);
-    }
-
-    Ok(plaintext)
+    decrypt_in_memory::<S>(key_material, base_nonce, chunk_size, ciphertext_body, aad)
 }
 
 #[cfg(test)]
@@ -191,7 +153,7 @@ mod tests {
     #[test]
     fn test_exact_chunk_size() {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
+        let plaintext = vec![42u8; crate::common::header::DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted =
             encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string(), None)

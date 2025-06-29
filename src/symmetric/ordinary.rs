@@ -2,9 +2,9 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
+use crate::impls::ordinary::{decrypt_in_memory, encrypt_in_memory};
 
 /// Encrypts plaintext using a chunking mechanism.
 pub fn encrypt<S: SymmetricAlgorithm>(
@@ -16,30 +16,10 @@ pub fn encrypt<S: SymmetricAlgorithm>(
 where
     S::Key: Send + Sync,
 {
-    let (header, base_nonce_bytes) = create_header::<S>(key_id)?;
+    let (header, base_nonce) = create_header::<S>(key_id)?;
     let header_bytes = header.encode_to_vec()?;
 
-    let key_material = key.into();
-
-    let mut encrypted_body = Vec::with_capacity(
-        plaintext.len() + (plaintext.len() / DEFAULT_CHUNK_SIZE as usize + 1) * S::TAG_SIZE,
-    );
-
-    let mut temp_chunk_buffer = vec![0u8; DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE];
-
-    for (i, chunk) in plaintext.chunks(DEFAULT_CHUNK_SIZE as usize).enumerate() {
-        let nonce = derive_nonce(&base_nonce_bytes, i as u64);
-        let bytes_written =
-            S::encrypt_to_buffer(&key_material, &nonce, chunk, &mut temp_chunk_buffer, aad)?;
-        encrypted_body.extend_from_slice(&temp_chunk_buffer[..bytes_written]);
-    }
-
-    let mut final_output = Vec::with_capacity(4 + header_bytes.len() + encrypted_body.len());
-    final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
-    final_output.extend_from_slice(&header_bytes);
-    final_output.extend_from_slice(&encrypted_body);
-
-    Ok(final_output)
+    encrypt_in_memory::<S>(key, base_nonce, header_bytes, plaintext, aad)
 }
 
 /// A pending decryptor for in-memory data, waiting for a key.
@@ -92,7 +72,7 @@ pub fn decrypt_body<S: SymmetricAlgorithm>(
 where
     S::Key: Send + Sync,
 {
-    let (chunk_size, base_nonce_array) = match &header.payload {
+    let (chunk_size, base_nonce) = match &header.payload {
         HeaderPayload::Symmetric {
             stream_info: Some(info),
             ..
@@ -100,41 +80,7 @@ where
         _ => return Err(Error::InvalidHeader),
     };
 
-    let key_material = key.into();
-    let mut plaintext = Vec::with_capacity(ciphertext_body.len());
-    let chunk_size_with_tag = chunk_size as usize + S::TAG_SIZE;
-
-    // Reusable buffer for decrypted chunks, sized for the largest possible chunk.
-    let mut decrypted_chunk_buffer = vec![0u8; chunk_size as usize];
-
-    let mut cursor = 0;
-    let mut chunk_index = 0;
-    while cursor < ciphertext_body.len() {
-        let remaining_len = ciphertext_body.len() - cursor;
-        let current_chunk_len = std::cmp::min(remaining_len, chunk_size_with_tag);
-
-        if current_chunk_len == 0 {
-            break;
-        }
-
-        let encrypted_chunk = &ciphertext_body[cursor..cursor + current_chunk_len];
-
-        let nonce = derive_nonce(&base_nonce_array, chunk_index as u64);
-        let bytes_written = S::decrypt_to_buffer(
-            &key_material,
-            &nonce,
-            encrypted_chunk,
-            &mut decrypted_chunk_buffer,
-            aad,
-        )?;
-
-        plaintext.extend_from_slice(&decrypted_chunk_buffer[..bytes_written]);
-
-        cursor += current_chunk_len;
-        chunk_index += 1;
-    }
-
-    Ok(plaintext)
+    decrypt_in_memory::<S>(key, base_nonce, chunk_size, ciphertext_body, aad)
 }
 
 #[cfg(test)]
@@ -142,6 +88,7 @@ mod tests {
     use super::*;
     use seal_crypto::prelude::SymmetricKeyGenerator;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+    use crate::common::header::DEFAULT_CHUNK_SIZE;
 
     #[test]
     fn test_symmetric_ordinary_roundtrip() {

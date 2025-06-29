@@ -1,30 +1,17 @@
 //! Synchronous, streaming hybrid encryption and decryption implementation.
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
+use crate::impls::streaming::{DecryptorImpl, EncryptorImpl};
 use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{self, Read, Write};
 
 /// An `std::io::Write` adapter for streaming hybrid encryption.
-pub struct Encryptor<W, A, S>
-where
-    W: Write,
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-    S::Key: From<Zeroizing<Vec<u8>>>,
-{
-    writer: W,
-    symmetric_key: S::Key,
-    base_nonce: [u8; 12],
-    chunk_size: usize,
-    buffer: Vec<u8>,
-    chunk_counter: u64,
-    encrypted_chunk_buffer: Vec<u8>,
-    aad: Option<Vec<u8>>,
-    _phantom: std::marker::PhantomData<(A, S)>,
+pub struct Encryptor<W: Write, A, S: SymmetricAlgorithm> {
+    inner: EncryptorImpl<W, S>,
+    _phantom: std::marker::PhantomData<A>,
 }
 
 impl<W, A, S> Encryptor<W, A, S>
@@ -54,15 +41,10 @@ where
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
 
+        let inner = EncryptorImpl::new(writer, symmetric_key.into(), base_nonce, aad)?;
+
         Ok(Self {
-            writer,
-            symmetric_key: symmetric_key.into(),
-            base_nonce,
-            chunk_size: DEFAULT_CHUNK_SIZE as usize,
-            buffer: Vec::with_capacity(DEFAULT_CHUNK_SIZE as usize),
-            chunk_counter: 0,
-            encrypted_chunk_buffer: vec![0u8; DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE],
-            aad: aad.map(|d| d.to_vec()),
+            inner,
             _phantom: std::marker::PhantomData,
         })
     }
@@ -71,87 +53,18 @@ where
     ///
     /// This method must be called to ensure that the last partial chunk of data is
     /// encrypted and the authentication tag is written to the underlying writer.
-    pub fn finish(mut self) -> Result<()> {
-        if !self.buffer.is_empty() {
-            let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
-            let bytes_written = S::encrypt_to_buffer(
-                &self.symmetric_key,
-                &nonce,
-                &self.buffer,
-                &mut self.encrypted_chunk_buffer,
-                self.aad.as_deref(),
-            )
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            self.writer
-                .write_all(&self.encrypted_chunk_buffer[..bytes_written])?;
-        }
-        self.writer.flush()?;
-        Ok(())
+    pub fn finish(self) -> Result<()> {
+        self.inner.finish()
     }
 }
 
-impl<W: Write, A, S> Write for Encryptor<W, A, S>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-    S::Key: From<Zeroizing<Vec<u8>>>,
-{
+impl<W: Write, A, S: SymmetricAlgorithm> Write for Encryptor<W, A, S> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut input = buf;
-
-        // If there's pending data in the buffer, try to fill and process it first.
-        if !self.buffer.is_empty() {
-            let space_in_buffer = self.chunk_size - self.buffer.len();
-            let fill_len = std::cmp::min(space_in_buffer, input.len());
-            self.buffer.extend_from_slice(&input[..fill_len]);
-            input = &input[fill_len..];
-
-            if self.buffer.len() == self.chunk_size {
-                let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
-                let bytes_written = S::encrypt_to_buffer(
-                    &self.symmetric_key,
-                    &nonce,
-                    &self.buffer,
-                    &mut self.encrypted_chunk_buffer,
-                    self.aad.as_deref(),
-                )
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-                self.writer
-                    .write_all(&self.encrypted_chunk_buffer[..bytes_written])?;
-                self.chunk_counter += 1;
-                self.buffer.clear();
-            }
-        }
-
-        // Process full chunks directly from the input buffer.
-        while input.len() >= self.chunk_size {
-            let chunk = &input[..self.chunk_size];
-            let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
-            let bytes_written = S::encrypt_to_buffer(
-                &self.symmetric_key,
-                &nonce,
-                chunk,
-                &mut self.encrypted_chunk_buffer,
-                self.aad.as_deref(),
-            )
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            self.writer
-                .write_all(&self.encrypted_chunk_buffer[..bytes_written])?;
-
-            self.chunk_counter += 1;
-            input = &input[self.chunk_size..];
-        }
-
-        // Buffer any remaining data.
-        if !input.is_empty() {
-            self.buffer.extend_from_slice(input);
-        }
-
-        Ok(buf.len())
+        self.inner.write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.writer.flush()
+        self.inner.flush()
     }
 }
 
@@ -197,42 +110,28 @@ impl<R: Read> PendingDecryptor<R> {
         };
 
         let shared_secret = A::decapsulate(&sk.clone().into(), &encapsulated_key)?;
-        let key_material = shared_secret.into();
+        let key_material: S::Key = shared_secret.into();
         let tag_len = S::TAG_SIZE;
         let encrypted_chunk_size = chunk_size as usize + tag_len;
 
-        Ok(Decryptor {
-            reader: self.reader,
-            symmetric_key: key_material,
+        let inner = DecryptorImpl::new(
+            self.reader,
+            key_material,
             base_nonce,
             encrypted_chunk_size,
-            buffer: io::Cursor::new(Vec::new()),
-            encrypted_chunk_buffer: vec![0; encrypted_chunk_size],
-            chunk_counter: 0,
-            is_done: false,
-            aad: aad.map(|d| d.to_vec()),
+            aad,
+        );
+
+        Ok(Decryptor {
+            inner,
             _phantom: std::marker::PhantomData,
         })
     }
 }
 
 /// Implements `std::io::Read` for synchronous, streaming hybrid decryption.
-pub struct Decryptor<R: Read, A: AsymmetricAlgorithm, S: SymmetricAlgorithm>
-where
-    R: Read,
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-    S::Key: From<Zeroizing<Vec<u8>>>,
-{
-    reader: R,
-    symmetric_key: S::Key,
-    base_nonce: [u8; 12],
-    encrypted_chunk_size: usize,
-    buffer: io::Cursor<Vec<u8>>,
-    encrypted_chunk_buffer: Vec<u8>,
-    chunk_counter: u64,
-    is_done: bool,
-    aad: Option<Vec<u8>>,
+pub struct Decryptor<R: Read, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
+    inner: DecryptorImpl<R, S>,
     _phantom: std::marker::PhantomData<(A, S)>,
 }
 
@@ -244,62 +143,7 @@ where
     A::PrivateKey: Clone,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        // If there's data in the decrypted buffer, serve it first.
-        let bytes_read_from_buf = self.buffer.read(buf)?;
-        if bytes_read_from_buf > 0 {
-            return Ok(bytes_read_from_buf);
-        }
-
-        // If the buffer is empty and we're done, signal EOF.
-        if self.is_done {
-            return Ok(0);
-        }
-
-        // Buffer is empty, so we need to read the next chunk.
-        let mut total_bytes_read = 0;
-        while total_bytes_read < self.encrypted_chunk_size {
-            match self
-                .reader
-                .read(&mut self.encrypted_chunk_buffer[total_bytes_read..])
-            {
-                Ok(0) => {
-                    self.is_done = true;
-                    break; // EOF
-                }
-                Ok(n) => total_bytes_read += n,
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e),
-            }
-        }
-
-        if total_bytes_read == 0 {
-            // We've hit EOF and there's no partial chunk to process.
-            return Ok(0);
-        }
-
-        let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
-
-        // Prepare the output buffer inside the cursor
-        let decrypted_buf = self.buffer.get_mut();
-        decrypted_buf.clear();
-        // Resize to max possible decrypted size. The actual size will be truncated later.
-        decrypted_buf.resize(self.encrypted_chunk_size, 0);
-
-        let bytes_written = S::decrypt_to_buffer(
-            &self.symmetric_key,
-            &nonce,
-            &self.encrypted_chunk_buffer[..total_bytes_read],
-            decrypted_buf,
-            self.aad.as_deref(),
-        )
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-        decrypted_buf.truncate(bytes_written);
-        self.buffer.set_position(0);
-        self.chunk_counter += 1;
-
-        // Now, try to read from the newly filled buffer into the user's buffer.
-        self.buffer.read(buf)
+        self.inner.read(buf)
     }
 }
 
@@ -354,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_exact_chunk_size() {
-        let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
+        let plaintext = vec![42u8; crate::common::header::DEFAULT_CHUNK_SIZE as usize];
         test_hybrid_streaming_roundtrip(&plaintext, None);
     }
 

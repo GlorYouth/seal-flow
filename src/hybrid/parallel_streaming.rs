@@ -2,46 +2,16 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::buffer::BufferPool;
-use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
-use bytes::BytesMut;
-use rayon::prelude::*;
+use crate::impls::parallel_streaming::{decrypt_pipeline, encrypt_pipeline};
 use seal_crypto::zeroize::Zeroizing;
-use std::collections::BinaryHeap;
 use std::io::{Read, Write};
-use std::sync::Arc;
-use std::thread;
-
-const CHANNEL_BOUND: usize = 16;
-
-/// A wrapper for chunks to allow ordering in a min-heap.
-struct OrderedChunk {
-    index: u64,
-    data: Result<BytesMut>,
-}
-impl PartialEq for OrderedChunk {
-    fn eq(&self, other: &Self) -> bool {
-        self.index == other.index
-    }
-}
-impl Eq for OrderedChunk {}
-impl PartialOrd for OrderedChunk {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for OrderedChunk {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        other.index.cmp(&self.index)
-    }
-}
 
 /// Encrypts data from a reader and writes to a writer using a parallel streaming approach.
 pub fn encrypt<A, S, R, W>(
     pk: &A::PublicKey,
-    mut reader: R,
+    reader: R,
     mut writer: W,
     kek_id: String,
     aad: Option<&[u8]>,
@@ -55,141 +25,13 @@ where
     W: Write,
 {
     let (header, base_nonce, symmetric_key) = create_header::<A, S>(pk, kek_id)?;
-    let key_arc = Arc::new(symmetric_key.into());
-    let aad_arc = Arc::new(aad.map(|d| d.to_vec()));
-    let pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize));
 
     let header_bytes = header.encode_to_vec()?;
     writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
     writer.write_all(&header_bytes)?;
 
-    let (raw_chunk_tx, raw_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
-    let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
-    let (io_error_tx, io_error_rx) = crossbeam_channel::unbounded();
-
-    thread::scope(|s| {
-        let pool_for_reader = Arc::clone(&pool);
-        s.spawn(move || {
-            let mut chunk_index = 0u64;
-            loop {
-                let mut buffer = pool_for_reader.acquire();
-                let chunk_size = buffer.capacity();
-                buffer.resize(chunk_size, 0);
-
-                let mut bytes_read_total = 0;
-                while bytes_read_total < chunk_size {
-                    match reader.read(&mut buffer[bytes_read_total..]) {
-                        Ok(0) => break,
-                        Ok(n) => bytes_read_total += n,
-                        Err(e) => {
-                            pool_for_reader.release(buffer);
-                            let _ = io_error_tx.send(e);
-                            return;
-                        }
-                    }
-                }
-
-                if bytes_read_total > 0 {
-                    buffer.truncate(bytes_read_total);
-                    if raw_chunk_tx.send((chunk_index, buffer)).is_err() {
-                        break;
-                    }
-                    chunk_index += 1;
-                } else {
-                    pool_for_reader.release(buffer);
-                }
-
-                if bytes_read_total < chunk_size {
-                    break;
-                }
-            }
-        });
-
-        let enc_chunk_tx_clone = enc_chunk_tx.clone();
-        let key_clone = Arc::clone(&key_arc);
-        let aad_clone = Arc::clone(&aad_arc);
-        let in_pool = Arc::clone(&pool);
-        let out_pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE));
-        let writer_pool = Arc::clone(&out_pool);
-        s.spawn(move || {
-            raw_chunk_rx
-                .into_iter()
-                .par_bridge()
-                .for_each(|(index, in_buffer)| {
-                    let mut out_buffer = out_pool.acquire();
-                    let nonce = derive_nonce(&base_nonce, index);
-                    let aad_val = aad_clone.as_deref();
-                    let capacity = out_buffer.capacity();
-                    out_buffer.resize(capacity, 0);
-
-                    let result = S::encrypt_to_buffer(
-                        &key_clone,
-                        &nonce,
-                        &in_buffer,
-                        &mut out_buffer,
-                        aad_val,
-                    )
-                    .map(|bytes_written| {
-                        out_buffer.truncate(bytes_written);
-                        out_buffer
-                    })
-                    .map_err(Error::from);
-
-                    in_pool.release(in_buffer);
-                    if enc_chunk_tx_clone.send((index, result)).is_err() {}
-                });
-        });
-
-        let mut final_result: Result<()> = Ok(());
-        let mut pending_chunks = BinaryHeap::new();
-        let mut next_chunk_to_write = 0;
-        drop(enc_chunk_tx); // Drop our sender to signal completion
-
-        while let Ok((index, result)) = enc_chunk_rx.recv() {
-            pending_chunks.push(OrderedChunk {
-                index,
-                data: result,
-            });
-            while let Some(top) = pending_chunks.peek() {
-                if top.index == next_chunk_to_write {
-                    let chunk = pending_chunks.pop().unwrap();
-                    match chunk.data {
-                        Ok(data) => {
-                            if let Err(e) = writer.write_all(&data) {
-                                final_result = Err(e.into());
-                                break;
-                            }
-                            writer_pool.release(data);
-                            next_chunk_to_write += 1;
-                        }
-                        Err(e) => {
-                            final_result = Err(e);
-                            break;
-                        }
-                    }
-                } else {
-                    break;
-                }
-            }
-            if final_result.is_err() {
-                break;
-            }
-        }
-
-        if final_result.is_ok() {
-            if let Ok(e) = io_error_rx.try_recv() {
-                final_result = Err(e.into());
-            }
-        }
-        if final_result.is_err() {
-            for chunk in pending_chunks {
-                if let Ok(buf) = chunk.data {
-                    writer_pool.release(buf);
-                }
-            }
-        }
-        final_result
-    })
+    let key: S::Key = symmetric_key.into();
+    encrypt_pipeline::<S, R, W>(key, base_nonce, reader, writer, aad)
 }
 
 /// A pending decryptor for a parallel hybrid stream, waiting for the private key.
@@ -236,7 +78,7 @@ where
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         W: Write,
     {
-        decrypt_body_stream::<A, S, R, W>(sk, &self.header, self.reader, writer, aad)
+        decrypt_body_stream::<A, S, _, W>(sk, &self.header, self.reader, writer, aad)
     }
 }
 
@@ -244,8 +86,8 @@ where
 pub fn decrypt_body_stream<A, S, R, W>(
     sk: &A::PrivateKey,
     header: &Header,
-    mut reader: R,
-    mut writer: W,
+    reader: R,
+    writer: W,
     aad: Option<&[u8]>,
 ) -> Result<()>
 where
@@ -271,140 +113,9 @@ where
     };
 
     let shared_secret = A::decapsulate(&sk.clone().into(), &encapsulated_key)?;
-    let key_material = shared_secret.into();
+    let key_material: S::Key = shared_secret.into();
 
-    let encrypted_chunk_size = (chunk_size as usize) + S::TAG_SIZE;
-    let key_arc = Arc::new(key_material);
-    let aad_arc = Arc::new(aad.map(|d| d.to_vec()));
-    let pool = Arc::new(BufferPool::new(encrypted_chunk_size));
-
-    let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
-    let (dec_chunk_tx, dec_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
-    let (io_error_tx, io_error_rx) = crossbeam_channel::unbounded();
-
-    thread::scope(|s| {
-        let pool_for_reader = Arc::clone(&pool);
-        s.spawn(move || {
-            let mut chunk_index = 0u64;
-            loop {
-                let mut buffer = pool_for_reader.acquire();
-                let chunk_size_local = buffer.capacity();
-                buffer.resize(chunk_size_local, 0);
-
-                let mut bytes_read_total = 0;
-                while bytes_read_total < chunk_size_local {
-                    match reader.read(&mut buffer[bytes_read_total..]) {
-                        Ok(0) => break,
-                        Ok(n) => bytes_read_total += n,
-                        Err(e) => {
-                            pool_for_reader.release(buffer);
-                            let _ = io_error_tx.send(e);
-                            return;
-                        }
-                    }
-                }
-
-                if bytes_read_total > 0 {
-                    buffer.truncate(bytes_read_total);
-                    if enc_chunk_tx.send((chunk_index, buffer)).is_err() {
-                        break;
-                    }
-                    chunk_index += 1;
-                } else {
-                    pool_for_reader.release(buffer);
-                }
-
-                if bytes_read_total < chunk_size_local {
-                    break;
-                }
-            }
-        });
-
-        let dec_chunk_tx_clone = dec_chunk_tx.clone();
-        let key_clone = Arc::clone(&key_arc);
-        let aad_clone = Arc::clone(&aad_arc);
-        let in_pool = Arc::clone(&pool);
-        let out_pool = Arc::new(BufferPool::new(chunk_size as usize));
-        let writer_pool = Arc::clone(&out_pool);
-        s.spawn(move || {
-            enc_chunk_rx
-                .into_iter()
-                .par_bridge()
-                .for_each(|(index, in_buffer)| {
-                    let mut out_buffer = out_pool.acquire();
-                    let nonce = derive_nonce(&base_nonce, index);
-                    let aad_val = aad_clone.as_deref();
-                    let capacity = out_buffer.capacity();
-                    out_buffer.resize(capacity, 0);
-
-                    let result = S::decrypt_to_buffer(
-                        &key_clone,
-                        &nonce,
-                        &in_buffer,
-                        &mut out_buffer,
-                        aad_val,
-                    )
-                    .map(|bytes_written| {
-                        out_buffer.truncate(bytes_written);
-                        out_buffer
-                    })
-                    .map_err(Error::from);
-
-                    in_pool.release(in_buffer);
-                    if dec_chunk_tx_clone.send((index, result)).is_err() {}
-                });
-        });
-
-        let mut final_result: Result<()> = Ok(());
-        let mut pending_chunks = BinaryHeap::new();
-        let mut next_chunk_to_write = 0;
-        drop(dec_chunk_tx);
-
-        while let Ok((index, result)) = dec_chunk_rx.recv() {
-            pending_chunks.push(OrderedChunk {
-                index,
-                data: result,
-            });
-            while let Some(top) = pending_chunks.peek() {
-                if top.index == next_chunk_to_write {
-                    let chunk = pending_chunks.pop().unwrap();
-                    match chunk.data {
-                        Ok(data) => {
-                            if let Err(e) = writer.write_all(&data) {
-                                final_result = Err(e.into());
-                                break;
-                            }
-                            writer_pool.release(data);
-                            next_chunk_to_write += 1;
-                        }
-                        Err(e) => {
-                            final_result = Err(e);
-                            break;
-                        }
-                    }
-                } else {
-                    break;
-                }
-            }
-            if final_result.is_err() {
-                break;
-            }
-        }
-
-        if final_result.is_ok() {
-            if let Ok(e) = io_error_rx.try_recv() {
-                final_result = Err(e.into());
-            }
-        }
-        if final_result.is_err() {
-            for chunk in pending_chunks {
-                if let Ok(buf) = chunk.data {
-                    writer_pool.release(buf);
-                }
-            }
-        }
-        final_result
-    })
+    decrypt_pipeline::<S, R, W>(key_material, base_nonce, chunk_size, reader, writer, aad)
 }
 
 #[cfg(test)]
@@ -427,7 +138,7 @@ mod tests {
         let plaintext = get_test_data(1024 * 1024); // 1 MiB
 
         let mut encrypted_data = Vec::new();
-        encrypt::<Rsa2048, Aes256Gcm, _, _>(
+        encrypt::<Rsa2048<Sha256>, Aes256Gcm, _, _>(
             &pk,
             Cursor::new(&plaintext),
             &mut encrypted_data,
@@ -453,7 +164,7 @@ mod tests {
         let plaintext = get_test_data(0);
 
         let mut encrypted_data = Vec::new();
-        encrypt::<Rsa2048, Aes256Gcm, _, _>(
+        encrypt::<Rsa2048<Sha256>, Aes256Gcm, _, _>(
             &pk,
             Cursor::new(&plaintext),
             &mut encrypted_data,
@@ -479,7 +190,7 @@ mod tests {
         let plaintext = get_test_data(1024);
 
         let mut encrypted_data = Vec::new();
-        encrypt::<Rsa2048, Aes256Gcm, _, _>(
+        encrypt::<Rsa2048<Sha256>, Aes256Gcm, _, _>(
             &pk,
             Cursor::new(&plaintext),
             &mut encrypted_data,
@@ -511,7 +222,7 @@ mod tests {
         let plaintext = get_test_data(1024);
 
         let mut encrypted_data = Vec::new();
-        encrypt::<Rsa2048, Aes256Gcm, _, _>(
+        encrypt::<Rsa2048<Sha256>, Aes256Gcm, _, _>(
             &pk,
             Cursor::new(&plaintext),
             &mut encrypted_data,
@@ -537,7 +248,7 @@ mod tests {
         let aad = b"parallel streaming aad";
 
         let mut encrypted_data = Vec::new();
-        encrypt::<Rsa2048, Aes256Gcm, _, _>(
+        encrypt::<Rsa2048<Sha256>, Aes256Gcm, _, _>(
             &pk,
             Cursor::new(&plaintext),
             &mut encrypted_data,
@@ -551,14 +262,14 @@ mod tests {
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some("test_kek_id_aad"));
         pending
-            .decrypt_to_writer::<Rsa2048, Aes256Gcm, _>(&sk, &mut decrypted_data, Some(aad))
+            .decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk, &mut decrypted_data, Some(aad))
             .unwrap();
         assert_eq!(plaintext, decrypted_data);
 
         // Decrypt with wrong AAD fails
         let mut decrypted_data_fail = Vec::new();
         let pending_fail = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending_fail.decrypt_to_writer::<Rsa2048, Aes256Gcm, _>(
+        let result = pending_fail.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(
             &sk,
             &mut decrypted_data_fail,
             Some(b"wrong aad"),
@@ -568,7 +279,7 @@ mod tests {
         // Decrypt with no AAD fails
         let mut decrypted_data_fail2 = Vec::new();
         let pending_fail2 = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result2 = pending_fail2.decrypt_to_writer::<Rsa2048, Aes256Gcm, _>(
+        let result2 = pending_fail2.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(
             &sk,
             &mut decrypted_data_fail2,
             None,
