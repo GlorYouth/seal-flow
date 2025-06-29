@@ -1,5 +1,5 @@
-use bytes::BytesMut;
 use crate::common::algorithms::SignatureAlgorithm;
+use bytes::BytesMut;
 
 pub mod algorithms;
 pub(crate) mod buffer;
@@ -52,5 +52,5 @@ impl Ord for OrderedChunk {
 pub struct SignerSet {
     pub(crate) signer_key_id: String,
     pub(crate) signer_algorithm: SignatureAlgorithm,
-    pub(crate) signer: Box<dyn Fn(&[u8]) -> crate::Result<Vec<u8>> + Send + Sync>,
+    pub(crate) signer: Box<dyn Fn(&[u8], Option<&[u8]>) -> crate::Result<Vec<u8>> + Send + Sync>,
 }

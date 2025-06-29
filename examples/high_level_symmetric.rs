@@ -18,7 +18,9 @@ struct MyKeyProvider {
 impl SymmetricKeyProvider for MyKeyProvider {
     fn get_symmetric_key(&self, key_id: &str) -> Option<SymmetricKey> {
         // Find the key and wrap it in the `SymmetricKey` enum.
-        self.keys.get(key_id).map(|k| SymmetricKey::Aes256Gcm(k.clone()))
+        self.keys
+            .get(key_id)
+            .map(|k| SymmetricKey::Aes256Gcm(k.clone()))
     }
 }
 
@@ -111,9 +113,7 @@ async fn main() -> Result<()> {
         .pipe_parallel(Cursor::new(plaintext), &mut ciphertext5)?;
 
     let mut decrypted5 = Vec::new();
-    let pending_decryptor5 = seal
-        .decrypt()
-        .reader_parallel(Cursor::new(&ciphertext5))?;
+    let pending_decryptor5 = seal.decrypt().reader_parallel(Cursor::new(&ciphertext5))?;
     println!(
         "Found key ID in parallel stream: '{}'",
         pending_decryptor5.key_id().unwrap()

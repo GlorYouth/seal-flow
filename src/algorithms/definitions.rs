@@ -1,10 +1,14 @@
 //! Defines the concrete algorithm types and implements the corresponding traits.
 
-use super::traits::{AsymmetricAlgorithmDetails, SignatureAlgorithmDetails, SymmetricAlgorithmDetails};
+use super::traits::{
+    AsymmetricAlgorithmDetails, SignatureAlgorithmDetails, SymmetricAlgorithmDetails,
+};
 use crate::common;
 use seal_crypto::prelude::Hasher;
 
-use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{Dilithium2, Dilithium3, Dilithium5};
+use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
+    Dilithium2, Dilithium3, Dilithium5,
+};
 use seal_crypto::schemes::asymmetric::post_quantum::kyber::{Kyber1024, Kyber512, Kyber768};
 use seal_crypto::schemes::asymmetric::traditional::rsa::{Rsa2048, Rsa4096};
 use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};

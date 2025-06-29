@@ -22,7 +22,8 @@ async fn main() -> Result<()> {
 
     // --- Mode 1: In-Memory (Ordinary) ---
     println!("--- Testing Mode: In-Memory (Ordinary) ---");
-    let ciphertext1 = ordinary::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string(), None, None)?;
+    let ciphertext1 =
+        ordinary::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string(), None, None)?;
 
     let (header1, body1) = Header::decode_from_prefixed_slice(&ciphertext1)?;
     let found_kek_id1 = header1.payload.kek_id().unwrap();
@@ -35,7 +36,8 @@ async fn main() -> Result<()> {
 
     // --- Mode 2: In-Memory Parallel ---
     println!("\n--- Testing Mode: In-Memory Parallel ---");
-    let ciphertext2 = parallel::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string(), None, None)?;
+    let ciphertext2 =
+        parallel::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string(), None, None)?;
 
     let (header2, body2) = Header::decode_from_prefixed_slice(&ciphertext2)?;
     let found_kek_id2 = header2.payload.kek_id().unwrap();
@@ -49,8 +51,13 @@ async fn main() -> Result<()> {
     // --- Mode 3: Synchronous Streaming ---
     println!("\n--- Testing Mode: Synchronous Streaming ---");
     let mut ciphertext3 = Vec::new();
-    let mut encryptor3 =
-        streaming::Encryptor::<_, Kem, Dek>::new(&mut ciphertext3, &pk, KEK_ID.to_string(), None, None)?;
+    let mut encryptor3 = streaming::Encryptor::<_, Kem, Dek>::new(
+        &mut ciphertext3,
+        &pk,
+        KEK_ID.to_string(),
+        None,
+        None,
+    )?;
     encryptor3.write_all(plaintext)?;
     encryptor3.finish()?;
 
@@ -122,7 +129,8 @@ async fn main() -> Result<()> {
     // --- Mode 6: In-Memory with AAD ---
     println!("\n--- Testing Mode: In-Memory with AAD ---");
     let aad = b"this is authenticated data for the mid-level hybrid api";
-    let ciphertext6 = ordinary::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string(), None, Some(aad))?;
+    let ciphertext6 =
+        ordinary::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string(), None, Some(aad))?;
 
     let pending_decryptor6 = ordinary::PendingDecryptor::from_ciphertext(&ciphertext6)?;
     let found_kek_id6 = pending_decryptor6.header().payload.kek_id().unwrap();

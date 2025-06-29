@@ -1,6 +1,6 @@
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::SignerSet;
 use crate::common::header::{Header, HeaderPayload, SealMode, SingerInfo, StreamInfo};
+use crate::common::SignerSet;
 use crate::common::DEFAULT_CHUNK_SIZE;
 use crate::error::Result;
 use rand::{rngs::OsRng, TryRngCore};
@@ -12,6 +12,7 @@ pub fn create_header<A, S>(
     pk: &A::PublicKey,
     kek_id: String,
     signer: Option<SignerSet>,
+    aad: Option<&[u8]>,
 ) -> Result<(Header, [u8; 12], Zeroizing<Vec<u8>>)>
 where
     A: AsymmetricAlgorithm,
@@ -25,7 +26,7 @@ where
     let mut base_nonce = [0u8; 12];
     OsRng.try_fill_bytes(&mut base_nonce)?;
 
-    // 3. Construct Header
+    // 3. Construct Header payload, starting without a signature
     let mut payload = HeaderPayload::Hybrid {
         kek_id,
         kek_algorithm: A::ALGORITHM,
@@ -35,36 +36,23 @@ where
             chunk_size: DEFAULT_CHUNK_SIZE,
             base_nonce,
         }),
-        signature: signer.as_ref().map(|s| SingerInfo {
-            signer_key_id: s.signer_key_id.clone(),
-            signer_algorithm: s.signer_algorithm,
-            signature: Vec::new(),
-        }),
+        signature: None,
     };
 
-    // 4. Sign the payload if a signer is provided
-    if let Some(signer) = signer.as_ref() {
-        // Create a temporary payload without the signature for signing
-        let mut temp_payload = payload.clone();
-        if let HeaderPayload::Hybrid {
-            ref mut signature, ..
-        } = temp_payload
-        {
-            *signature = None;
-        }
+    // 4. Sign the payload and mutate it if a signer is provided
+    if let Some(s) = signer {
+        // The payload already has signature: None, so we can serialize it directly.
+        let payload_bytes = bincode::encode_to_vec(&payload, bincode::config::standard())?;
+        let signature_bytes = (s.signer)(&payload_bytes, aad)?;
 
-        let payload_bytes =
-            bincode::encode_to_vec(&temp_payload, bincode::config::standard())?;
-        let signature_bytes = (signer.signer)(&payload_bytes)?;
-
-        // Now, set the signature on the actual payload
+        // Now, set the signature on the actual payload by mutating it.
         if let HeaderPayload::Hybrid {
             ref mut signature, ..
         } = payload
         {
             *signature = Some(SingerInfo {
-                signer_key_id: signer.signer_key_id.clone(),
-                signer_algorithm: signer.signer_algorithm,
+                signer_key_id: s.signer_key_id,
+                signer_algorithm: s.signer_algorithm,
                 signature: signature_bytes,
             });
         }

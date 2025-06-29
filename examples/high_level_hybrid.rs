@@ -109,9 +109,7 @@ async fn main() -> Result<()> {
         .pipe_parallel(Cursor::new(plaintext), &mut ciphertext5)?;
 
     let mut decrypted5 = Vec::new();
-    let pending_decryptor5 = seal
-        .decrypt()
-        .reader_parallel(Cursor::new(&ciphertext5))?;
+    let pending_decryptor5 = seal.decrypt().reader_parallel(Cursor::new(&ciphertext5))?;
     println!(
         "Found KEK ID in parallel stream: '{}'",
         pending_decryptor5.kek_id().unwrap()

@@ -146,10 +146,7 @@ impl SymmetricDecryptorBuilder {
     ///
     /// Returns a `PendingInMemoryDecryptor` that allows inspecting the header
     /// before providing the key.
-    pub fn slice(
-        self,
-        ciphertext: &[u8],
-    ) -> crate::Result<PendingInMemoryDecryptor> {
+    pub fn slice(self, ciphertext: &[u8]) -> crate::Result<PendingInMemoryDecryptor> {
         let mid_level_pending =
             crate::symmetric::ordinary::PendingDecryptor::from_ciphertext(ciphertext)?;
         Ok(PendingInMemoryDecryptor {
@@ -668,10 +665,7 @@ mod tests {
         encryptor.finish().unwrap();
 
         // Decrypt
-        let pending = seal
-            .decrypt()
-            .reader(Cursor::new(&encrypted_data))
-            .unwrap();
+        let pending = seal.decrypt().reader(Cursor::new(&encrypted_data)).unwrap();
         let key_id = pending.key_id().unwrap();
         let decryption_key = key_store.get(key_id).unwrap();
         let mut decryptor = pending
@@ -694,9 +688,7 @@ mod tests {
         seal.encrypt::<Aes256Gcm>(&key, key_id.clone())
             .pipe_parallel(Cursor::new(plaintext), &mut encrypted)?;
 
-        let pending = seal
-            .decrypt()
-            .reader_parallel(Cursor::new(&encrypted))?;
+        let pending = seal.decrypt().reader_parallel(Cursor::new(&encrypted))?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
 
         let mut decrypted = Vec::new();

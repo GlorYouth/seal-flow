@@ -101,10 +101,7 @@ impl SymmetricDecryptorMode {
                 Ok(decrypted_data)
             }
             SymmetricDecryptorMode::AsyncStreaming => {
-                let pending = seal
-                    .decrypt()
-                    .async_reader(Cursor::new(ciphertext))
-                    .await?;
+                let pending = seal.decrypt().async_reader(Cursor::new(ciphertext)).await?;
                 let mut decryptor = pending.with_key::<TestDek>(key.clone())?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data).await?;
@@ -112,9 +109,7 @@ impl SymmetricDecryptorMode {
             }
             SymmetricDecryptorMode::ParallelStreaming => {
                 let mut decrypted_data = Vec::new();
-                let pending = seal
-                    .decrypt()
-                    .reader_parallel(Cursor::new(ciphertext))?;
+                let pending = seal.decrypt().reader_parallel(Cursor::new(ciphertext))?;
                 pending.with_key_to_writer::<TestDek, _>(key.clone(), &mut decrypted_data)?;
                 Ok(decrypted_data)
             }
@@ -261,10 +256,7 @@ impl HybridDecryptorMode {
                 Ok(decrypted_data)
             }
             HybridDecryptorMode::AsyncStreaming => {
-                let pending = seal
-                    .decrypt()
-                    .async_reader(Cursor::new(ciphertext))
-                    .await?;
+                let pending = seal.decrypt().async_reader(Cursor::new(ciphertext)).await?;
                 let mut decryptor = pending
                     .with_private_key::<TestKem, TestDek>(sk.clone())
                     .await?;
@@ -274,9 +266,7 @@ impl HybridDecryptorMode {
             }
             HybridDecryptorMode::ParallelStreaming => {
                 let mut decrypted_data = Vec::new();
-                let pending = seal
-                    .decrypt()
-                    .reader_parallel(Cursor::new(ciphertext))?;
+                let pending = seal.decrypt().reader_parallel(Cursor::new(ciphertext))?;
                 pending
                     .with_private_key_to_writer::<TestKem, TestDek, _>(sk, &mut decrypted_data)?;
                 Ok(decrypted_data)

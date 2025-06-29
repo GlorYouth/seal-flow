@@ -1,11 +1,7 @@
-use crate::algorithms::traits::{
-    AsymmetricAlgorithm, SignatureAlgorithm, SymmetricAlgorithm,
-};
-use crate::common::algorithms::{
-    AsymmetricAlgorithm as AsymmetricAlgorithmEnum,
-};
-use crate::common::SignerSet;
+use crate::algorithms::traits::{AsymmetricAlgorithm, SignatureAlgorithm, SymmetricAlgorithm};
+use crate::common::algorithms::AsymmetricAlgorithm as AsymmetricAlgorithmEnum;
 use crate::common::header::Header;
+use crate::common::SignerSet;
 use crate::crypto::zeroize::Zeroizing;
 use crate::error::Error;
 use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
@@ -56,9 +52,12 @@ impl HybridSeal {
     }
 }
 
-
 /// Verifies the header signature if a verification key is provided.
-fn verify_header(header: &Header, verification_key: Option<SignaturePublicKey>) -> crate::Result<()> {
+fn verify_header(
+    header: &Header,
+    verification_key: Option<SignaturePublicKey>,
+    aad: Option<&[u8]>,
+) -> crate::Result<()> {
     // 如果没有提供验证密钥，跳过验证
     let verification_key = match verification_key {
         Some(key) => key,
@@ -68,35 +67,37 @@ fn verify_header(header: &Header, verification_key: Option<SignaturePublicKey>) 
     // 如果头部有签名，则进行验证
     if let Some(algo) = header.payload.signer_algorithm() {
         // 获取签名载荷和签名本身
-        let (payload_bytes, signature) = header.payload.get_signed_payload_and_sig()?;
-        use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{Dilithium2, Dilithium3, Dilithium5};
+        let (mut payload_bytes, signature) = header.payload.get_signed_payload_and_sig()?;
+
+        // 将 AAD（如果存在）附加到要验证的负载中
+        if let Some(aad_data) = aad {
+            payload_bytes.extend_from_slice(aad_data);
+        }
+
         use seal_crypto::prelude::*;
+        use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
+            Dilithium2, Dilithium3, Dilithium5,
+        };
         // 根据签名算法选择正确的验证方法
         match algo {
-            crate::common::algorithms::SignatureAlgorithm::Dilithium2 => {
-                match verification_key {
-                    crate::keys::SignaturePublicKey::Dilithium2(key) => {
-                        Dilithium2::verify(&key, &payload_bytes, &Signature(signature))?;
-                    }
-                    _ => return Err(Error::UnsupportedOperation),
+            crate::common::algorithms::SignatureAlgorithm::Dilithium2 => match verification_key {
+                crate::keys::SignaturePublicKey::Dilithium2(key) => {
+                    Dilithium2::verify(&key, &payload_bytes, &Signature(signature))?;
                 }
-            }
-            crate::common::algorithms::SignatureAlgorithm::Dilithium3 => {
-                match verification_key {
-                    crate::keys::SignaturePublicKey::Dilithium3(key) => {
-                        Dilithium3::verify(&key, &payload_bytes, &Signature(signature))?;
-                    }
-                    _ => return Err(Error::UnsupportedOperation),
+                _ => return Err(Error::UnsupportedOperation),
+            },
+            crate::common::algorithms::SignatureAlgorithm::Dilithium3 => match verification_key {
+                crate::keys::SignaturePublicKey::Dilithium3(key) => {
+                    Dilithium3::verify(&key, &payload_bytes, &Signature(signature))?;
                 }
-            }
-            crate::common::algorithms::SignatureAlgorithm::Dilithium5 => {
-                match verification_key {
-                    crate::keys::SignaturePublicKey::Dilithium5(key) => {
-                        Dilithium5::verify(&key, &payload_bytes, &Signature(signature))?;
-                    }
-                    _ => return Err(Error::UnsupportedOperation),
+                _ => return Err(Error::UnsupportedOperation),
+            },
+            crate::common::algorithms::SignatureAlgorithm::Dilithium5 => match verification_key {
+                crate::keys::SignaturePublicKey::Dilithium5(key) => {
+                    Dilithium5::verify(&key, &payload_bytes, &Signature(signature))?;
                 }
-            }
+                _ => return Err(Error::UnsupportedOperation),
+            },
         }
         Ok(())
     } else {
@@ -143,8 +144,12 @@ where
         self.signer = Some(SignerSet {
             signer_key_id,
             signer_algorithm: SignerAlgo::ALGORITHM,
-            signer: Box::new(move |message| {
-                SignerAlgo::sign(&signing_key, message)
+            signer: Box::new(move |message, aad| {
+                let mut data_to_sign = message.to_vec();
+                if let Some(aad_data) = aad {
+                    data_to_sign.extend_from_slice(aad_data);
+                }
+                SignerAlgo::sign(&signing_key, &data_to_sign)
                     .map(|s| s.0)
                     .map_err(|e| e.into())
             }),
@@ -253,10 +258,7 @@ impl HybridDecryptorBuilder {
     }
 
     /// Configures decryption from an in-memory byte slice.
-    pub fn slice(
-        self,
-        ciphertext: &[u8],
-    ) -> crate::Result<PendingInMemoryDecryptor> {
+    pub fn slice(self, ciphertext: &[u8]) -> crate::Result<PendingInMemoryDecryptor> {
         let mid_level_pending =
             crate::hybrid::ordinary::PendingDecryptor::from_ciphertext(ciphertext)?;
         Ok(PendingInMemoryDecryptor {
@@ -355,9 +357,7 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     where
         P: SignatureKeyProvider,
     {
-        let signer_id = self
-            .signer_key_id()
-            .ok_or(Error::SignerKeyIdMissing)?;
+        let signer_id = self.signer_key_id().ok_or(Error::SignerKeyIdMissing)?;
         let verification_key = provider
             .get_signature_key(signer_id)
             .ok_or(Error::KeyNotFound)?;
@@ -372,7 +372,11 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        verify_header(self.header(), self.verification_key.clone())?;
+        verify_header(
+            self.header(),
+            self.verification_key.clone(),
+            self.aad.as_deref(),
+        )?;
 
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
@@ -422,7 +426,11 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        verify_header(self.header(), self.verification_key.clone())?;
+        verify_header(
+            self.header(),
+            self.verification_key.clone(),
+            self.aad.as_deref(),
+        )?;
         self.inner.into_plaintext::<A, S>(sk, self.aad.as_deref())
     }
 }
@@ -462,9 +470,7 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     where
         P: SignatureKeyProvider,
     {
-        let signer_id = self
-            .signer_key_id()
-            .ok_or(Error::SignerKeyIdMissing)?;
+        let signer_id = self.signer_key_id().ok_or(Error::SignerKeyIdMissing)?;
         let verification_key = provider
             .get_signature_key(signer_id)
             .ok_or(Error::KeyNotFound)?;
@@ -479,7 +485,11 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
-        verify_header(self.header(), self.verification_key.clone())?;
+        verify_header(
+            self.header(),
+            self.verification_key.clone(),
+            self.aad.as_deref(),
+        )?;
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
             .get_asymmetric_key(kek_id)
@@ -529,7 +539,11 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         A::PrivateKey: Clone,
         A::EncapsulatedKey: From<Vec<u8>>,
     {
-        verify_header(self.header(), self.verification_key.clone())?;
+        verify_header(
+            self.header(),
+            self.verification_key.clone(),
+            self.aad.as_deref(),
+        )?;
         self.inner.into_plaintext::<A, S>(sk, self.aad.as_deref())
     }
 }
@@ -569,9 +583,7 @@ impl<R: Read + 'static> PendingStreamingDecryptor<R> {
     where
         P: SignatureKeyProvider,
     {
-        let signer_id = self
-            .signer_key_id()
-            .ok_or(Error::SignerKeyIdMissing)?;
+        let signer_id = self.signer_key_id().ok_or(Error::SignerKeyIdMissing)?;
         let verification_key = provider
             .get_signature_key(signer_id)
             .ok_or(Error::KeyNotFound)?;
@@ -586,7 +598,11 @@ impl<R: Read + 'static> PendingStreamingDecryptor<R> {
         S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        verify_header(self.header(), self.verification_key.clone())?;
+        verify_header(
+            self.header(),
+            self.verification_key.clone(),
+            self.aad.as_deref(),
+        )?;
 
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
@@ -650,7 +666,11 @@ impl<R: Read + 'static> PendingStreamingDecryptor<R> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        verify_header(self.header(), self.verification_key.clone())?;
+        verify_header(
+            self.header(),
+            self.verification_key.clone(),
+            self.aad.as_deref(),
+        )?;
         self.inner.into_decryptor::<A, S>(sk, self.aad.as_deref())
     }
 }
@@ -696,9 +716,7 @@ where
     where
         P: SignatureKeyProvider,
     {
-        let signer_id = self
-            .signer_key_id()
-            .ok_or(Error::SignerKeyIdMissing)?;
+        let signer_id = self.signer_key_id().ok_or(Error::SignerKeyIdMissing)?;
         let verification_key = provider
             .get_signature_key(signer_id)
             .ok_or(Error::KeyNotFound)?;
@@ -717,7 +735,11 @@ where
         W: Write,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
-        verify_header(self.header(), self.verification_key.clone())?;
+        verify_header(
+            self.header(),
+            self.verification_key.clone(),
+            self.aad.as_deref(),
+        )?;
 
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
@@ -782,7 +804,11 @@ where
         A::PrivateKey: Clone,
         A::EncapsulatedKey: From<Vec<u8>> + Send,
     {
-        verify_header(self.header(), self.verification_key.clone())?;
+        verify_header(
+            self.header(),
+            self.verification_key.clone(),
+            self.aad.as_deref(),
+        )?;
         self.inner
             .decrypt_to_writer::<A, S, W>(sk, writer, self.aad.as_deref())
     }
@@ -825,9 +851,7 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
     where
         P: SignatureKeyProvider,
     {
-        let signer_id = self
-            .signer_key_id()
-            .ok_or(Error::SignerKeyIdMissing)?;
+        let signer_id = self.signer_key_id().ok_or(Error::SignerKeyIdMissing)?;
         let verification_key = provider
             .get_signature_key(signer_id)
             .ok_or(Error::KeyNotFound)?;
@@ -846,7 +870,11 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         S::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
         R: Send + 's,
     {
-        verify_header(self.header(), self.verification_key.clone())?;
+        verify_header(
+            self.header(),
+            self.verification_key.clone(),
+            self.aad.as_deref(),
+        )?;
 
         let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
         let key = provider
@@ -915,7 +943,11 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
     {
-        verify_header(self.header(), self.verification_key.clone())?;
+        verify_header(
+            self.header(),
+            self.verification_key.clone(),
+            self.aad.as_deref(),
+        )?;
         self.inner
             .into_decryptor::<A, S>(sk, self.aad.as_deref())
             .await
@@ -925,17 +957,17 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keys::AsymmetricPrivateKey;
-    use crate::provider::AsymmetricKeyProvider;
+    use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
+    use crate::provider::{AsymmetricKeyProvider, SignatureKeyProvider};
     use once_cell::sync::Lazy;
     use seal_crypto::prelude::*;
+    use seal_crypto::schemes::asymmetric::post_quantum::dilithium::Dilithium2;
     use seal_crypto::schemes::{
         asymmetric::traditional::rsa::Rsa2048, hash::Sha256, symmetric::aes_gcm::Aes256Gcm,
     };
     use std::collections::HashMap;
     use std::io::{Cursor, Read, Write};
     #[cfg(feature = "async")]
-
     const TEST_KEK_ID: &str = "test-kek";
 
     fn get_test_data() -> &'static [u8] {
@@ -944,6 +976,7 @@ mod tests {
 
     type TestKem = Rsa2048<Sha256>;
     type TestDek = Aes256Gcm;
+    type TestSigner = Dilithium2;
 
     static TEST_KEY_PAIR_RSA2048: Lazy<(
         <TestKem as AsymmetricKeySet>::PublicKey,
@@ -968,6 +1001,27 @@ mod tests {
     impl AsymmetricKeyProvider for TestKeyProvider {
         fn get_asymmetric_key<'a>(&'a self, kek_id: &str) -> Option<AsymmetricPrivateKey> {
             self.keys.get(kek_id).cloned()
+        }
+    }
+
+    struct TestSignatureProvider {
+        keys: HashMap<String, SignaturePublicKey>,
+    }
+
+    impl TestSignatureProvider {
+        fn new() -> Self {
+            Self {
+                keys: HashMap::new(),
+            }
+        }
+        fn add_key(&mut self, id: String, key: SignaturePublicKey) {
+            self.keys.insert(id, key);
+        }
+    }
+
+    impl SignatureKeyProvider for TestSignatureProvider {
+        fn get_signature_key<'a>(&'a self, signer_key_id: &str) -> Option<SignaturePublicKey> {
+            self.keys.get(signer_key_id).cloned()
         }
     }
 
@@ -1028,10 +1082,7 @@ mod tests {
         encryptor.finish().unwrap();
 
         // Decrypt
-        let pending = seal
-            .decrypt()
-            .reader(Cursor::new(encrypted_data))
-            .unwrap();
+        let pending = seal.decrypt().reader(Cursor::new(encrypted_data)).unwrap();
         let kek_id = pending.kek_id().unwrap();
         let decryption_key = key_store.get(kek_id).unwrap();
         let mut decryptor = pending
@@ -1054,9 +1105,7 @@ mod tests {
         seal.encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
             .pipe_parallel(Cursor::new(plaintext), &mut encrypted)?;
 
-        let pending = seal
-            .decrypt()
-            .reader_parallel(Cursor::new(&encrypted))?;
+        let pending = seal.decrypt().reader_parallel(Cursor::new(&encrypted))?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
 
         let mut decrypted = Vec::new();
@@ -1125,6 +1174,62 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_signed_aad_tampering_fails() -> crate::Result<()> {
+        // 1. Setup keys
+        let (enc_pk, enc_sk) = TestKem::generate_keypair()?;
+        let (sig_pk, sig_sk) = TestSigner::generate_keypair()?;
+
+        // 2. Setup provider for verifier
+        let signer_key_id = "test-signer-key-mem".to_string();
+        let mut sig_provider = TestSignatureProvider::new();
+        sig_provider.add_key(
+            signer_key_id.clone(),
+            SignaturePublicKey::Dilithium2(sig_pk),
+        );
+
+        let plaintext = get_test_data();
+        let aad = b"test-signed-aad-memory";
+        let kek_id = "test-signed-aad-kek-mem".to_string();
+        let seal = HybridSeal::new();
+
+        // 3. Encrypt with signer and AAD
+        let encrypted = seal
+            .encrypt::<TestKem, TestDek>(&enc_pk, kek_id)
+            .with_aad(aad)
+            .with_signer::<TestSigner>(sig_sk, signer_key_id.clone())
+            .to_vec(plaintext)?;
+
+        // 4. Successful roundtrip with correct verifier and AAD
+        let decrypted = seal
+            .decrypt()
+            .slice(&encrypted)?
+            .with_aad(aad)
+            .with_verifier(&sig_provider)?
+            .with_private_key::<TestKem, TestDek>(&enc_sk)?;
+        assert_eq!(decrypted.as_slice(), plaintext);
+
+        // 5. Fails with wrong AAD
+        let res = seal
+            .decrypt()
+            .slice(&encrypted)?
+            .with_aad(b"wrong aad")
+            .with_verifier(&sig_provider)?
+            .with_private_key::<TestKem, TestDek>(&enc_sk);
+        assert!(res.is_err(), "Decryption should fail with wrong AAD");
+        assert!(matches!(res.err(), Some(Error::Crypto(_))));
+
+        // 6. Fails with no AAD
+        let res2 = seal
+            .decrypt()
+            .slice(&encrypted)?
+            .with_verifier(&sig_provider)?
+            .with_private_key::<TestKem, TestDek>(&enc_sk);
+        assert!(res2.is_err(), "Decryption should fail with no AAD");
+
+        Ok(())
+    }
+
     #[cfg(feature = "async")]
     mod async_tests {
         use super::*;
@@ -1165,6 +1270,63 @@ mod tests {
             let mut decrypted_data = Vec::new();
             decryptor.read_to_end(&mut decrypted_data).await.unwrap();
             assert_eq!(plaintext.to_vec(), decrypted_data);
+        }
+
+        #[tokio::test]
+        async fn test_async_signed_aad_tampering_fails() -> crate::Result<()> {
+            let (enc_pk, enc_sk) = TestKem::generate_keypair()?;
+            let (sig_pk, sig_sk) = TestSigner::generate_keypair()?;
+
+            let signer_key_id = "test-signer-key-async".to_string();
+            let mut sig_provider = TestSignatureProvider::new();
+            sig_provider.add_key(
+                signer_key_id.clone(),
+                SignaturePublicKey::Dilithium2(sig_pk),
+            );
+
+            let plaintext = get_test_data();
+            let aad = b"test-signed-aad-async";
+            let kek_id = "test-signed-aad-kek-async".to_string();
+            let seal = HybridSeal::new();
+
+            // Encrypt
+            let mut encrypted = Vec::new();
+            let mut encryptor = seal
+                .encrypt::<TestKem, TestDek>(&enc_pk, kek_id)
+                .with_aad(aad)
+                .with_signer::<TestSigner>(sig_sk, signer_key_id)
+                .into_async_writer(&mut encrypted)
+                .await?;
+            encryptor.write_all(plaintext).await?;
+            encryptor.shutdown().await?;
+
+            // Successful roundtrip
+            let mut decryptor = seal
+                .decrypt()
+                .async_reader(Cursor::new(&encrypted))
+                .await?
+                .with_aad(aad)
+                .with_verifier(&sig_provider)
+                .await?
+                .with_private_key::<TestKem, TestDek>(enc_sk.clone())
+                .await?;
+            let mut decrypted_ok = Vec::new();
+            decryptor.read_to_end(&mut decrypted_ok).await?;
+            assert_eq!(decrypted_ok, plaintext);
+
+            // Fails with wrong AAD
+            let res = seal
+                .decrypt()
+                .async_reader(Cursor::new(&encrypted))
+                .await?
+                .with_aad(b"wrong-aad")
+                .with_verifier(&sig_provider)
+                .await?
+                .with_private_key::<TestKem, TestDek>(enc_sk.clone())
+                .await;
+            assert!(res.is_err());
+
+            Ok(())
         }
     }
 }

@@ -66,7 +66,9 @@ impl HeaderPayload {
     /// Returns the signer key ID if the payload is for hybrid encryption.
     pub fn signer_key_id(&self) -> Option<&str> {
         match self {
-            HeaderPayload::Hybrid { signature, .. } => signature.as_ref().map(|s| s.signer_key_id.as_str()),
+            HeaderPayload::Hybrid { signature, .. } => {
+                signature.as_ref().map(|s| s.signer_key_id.as_str())
+            }
             _ => None,
         }
     }
@@ -92,9 +94,9 @@ impl HeaderPayload {
     /// Returns the signature algorithm, if applicable.
     pub fn signer_algorithm(&self) -> Option<SignatureAlgorithm> {
         match self {
-            HeaderPayload::Hybrid {
-                signature, ..
-            } => signature.as_ref().map(|s| s.signer_algorithm),
+            HeaderPayload::Hybrid { signature, .. } => {
+                signature.as_ref().map(|s| s.signer_algorithm)
+            }
             _ => None,
         }
     }
@@ -102,7 +104,9 @@ impl HeaderPayload {
     /// Returns the signature, if applicable.
     pub fn signature(&self) -> Option<&[u8]> {
         match self {
-            HeaderPayload::Hybrid { signature, .. } => signature.as_ref().map(|s| s.signature.as_slice()),
+            HeaderPayload::Hybrid { signature, .. } => {
+                signature.as_ref().map(|s| s.signature.as_slice())
+            }
             _ => None,
         }
     }
@@ -119,8 +123,7 @@ impl HeaderPayload {
                 *signature = None;
             }
 
-            let payload_bytes =
-                bincode::encode_to_vec(&temp_payload, bincode::config::standard())?;
+            let payload_bytes = bincode::encode_to_vec(&temp_payload, bincode::config::standard())?;
             Ok((payload_bytes, signature))
         } else {
             Err(Error::UnsupportedOperation)

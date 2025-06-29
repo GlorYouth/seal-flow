@@ -3,8 +3,8 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::SignerSet;
 use crate::common::header::{Header, HeaderPayload};
+use crate::common::SignerSet;
 use crate::error::{Error, Result};
 use crate::impls::asynchronous::{DecryptorImpl, EncryptorImpl};
 use pin_project_lite::pin_project;
@@ -41,9 +41,12 @@ where
         signer: Option<SignerSet>,
         aad: Option<&[u8]>,
     ) -> Result<Self> {
-        let (header, base_nonce, shared_secret) =
-            tokio::task::spawn_blocking(move || create_header::<A, S>(&pk.into(), kek_id, signer))
-                .await??;
+        let aad_vec = aad.map(|a| a.to_vec());
+        let (header, base_nonce, shared_secret) = tokio::task::spawn_blocking(move || {
+            let aad = aad_vec.as_deref();
+            create_header::<A, S>(&pk.into(), kek_id, signer, aad)
+        })
+        .await??;
 
         let header_bytes = header.encode_to_vec()?;
         use tokio::io::AsyncWriteExt;
@@ -52,7 +55,7 @@ where
             .await?;
         writer.write_all(&header_bytes).await?;
 
-        let inner = EncryptorImpl::new(writer, shared_secret.into(), base_nonce, aad);
+        let inner = EncryptorImpl::new(writer, shared_secret.into(), base_nonce, aad.as_deref());
 
         Ok(Self {
             inner,

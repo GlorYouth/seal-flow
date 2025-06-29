@@ -2,8 +2,8 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::SignerSet;
 use crate::common::header::{Header, HeaderPayload};
+use crate::common::SignerSet;
 use crate::error::{Error, Result};
 use crate::impls::parallel_streaming::{decrypt_pipeline, encrypt_pipeline};
 use seal_crypto::zeroize::Zeroizing;
@@ -26,7 +26,7 @@ where
     R: Read + Send,
     W: Write,
 {
-    let (header, base_nonce, symmetric_key) = create_header::<A, S>(pk, kek_id, signer)?;
+    let (header, base_nonce, symmetric_key) = create_header::<A, S>(pk, kek_id, signer, aad)?;
 
     let header_bytes = header.encode_to_vec()?;
     writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
@@ -145,7 +145,7 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
-            None, 
+            None,
             None,
         )
         .unwrap();
@@ -172,7 +172,7 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
-            None, 
+            None,
             None,
         )
         .unwrap();
@@ -199,7 +199,7 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
-            None, 
+            None,
             None,
         )
         .unwrap();
@@ -232,7 +232,7 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
-            None, 
+            None,
             None,
         )
         .unwrap();
@@ -259,7 +259,7 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             "test_kek_id_aad".to_string(),
-            None, 
+            None,
             Some(aad),
         )
         .unwrap();
