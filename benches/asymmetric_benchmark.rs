@@ -4,9 +4,7 @@ use rand::{rngs::OsRng, TryRngCore};
 use rayon;
 use seal_crypto::prelude::*;
 use seal_crypto::schemes::asymmetric::post_quantum::kyber::Kyber768;
-use seal_crypto::{
-    schemes::symmetric::aes_gcm::Aes256Gcm,
-};
+use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 use seal_flow::seal::hybrid::HybridSeal;
 use std::hint::black_box;
 use std::io::{Cursor, Write};
@@ -217,4 +215,4 @@ criterion_group!(
     benchmark_hybrid_encryption,
     benchmark_hybrid_decryption
 );
-criterion_main!(benches); 
+criterion_main!(benches);

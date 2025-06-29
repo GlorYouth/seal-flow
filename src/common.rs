@@ -1,3 +1,3 @@
 pub mod algorithms;
-pub mod header;
 pub(crate) mod buffer;
+pub mod header;

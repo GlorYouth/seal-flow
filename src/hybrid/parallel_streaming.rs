@@ -1,8 +1,9 @@
 //! Implements a parallel streaming hybrid encryption/decryption scheme.
 
-use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
+use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::buffer::BufferPool;
+use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 use bytes::BytesMut;
@@ -145,7 +146,10 @@ where
         drop(enc_chunk_tx); // Drop our sender to signal completion
 
         while let Ok((index, result)) = enc_chunk_rx.recv() {
-            pending_chunks.push(OrderedChunk { index, data: result });
+            pending_chunks.push(OrderedChunk {
+                index,
+                data: result,
+            });
             while let Some(top) = pending_chunks.peek() {
                 if top.index == next_chunk_to_write {
                     let chunk = pending_chunks.pop().unwrap();
@@ -218,14 +222,19 @@ where
 
     /// Consumes the pending decryptor, decrypts the stream with the provided private key,
     /// and writes the plaintext to the writer.
-    pub fn decrypt_to_writer<A, S, W>(self, sk: &A::PrivateKey, writer: W, aad: Option<&[u8]>) -> Result<()>
+    pub fn decrypt_to_writer<A, S, W>(
+        self,
+        sk: &A::PrivateKey,
+        writer: W,
+        aad: Option<&[u8]>,
+    ) -> Result<()>
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
         A::PrivateKey: Clone,
-        A::EncapsulatedKey: From<Vec<u8>> + Send, 
-        W: Write
+        A::EncapsulatedKey: From<Vec<u8>> + Send,
+        W: Write,
     {
         decrypt_body_stream::<A, S, R, W>(sk, &self.header, self.reader, writer, aad)
     }
@@ -352,7 +361,10 @@ where
         drop(dec_chunk_tx);
 
         while let Ok((index, result)) = dec_chunk_rx.recv() {
-            pending_chunks.push(OrderedChunk { index, data: result });
+            pending_chunks.push(OrderedChunk {
+                index,
+                data: result,
+            });
             while let Some(top) = pending_chunks.peek() {
                 if top.index == next_chunk_to_write {
                     let chunk = pending_chunks.pop().unwrap();
@@ -482,8 +494,11 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result =
-            pending.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk, &mut decrypted_data, None);
+        let result = pending.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(
+            &sk,
+            &mut decrypted_data,
+            None,
+        );
 
         assert!(result.is_err());
     }
@@ -507,8 +522,11 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result =
-            pending.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk2, &mut decrypted_data, None);
+        let result = pending.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(
+            &sk2,
+            &mut decrypted_data,
+            None,
+        );
         assert!(result.is_err());
     }
 
@@ -531,10 +549,7 @@ mod tests {
         // Decrypt with correct AAD
         let mut decrypted_data = Vec::new();
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        assert_eq!(
-            pending.header().payload.kek_id(),
-            Some("test_kek_id_aad")
-        );
+        assert_eq!(pending.header().payload.kek_id(), Some("test_kek_id_aad"));
         pending
             .decrypt_to_writer::<Rsa2048, Aes256Gcm, _>(&sk, &mut decrypted_data, Some(aad))
             .unwrap();
@@ -553,8 +568,11 @@ mod tests {
         // Decrypt with no AAD fails
         let mut decrypted_data_fail2 = Vec::new();
         let pending_fail2 = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result2 = pending_fail2
-            .decrypt_to_writer::<Rsa2048, Aes256Gcm, _>(&sk, &mut decrypted_data_fail2, None);
+        let result2 = pending_fail2.decrypt_to_writer::<Rsa2048, Aes256Gcm, _>(
+            &sk,
+            &mut decrypted_data_fail2,
+            None,
+        );
         assert!(result2.is_err());
     }
 }

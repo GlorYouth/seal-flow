@@ -141,14 +141,14 @@ async fn main() -> Result<()> {
     let key6 = key_store.get(KEY_ID).unwrap();
     let ciphertext6 =
         ordinary::encrypt::<TheAlgorithm>(key6.clone(), plaintext, KEY_ID.to_string(), Some(aad))?;
-    
+
     let pending_decryptor6 = ordinary::PendingDecryptor::from_ciphertext(&ciphertext6)?;
     let found_key_id6 = pending_decryptor6.header().payload.key_id().unwrap();
     let decryption_key6 = key_store.get(found_key_id6).unwrap();
 
     // Decrypt with correct AAD
-    let decrypted6 = pending_decryptor6
-        .into_plaintext::<TheAlgorithm>(decryption_key6.clone(), Some(aad))?;
+    let decrypted6 =
+        pending_decryptor6.into_plaintext::<TheAlgorithm>(decryption_key6.clone(), Some(aad))?;
     assert_eq!(plaintext, &decrypted6[..]);
     println!("In-Memory with AAD roundtrip successful!");
 

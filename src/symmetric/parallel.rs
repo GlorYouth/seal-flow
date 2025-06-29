@@ -1,5 +1,6 @@
-use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
+use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
+use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 use rayon::prelude::*;
@@ -25,7 +26,11 @@ where
     // 2. Pre-allocate output buffer
     let num_chunks = (plaintext.len() + chunk_size - 1) / chunk_size;
     let last_chunk_len = if plaintext.len() % chunk_size == 0 {
-        if plaintext.is_empty() { 0 } else { chunk_size }
+        if plaintext.is_empty() {
+            0
+        } else {
+            chunk_size
+        }
     } else {
         plaintext.len() % chunk_size
     };
@@ -93,7 +98,11 @@ where
     // Pre-allocate plaintext buffer
     let num_chunks = (ciphertext_body.len() + encrypted_chunk_size - 1) / encrypted_chunk_size;
     let last_chunk_len = if ciphertext_body.len() % encrypted_chunk_size == 0 {
-        if ciphertext_body.is_empty() { 0 } else { encrypted_chunk_size }
+        if ciphertext_body.is_empty() {
+            0
+        } else {
+            encrypted_chunk_size
+        }
     } else {
         ciphertext_body.len() % encrypted_chunk_size
     };
@@ -101,8 +110,13 @@ where
     if last_chunk_len > 0 && last_chunk_len <= tag_len {
         return Err(Error::InvalidCiphertextFormat);
     }
-    
-    let total_size = (num_chunks.saturating_sub(1)) * chunk_size as usize + (if last_chunk_len > tag_len { last_chunk_len - tag_len } else { 0 });
+
+    let total_size = (num_chunks.saturating_sub(1)) * chunk_size as usize
+        + (if last_chunk_len > tag_len {
+            last_chunk_len - tag_len
+        } else {
+            0
+        });
     let mut plaintext = vec![0u8; total_size];
 
     // Decrypt in parallel, writing directly to the plaintext buffer
@@ -114,14 +128,8 @@ where
             let nonce = derive_nonce(&base_nonce, i as u64);
 
             // Decrypt the chunk
-            S::decrypt_to_buffer(
-                &key_material,
-                &nonce,
-                encrypted_chunk,
-                plaintext_chunk,
-                aad,
-            )
-            .map_err(Error::from)
+            S::decrypt_to_buffer(&key_material, &nonce, encrypted_chunk, plaintext_chunk, aad)
+                .map_err(Error::from)
         })
         .collect::<Result<Vec<usize>>>()?;
 
@@ -235,8 +243,7 @@ mod tests {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted =
-            encrypt::<Aes256Gcm>(key.clone(), &plaintext, "test_key_id".to_string(), None)
-                .unwrap();
+            encrypt::<Aes256Gcm>(key.clone(), &plaintext, "test_key_id".to_string(), None).unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
         let decrypted = pending.into_plaintext::<Aes256Gcm>(key, None).unwrap();
@@ -295,8 +302,7 @@ mod tests {
 
         // Decrypt with wrong AAD fails
         let pending_fail = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result_fail =
-            pending_fail.into_plaintext::<Aes256Gcm>(key.clone(), Some(b"wrong aad"));
+        let result_fail = pending_fail.into_plaintext::<Aes256Gcm>(key.clone(), Some(b"wrong aad"));
         assert!(result_fail.is_err());
 
         // Decrypt with no AAD fails

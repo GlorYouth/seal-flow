@@ -2,8 +2,10 @@
 //! This mode is designed for high-performance processing of large files or data streams
 //! by overlapping I/O with parallel computation.
 
-use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
+use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
+use crate::common::buffer::BufferPool;
+use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 use bytes::BytesMut;
@@ -12,7 +14,6 @@ use std::collections::BinaryHeap;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use std::thread;
-use crate::common::buffer::BufferPool;
 
 const CHANNEL_BOUND: usize = 16; // Bound the channel to avoid unbounded memory usage
 
@@ -98,10 +99,7 @@ where
 
                 if bytes_read_total > 0 {
                     buffer.truncate(bytes_read_total);
-                    if raw_chunk_tx_clone
-                        .send((chunk_index, buffer))
-                        .is_err()
-                    {
+                    if raw_chunk_tx_clone.send((chunk_index, buffer)).is_err() {
                         break; // Receiver has hung up, buffer is lost
                     }
                     chunk_index += 1;
@@ -118,13 +116,13 @@ where
         let key_clone = Arc::clone(&key_arc);
         let aad_clone = Arc::clone(&aad_arc);
         let in_pool = Arc::clone(&pool);
-        let out_pool = Arc::new(BufferPool::new(
-            DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE,
-        ));
+        let out_pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE));
         let writer_pool = Arc::clone(&out_pool);
         s.spawn(move || {
-            raw_chunk_rx.into_iter().par_bridge().for_each(
-                |(index, in_buffer)| {
+            raw_chunk_rx
+                .into_iter()
+                .par_bridge()
+                .for_each(|(index, in_buffer)| {
                     let mut out_buffer = out_pool.acquire();
                     let nonce = derive_nonce(&base_nonce, index);
                     let aad_val = aad_clone.as_deref();
@@ -152,8 +150,7 @@ where
                         // If send fails, the output buffer might be lost, which is acceptable
                         // as the pipeline is shutting down.
                     }
-                },
-            );
+                });
         });
 
         // --- Main Thread: I/O Writer (Re-sequencer) ---
@@ -164,7 +161,10 @@ where
 
         let mut next_chunk_to_write = 0;
         while let Ok((index, result)) = enc_chunk_rx.recv() {
-            pending_chunks.push(OrderedChunk { index, data: result });
+            pending_chunks.push(OrderedChunk {
+                index,
+                data: result,
+            });
 
             while let Some(top_chunk) = pending_chunks.peek() {
                 if top_chunk.index == next_chunk_to_write {
@@ -271,10 +271,7 @@ where
 
                 if bytes_read_total > 0 {
                     buffer.truncate(bytes_read_total);
-                    if enc_chunk_tx_clone
-                        .send((chunk_index, buffer))
-                        .is_err()
-                    {
+                    if enc_chunk_tx_clone.send((chunk_index, buffer)).is_err() {
                         break;
                     }
                     chunk_index += 1;
@@ -294,8 +291,10 @@ where
         let out_pool = Arc::new(BufferPool::new(chunk_size as usize));
         let writer_pool = Arc::clone(&out_pool);
         s.spawn(move || {
-            enc_chunk_rx.into_iter().par_bridge().for_each(
-                |(index, in_buffer)| {
+            enc_chunk_rx
+                .into_iter()
+                .par_bridge()
+                .for_each(|(index, in_buffer)| {
                     let mut out_buffer = out_pool.acquire();
                     let nonce = derive_nonce(&base_nonce, index);
                     let aad_val = aad_clone.as_deref();
@@ -322,8 +321,7 @@ where
                     if dec_chunk_tx_clone.send((index, result)).is_err() {
                         // Pipeline shutting down
                     }
-                },
-            );
+                });
         });
 
         // --- Main Thread: I/O Writer (Re-sequencer) ---
@@ -334,7 +332,10 @@ where
 
         let mut next_chunk_to_write = 0;
         while let Ok((index, result)) = dec_chunk_rx.recv() {
-            pending_chunks.push(OrderedChunk { index, data: result });
+            pending_chunks.push(OrderedChunk {
+                index,
+                data: result,
+            });
 
             while let Some(top_chunk) = pending_chunks.peek() {
                 if top_chunk.index == next_chunk_to_write {

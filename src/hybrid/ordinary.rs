@@ -1,7 +1,8 @@
 //! Ordinary (single-threaded, in-memory) hybrid encryption and decryption.
 
-use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
+use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 use seal_crypto::zeroize::Zeroizing;
@@ -40,8 +41,7 @@ where
     }
 
     // 4. Assemble the final output.
-    let mut final_output =
-        Vec::with_capacity(4 + header_bytes.len() + encrypted_body.len());
+    let mut final_output = Vec::with_capacity(4 + header_bytes.len() + encrypted_body.len());
     final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
     final_output.extend_from_slice(&header_bytes);
     final_output.extend_from_slice(&encrypted_body);
@@ -168,8 +168,7 @@ mod tests {
         // Test separated functions
         let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
         assert_eq!(header.payload.kek_id(), Some("test_kek_id"));
-        let decrypted_parts =
-            decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body, None).unwrap();
+        let decrypted_parts = decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body, None).unwrap();
         assert_eq!(plaintext, decrypted_parts.as_slice());
     }
 
@@ -244,13 +243,9 @@ mod tests {
         let plaintext = b"some important data with aad";
         let aad = b"some important context";
 
-        let encrypted = encrypt::<Rsa2048, Aes256Gcm>(
-            &pk,
-            plaintext,
-            "aad_kek_id".to_string(),
-            Some(aad),
-        )
-        .unwrap();
+        let encrypted =
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "aad_kek_id".to_string(), Some(aad))
+                .unwrap();
 
         // Decrypt with correct AAD
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();

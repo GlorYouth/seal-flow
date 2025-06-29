@@ -93,7 +93,12 @@ where
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + Clone,
         Vec<u8>: From<<A as seal_crypto::prelude::Kem>::EncapsulatedKey>,
     {
-        crate::hybrid::parallel::encrypt::<A, S>(self.pk, plaintext, self.kek_id, self.aad.as_deref())
+        crate::hybrid::parallel::encrypt::<A, S>(
+            self.pk,
+            plaintext,
+            self.kek_id,
+            self.aad.as_deref(),
+        )
     }
 
     /// Creates a streaming encryptor that writes to the given `Write` implementation.
@@ -300,8 +305,7 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        self.inner
-            .into_plaintext::<A, S>(sk, self.aad.as_deref())
+        self.inner.into_plaintext::<A, S>(sk, self.aad.as_deref())
     }
 }
 
@@ -385,8 +389,7 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         A::PrivateKey: Clone,
         A::EncapsulatedKey: From<Vec<u8>>,
     {
-        self.inner
-            .into_plaintext::<A, S>(sk, self.aad.as_deref())
+        self.inner.into_plaintext::<A, S>(sk, self.aad.as_deref())
     }
 }
 
@@ -484,8 +487,7 @@ impl<R: Read> PendingStreamingDecryptor<R> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        self.inner
-            .into_decryptor::<A, S>(sk, self.aad.as_deref())
+        self.inner.into_decryptor::<A, S>(sk, self.aad.as_deref())
     }
 }
 

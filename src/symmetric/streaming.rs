@@ -1,7 +1,8 @@
 //! Implements `std::io` traits for synchronous, streaming symmetric encryption.
 
-use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
+use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
+use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 use std::io::{self, Read, Write};
@@ -440,9 +441,7 @@ mod tests {
 
         // Decrypt with no AAD
         let pending2 = PendingDecryptor::from_reader(Cursor::new(encrypted_data)).unwrap();
-        let mut decryptor2 = pending2
-            .into_decryptor::<Aes256Gcm>(key, None)
-            .unwrap();
+        let mut decryptor2 = pending2.into_decryptor::<Aes256Gcm>(key, None).unwrap();
         let result2 = decryptor2.read_to_end(&mut Vec::new());
         assert!(result2.is_err());
     }

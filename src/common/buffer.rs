@@ -1,5 +1,5 @@
-use crossbeam_channel::{bounded, Receiver, Sender};
 use bytes::BytesMut;
+use crossbeam_channel::{bounded, Receiver, Sender};
 const POOL_SIZE: usize = 16;
 
 /// A simple, thread-safe memory pool for `BytesMut` buffers.
@@ -14,9 +14,7 @@ impl BufferPool {
     pub fn new(buffer_size: usize) -> Self {
         let (returner, pool) = bounded(POOL_SIZE);
         for _ in 0..POOL_SIZE {
-            returner
-                .send(BytesMut::with_capacity(buffer_size))
-                .unwrap();
+            returner.send(BytesMut::with_capacity(buffer_size)).unwrap();
         }
         Self {
             pool,

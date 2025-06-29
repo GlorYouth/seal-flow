@@ -1,6 +1,7 @@
 //! Synchronous, streaming hybrid encryption and decryption implementation.
-use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
+use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 use seal_crypto::prelude::*;
@@ -317,13 +318,9 @@ mod tests {
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
-            &mut encrypted_data,
-            &pk,
-            kek_id.clone(),
-            aad,
-        )
-        .unwrap();
+        let mut encryptor =
+            Encryptor::<_, Rsa2048, Aes256Gcm>::new(&mut encrypted_data, &pk, kek_id.clone(), aad)
+                .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
 
@@ -444,7 +441,7 @@ mod tests {
 
         // Decrypt with wrong AAD
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        
+
         let mut decryptor = pending
             .into_decryptor::<Rsa2048, Aes256Gcm>(&sk, Some(aad2))
             .unwrap();

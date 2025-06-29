@@ -3,6 +3,20 @@ use bincode::{Decode, Encode};
 use crate::common::algorithms::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::error::{Error, Result};
 use std::io::Read;
+pub const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
+
+/// Derives a nonce for a specific chunk index from a base nonce.
+pub fn derive_nonce(base_nonce: &[u8; 12], chunk_index: u64) -> [u8; 12] {
+    let mut nonce_bytes = *base_nonce;
+    let i_bytes = chunk_index.to_le_bytes(); // u64 -> 8 bytes, little-endian
+
+    // XOR the chunk index into the last 8 bytes of the nonce
+    for j in 0..8 {
+        nonce_bytes[4 + j] ^= i_bytes[j];
+    }
+
+    nonce_bytes
+}
 
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncReadExt};

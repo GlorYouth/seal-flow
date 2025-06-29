@@ -417,8 +417,7 @@ impl<R: Read> PendingStreamingDecryptor<R> {
     where
         S::Key: Clone + Send + Sync,
     {
-        self.inner
-            .into_decryptor(key.clone(), self.aad.as_deref())
+        self.inner.into_decryptor(key.clone(), self.aad.as_deref())
     }
 }
 
@@ -480,19 +479,23 @@ where
                 _ => Err(Error::MismatchedKeyType),
             },
             SymmetricAlgorithmEnum::ChaCha20Poly1305 => match key {
-                SymmetricKey::Chacha20Poly1305(k) => self
-                    .inner
-                    .decrypt_to_writer::<ChaCha20Poly1305, W>(k.clone(), writer, self.aad.as_deref()),
-                _ => Err(Error::MismatchedKeyType),
-            },
-            SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
-                SymmetricKey::XChaCha20Poly1305(k) => self
-                    .inner
-                    .decrypt_to_writer::<XChaCha20Poly1305, W>(
+                SymmetricKey::Chacha20Poly1305(k) => {
+                    self.inner.decrypt_to_writer::<ChaCha20Poly1305, W>(
                         k.clone(),
                         writer,
                         self.aad.as_deref(),
-                    ),
+                    )
+                }
+                _ => Err(Error::MismatchedKeyType),
+            },
+            SymmetricAlgorithmEnum::XChaCha20Poly1305 => match key {
+                SymmetricKey::XChaCha20Poly1305(k) => {
+                    self.inner.decrypt_to_writer::<XChaCha20Poly1305, W>(
+                        k.clone(),
+                        writer,
+                        self.aad.as_deref(),
+                    )
+                }
                 _ => Err(Error::MismatchedKeyType),
             },
         }
@@ -590,8 +593,7 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
     where
         S::Key: Clone + Send + Sync,
     {
-        self.inner
-            .into_decryptor(key.clone(), self.aad.as_deref())
+        self.inner.into_decryptor(key.clone(), self.aad.as_deref())
     }
 }
 
@@ -672,7 +674,9 @@ mod tests {
             .unwrap();
         let key_id = pending.key_id().unwrap();
         let decryption_key = key_store.get(key_id).unwrap();
-        let mut decryptor = pending.with_key::<Aes256Gcm>(decryption_key.clone()).unwrap();
+        let mut decryptor = pending
+            .with_key::<Aes256Gcm>(decryption_key.clone())
+            .unwrap();
 
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
@@ -775,9 +779,7 @@ mod tests {
         // Decrypt with correct AAD
         let pending = seal.decrypt().from_slice(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
-        let decrypted = pending
-            .with_aad(aad)
-            .with_key::<Aes256Gcm>(key.clone())?;
+        let decrypted = pending.with_aad(aad).with_key::<Aes256Gcm>(key.clone())?;
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
@@ -828,7 +830,9 @@ mod tests {
                 .unwrap();
             let key_id = pending.key_id().unwrap();
             let decryption_key = key_store.get(key_id).unwrap();
-            let mut decryptor = pending.with_key::<Aes256Gcm>(decryption_key.clone()).unwrap();
+            let mut decryptor = pending
+                .with_key::<Aes256Gcm>(decryption_key.clone())
+                .unwrap();
 
             let mut decrypted_data = Vec::new();
             decryptor.read_to_end(&mut decrypted_data).await.unwrap();

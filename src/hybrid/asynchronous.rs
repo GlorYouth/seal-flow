@@ -1,73 +1,27 @@
 //! Asynchronous, streaming hybrid encryption and decryption implementation.
 #![cfg(feature = "async")]
 
-use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
+use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::buffer::BufferPool;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
-use bytes::BytesMut;
-use futures::stream::{FuturesUnordered, StreamExt};
+use crate::impls::asynchronous::{DecryptorImpl, EncryptorImpl};
 use pin_project_lite::pin_project;
 use seal_crypto::zeroize::Zeroizing;
-use std::collections::BinaryHeap;
 use std::io;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::task::JoinHandle;
 
-// --- Helper Structs and Types ---
-
-struct OrderedChunk {
-    index: u64,
-    data: Result<BytesMut>,
-}
-
-impl PartialEq for OrderedChunk {
-    fn eq(&self, other: &Self) -> bool {
-        self.index == other.index
-    }
-}
-impl Eq for OrderedChunk {}
-impl PartialOrd for OrderedChunk {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for OrderedChunk {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        other.index.cmp(&self.index)
-    }
-}
-
-type EncryptTask = JoinHandle<Result<(u64, BytesMut)>>;
-
-enum WritingState {
-    Idle,
-    Writing { chunk: BytesMut, pos: usize },
-}
 
 // --- Encryptor ---
 
 pin_project! {
+    /// An asynchronous, streaming hybrid encryptor.
     pub struct Encryptor<W: AsyncWrite, A, S: SymmetricAlgorithm> {
         #[pin]
-        writer: W,
-        symmetric_key: Arc<S::Key>,
-        base_nonce: [u8; 12],
-        chunk_size: usize,
-        buffer: BytesMut,
-        chunk_counter: u64,
-        next_chunk_to_write: u64,
-        is_shutdown: bool,
-        encrypt_tasks: FuturesUnordered<EncryptTask>,
-        pending_chunks: BinaryHeap<OrderedChunk>,
-        writing_state: WritingState,
-        out_pool: Arc<BufferPool>,
-        aad: Option<Arc<Vec<u8>>>,
-        _phantom: std::marker::PhantomData<(A, S)>,
+        inner: EncryptorImpl<W, S>,
+        _phantom: std::marker::PhantomData<A>,
     }
 }
 
@@ -79,6 +33,7 @@ where
     S: SymmetricAlgorithm + 'static,
     S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
 {
+    /// Creates a new `Encryptor`.
     pub async fn new(
         mut writer: W,
         pk: A::PublicKey,
@@ -96,126 +51,12 @@ where
             .await?;
         writer.write_all(&header_bytes).await?;
 
-        let chunk_size = DEFAULT_CHUNK_SIZE as usize;
-        let out_pool = Arc::new(BufferPool::new(chunk_size + S::TAG_SIZE));
+        let inner = EncryptorImpl::new(writer, shared_secret.into(), base_nonce, aad);
 
         Ok(Self {
-            writer,
-            symmetric_key: Arc::new(shared_secret.into()),
-            base_nonce,
-            chunk_size,
-            buffer: BytesMut::with_capacity(chunk_size * 2),
-            chunk_counter: 0,
-            next_chunk_to_write: 0,
-            is_shutdown: false,
-            encrypt_tasks: FuturesUnordered::new(),
-            pending_chunks: BinaryHeap::new(),
-            writing_state: WritingState::Idle,
-            out_pool,
-            aad: aad.map(|d| Arc::new(d.to_vec())),
+            inner,
             _phantom: std::marker::PhantomData,
         })
-    }
-
-    fn poll_pipeline_progress(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<bool>> {
-        let mut made_progress = false;
-
-        while self.encrypt_tasks.len() < 16 {
-            if self.buffer.len() < self.chunk_size && !self.is_shutdown {
-                break;
-            }
-            if self.buffer.is_empty() {
-                break;
-            }
-
-            let chunk_len = std::cmp::min(self.buffer.len(), self.chunk_size);
-            let in_buffer = self.buffer.split_to(chunk_len);
-            let key = Arc::clone(&self.symmetric_key);
-            let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
-            let index = self.chunk_counter;
-            let out_pool = Arc::clone(&self.out_pool);
-            let aad_clone = self.aad.clone();
-
-            let handle = tokio::task::spawn_blocking(move || {
-                let mut out_buffer = out_pool.acquire();
-                out_buffer.resize(out_buffer.capacity(), 0);
-                let result = S::encrypt_to_buffer(
-                    &key,
-                    &nonce,
-                    &in_buffer,
-                    &mut out_buffer,
-                    aad_clone.as_deref().map(|v| v.as_slice()),
-                )
-                .map(|written| {
-                    out_buffer.truncate(written);
-                    out_buffer
-                })
-                .map_err(Error::from);
-                result.map(|buf| (index, buf))
-            });
-
-            self.encrypt_tasks.push(handle);
-            self.chunk_counter += 1;
-            made_progress = true;
-        }
-
-        while let Poll::Ready(Some(result)) = self.encrypt_tasks.poll_next_unpin(cx) {
-            match result {
-                Ok(Ok((index, data))) => self
-                    .pending_chunks
-                    .push(OrderedChunk { index, data: Ok(data) }),
-                Ok(Err(e)) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
-                Err(e) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
-            }
-            made_progress = true;
-        }
-
-        loop {
-            if let WritingState::Idle = self.writing_state {
-                if let Some(chunk) = self.pending_chunks.peek() {
-                    if chunk.index == self.next_chunk_to_write {
-                        let chunk = self.pending_chunks.pop().unwrap();
-                        match chunk.data {
-                            Ok(data) => {
-                                self.writing_state = WritingState::Writing { chunk: data, pos: 0 }
-                            }
-                            Err(e) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
-                        }
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-
-            if let WritingState::Writing { chunk, pos } = &mut self.writing_state {
-                while *pos < chunk.len() {
-                    let bytes_written = match Pin::new(&mut self.writer).poll_write(cx, &chunk[*pos..]) {
-                        Poll::Ready(Ok(n)) => n,
-                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                        Poll::Pending => return if made_progress { Poll::Ready(Ok(true)) } else { Poll::Pending },
-                    };
-                    if bytes_written == 0 {
-                        return Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::WriteZero,
-                            "failed to write whole chunk",
-                        )));
-                    }
-                    *pos += bytes_written;
-                    made_progress = true;
-                }
-                if let WritingState::Writing { chunk, .. } =
-                    std::mem::replace(&mut self.writing_state, WritingState::Idle)
-                {
-                    self.out_pool.release(chunk);
-                }
-                self.next_chunk_to_write += 1;
-            } else {
-                break;
-            }
-        }
-        Poll::Ready(Ok(made_progress))
     }
 }
 
@@ -228,56 +69,23 @@ where
     S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
 {
     fn poll_write(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        self.as_mut().project().buffer.extend_from_slice(buf);
-        let _ = self.as_mut().poll_pipeline_progress(cx);
-        Poll::Ready(Ok(buf.len()))
+        self.project().inner.poll_write(cx, buf)
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        loop {
-            let this = self.as_mut().project();
-            if this.buffer.is_empty()
-                && this.encrypt_tasks.is_empty()
-                && this.pending_chunks.is_empty()
-                && matches!(this.writing_state, WritingState::Idle)
-            {
-                return this.writer.poll_flush(cx);
-            }
-            match self.as_mut().poll_pipeline_progress(cx) {
-                Poll::Ready(Ok(true)) => continue,
-                Poll::Ready(Ok(false)) => return Poll::Pending,
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
-            }
-        }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.project().inner.poll_flush(cx)
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if !*self.as_mut().project().is_shutdown {
-            *self.as_mut().project().is_shutdown = true;
-        }
-        loop {
-            let this = self.as_mut().project();
-            if this.buffer.is_empty()
-                && this.encrypt_tasks.is_empty()
-                && this.pending_chunks.is_empty()
-                && matches!(this.writing_state, WritingState::Idle)
-            {
-                return this.writer.poll_shutdown(cx);
-            }
-            match self.as_mut().poll_pipeline_progress(cx) {
-                Poll::Ready(Ok(true)) => continue,
-                Poll::Ready(Ok(false)) => return Poll::Pending,
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
-            }
-        }
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.project().inner.poll_shutdown(cx)
     }
 }
+
+// --- Decryptor ---
 
 /// An asynchronous pending hybrid decryptor, waiting for the private key.
 pub struct PendingDecryptor<R: AsyncRead + Unpin> {
@@ -286,15 +94,18 @@ pub struct PendingDecryptor<R: AsyncRead + Unpin> {
 }
 
 impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
+    /// Creates a new `PendingDecryptor` by asynchronously reading the header.
     pub async fn from_reader(mut reader: R) -> Result<Self> {
         let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
         Ok(Self { reader, header })
     }
 
+    /// Returns a reference to the header.
     pub fn header(&self) -> &Header {
         &self.header
     }
 
+    /// Consumes the `PendingDecryptor` and returns a full `Decryptor`.
     pub async fn into_decryptor<A, S>(
         self,
         sk: A::PrivateKey,
@@ -322,146 +133,30 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
 
         let tag_len = S::TAG_SIZE;
         let encrypted_chunk_size = chunk_size as usize + tag_len;
+        let decrypted_chunk_size = chunk_size as usize;
 
-        Ok(Decryptor::new(
+        let inner = DecryptorImpl::new(
             self.reader,
             shared_secret.into(),
             base_nonce,
             encrypted_chunk_size,
-            chunk_size as usize,
+            decrypted_chunk_size,
             aad,
-        ))
+        );
+
+        Ok(Decryptor {
+            inner,
+            _phantom: std::marker::PhantomData,
+        })
     }
 }
-
-// --- Decryptor ---
-
-type DecryptTask = JoinHandle<(u64, Result<BytesMut>)>;
 
 pin_project! {
+    /// An asynchronous, streaming hybrid decryptor.
     pub struct Decryptor<R: AsyncRead, A, S: SymmetricAlgorithm> {
         #[pin]
-        reader: R,
-        symmetric_key: Arc<S::Key>,
-        base_nonce: [u8; 12],
-        encrypted_chunk_size: usize,
-        decrypted_chunk_size: usize,
-        read_buffer: BytesMut,
-        out_cursor: io::Cursor<BytesMut>,
-        chunk_counter: u64,
-        next_chunk_to_read: u64,
-        reader_done: bool,
-        decrypt_tasks: FuturesUnordered<DecryptTask>,
-        pending_chunks: std::collections::BTreeMap<u64, Result<BytesMut>>,
-        out_pool: Arc<BufferPool>,
-        aad: Option<Arc<Vec<u8>>>,
+        inner: DecryptorImpl<R, S>,
         _phantom: std::marker::PhantomData<(A, S)>,
-    }
-}
-
-impl<R: AsyncRead + Unpin, A, S> Decryptor<R, A, S>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm + 'static,
-    S::Key: Send + Sync + 'static,
-{
-    pub fn new(
-        reader: R,
-        symmetric_key: S::Key,
-        base_nonce: [u8; 12],
-        encrypted_chunk_size: usize,
-        decrypted_chunk_size: usize,
-        aad: Option<&[u8]>,
-    ) -> Self {
-        Self {
-            reader,
-            symmetric_key: Arc::new(symmetric_key),
-            base_nonce,
-            encrypted_chunk_size,
-            decrypted_chunk_size,
-            read_buffer: BytesMut::with_capacity(encrypted_chunk_size * 2),
-            out_cursor: io::Cursor::new(BytesMut::new()),
-            chunk_counter: 0,
-            next_chunk_to_read: 0,
-            reader_done: false,
-            decrypt_tasks: FuturesUnordered::new(),
-            pending_chunks: std::collections::BTreeMap::new(),
-            out_pool: Arc::new(BufferPool::new(decrypted_chunk_size)),
-            aad: aad.map(|d| Arc::new(d.to_vec())),
-            _phantom: std::marker::PhantomData,
-        }
-    }
-
-    fn poll_pipeline_progress(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<bool>> {
-        use tokio::io::ReadBuf;
-        let mut made_progress = false;
-
-        if !self.reader_done {
-            let mut buf = [0u8; 8 * 1024];
-            let mut read_buf = ReadBuf::new(&mut buf);
-            match Pin::new(&mut self.reader).poll_read(cx, &mut read_buf) {
-                Poll::Ready(Ok(())) => {
-                    let n = read_buf.filled().len();
-                    if n == 0 {
-                        self.reader_done = true;
-                    } else {
-                        self.read_buffer.extend_from_slice(read_buf.filled());
-                    }
-                    if n > 0 { made_progress = true; }
-                }
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => {}
-            }
-
-            let initial_tasks = self.decrypt_tasks.len();
-            while self.decrypt_tasks.len() < 16 {
-                if self.read_buffer.len() < self.encrypted_chunk_size && !self.reader_done { break; }
-                if self.read_buffer.is_empty() { break; }
-
-                let chunk_len = std::cmp::min(self.read_buffer.len(), self.encrypted_chunk_size);
-                let in_buffer = self.read_buffer.split_to(chunk_len);
-
-                let key = Arc::clone(&self.symmetric_key);
-                let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
-                let index = self.chunk_counter;
-                let out_pool = Arc::clone(&self.out_pool);
-                let aad_clone = self.aad.clone();
-
-                let handle = tokio::task::spawn_blocking(move || {
-                    let mut out_buffer = out_pool.acquire();
-                    out_buffer.resize(out_buffer.capacity(), 0);
-                    let result = S::decrypt_to_buffer(
-                        &key,
-                        &nonce,
-                        &in_buffer,
-                        &mut out_buffer,
-                        aad_clone.as_deref().map(|v| v.as_slice()),
-                    )
-                    .map(|written| {
-                        out_buffer.truncate(written);
-                        out_buffer
-                    })
-                    .map_err(Error::from);
-                    (index, result)
-                });
-                self.decrypt_tasks.push(handle);
-                self.chunk_counter += 1;
-            }
-            if self.decrypt_tasks.len() > initial_tasks { made_progress = true; }
-        }
-
-        let initial_pending = self.pending_chunks.len();
-        while let Poll::Ready(Some(result)) = self.decrypt_tasks.poll_next_unpin(cx) {
-            match result {
-                Ok((index, dec_result)) => {
-                    self.pending_chunks.insert(index, dec_result);
-                }
-                Err(e) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
-            }
-        }
-        if self.pending_chunks.len() > initial_pending { made_progress = true; }
-
-        Poll::Ready(Ok(made_progress))
     }
 }
 
@@ -472,58 +167,11 @@ where
     S::Key: Send + Sync + 'static,
 {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        loop {
-            let pre_len = buf.filled().len();
-
-            let bytes_from_cursor =
-                std::io::Read::read(self.as_mut().project().out_cursor, buf.initialize_unfilled())?;
-            buf.advance(bytes_from_cursor);
-
-            if buf.filled().len() > pre_len {
-                return Poll::Ready(Ok(()));
-            }
-
-            let next_chunk_opt = {
-                let this = self.as_mut().project();
-                this.pending_chunks.remove(this.next_chunk_to_read)
-            };
-
-            if let Some(result) = next_chunk_opt {
-                match result {
-                    Ok(data) => {
-                        let this = self.as_mut().project();
-                        let old_buf = std::mem::replace(this.out_cursor.get_mut(), data);
-                        this.out_pool.release(old_buf);
-                        this.out_cursor.set_position(0);
-                        *this.next_chunk_to_read += 1;
-                        continue;
-                    }
-                    Err(e) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::InvalidData, e))),
-                }
-            }
-
-            match self.as_mut().poll_pipeline_progress(cx) {
-                Poll::Ready(Ok(true)) => continue,
-                Poll::Ready(Ok(false)) => {},
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                Poll::Pending => return Poll::Pending,
-            }
-
-            let this = self.as_mut().project();
-            if *this.reader_done
-                && this.decrypt_tasks.is_empty()
-                && this.pending_chunks.is_empty()
-                && this.out_cursor.position() as usize >= this.out_cursor.get_ref().len()
-            {
-                return Poll::Ready(Ok(()));
-            }
-            
-            return Poll::Pending
-        }
+        self.project().inner.poll_read(cx, buf)
     }
 }
 
@@ -536,6 +184,7 @@ mod tests {
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::io::Cursor;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use crate::common::header::DEFAULT_CHUNK_SIZE;
 
     async fn test_hybrid_async_streaming_roundtrip(plaintext: &[u8], aad: Option<&[u8]>) {
         let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();

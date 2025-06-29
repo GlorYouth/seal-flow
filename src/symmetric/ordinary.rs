@@ -1,7 +1,8 @@
 //! Implements the ordinary (single-threaded, in-memory) symmetric encryption scheme.
 
-use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
+use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
+use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 
@@ -183,8 +184,7 @@ mod tests {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted =
-            encrypt::<Aes256Gcm>(key.clone(), &plaintext, "test_key_id".to_string(), None)
-                .unwrap();
+            encrypt::<Aes256Gcm>(key.clone(), &plaintext, "test_key_id".to_string(), None).unwrap();
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
         let decrypted = pending.into_plaintext::<Aes256Gcm>(key, None).unwrap();
 
@@ -275,8 +275,7 @@ mod tests {
 
         // Decrypt with wrong AAD fails
         let pending_fail = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result_fail =
-            pending_fail.into_plaintext::<Aes256Gcm>(key.clone(), Some(b"wrong aad"));
+        let result_fail = pending_fail.into_plaintext::<Aes256Gcm>(key.clone(), Some(b"wrong aad"));
         assert!(result_fail.is_err());
 
         // Decrypt with no AAD fails

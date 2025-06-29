@@ -1,23 +1,9 @@
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::common::header::DEFAULT_CHUNK_SIZE;
 use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
 use crate::error::Result;
 use rand::{rngs::OsRng, TryRngCore};
 use seal_crypto::zeroize::Zeroizing;
-
-pub const DEFAULT_CHUNK_SIZE: u32 = 65536; // 64 KiB
-
-/// Derives a nonce for a specific chunk index from a base nonce.
-pub fn derive_nonce(base_nonce: &[u8; 12], chunk_index: u64) -> [u8; 12] {
-    let mut nonce_bytes = *base_nonce;
-    let i_bytes = chunk_index.to_le_bytes(); // u64 -> 8 bytes, little-endian
-
-    // XOR the chunk index into the last 8 bytes of the nonce
-    for j in 0..8 {
-        nonce_bytes[4 + j] ^= i_bytes[j];
-    }
-
-    nonce_bytes
-}
 
 /// Creates a complete header, a new base_nonce, and the shared secret (DEK)
 /// for a hybrid encryption stream.

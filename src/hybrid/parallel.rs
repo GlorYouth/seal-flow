@@ -1,5 +1,6 @@
-use super::common::{create_header, derive_nonce, DEFAULT_CHUNK_SIZE};
+use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::common::header::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, Result};
 use rayon::prelude::*;
@@ -7,7 +8,12 @@ use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
 
 /// Performs parallel, in-memory hybrid encryption.
-pub fn encrypt<A, S>(pk: &A::PublicKey, plaintext: &[u8], kek_id: String, aad: Option<&[u8]>) -> Result<Vec<u8>>
+pub fn encrypt<A, S>(
+    pk: &A::PublicKey,
+    plaintext: &[u8],
+    kek_id: String,
+    aad: Option<&[u8]>,
+) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
@@ -200,7 +206,9 @@ mod tests {
 
         // Test convenience function
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None).unwrap();
+        let decrypted = pending
+            .into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None)
+            .unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Test separated functions
@@ -227,7 +235,9 @@ mod tests {
             encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None).unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None).unwrap();
+        let decrypted = pending
+            .into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None)
+            .unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -238,10 +248,13 @@ mod tests {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string(), None).unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string(), None)
+                .unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None).unwrap();
+        let decrypted = pending
+            .into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None)
+            .unwrap();
 
         assert_eq!(plaintext, decrypted);
     }
@@ -270,8 +283,7 @@ mod tests {
         // Test the separated functions
         let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
         assert_eq!(header.payload.kek_id(), Some("test_kek_id"));
-        let decrypted_body =
-            decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body, None).unwrap();
+        let decrypted_body = decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body, None).unwrap();
         assert_eq!(plaintext, decrypted_body.as_slice());
     }
 
@@ -283,7 +295,8 @@ mod tests {
 
         // Encrypt with AAD
         let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "aad_key".to_string(), Some(aad)).unwrap();
+            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "aad_key".to_string(), Some(aad))
+                .unwrap();
 
         // Decrypt with correct AAD
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
