@@ -3,7 +3,6 @@ use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::buffer::BufferPool;
 use crate::common::{derive_nonce, OrderedChunk, CHANNEL_BOUND, DEFAULT_CHUNK_SIZE};
 use crate::error::{Error, Result};
-use bytes::BytesMut;
 use rayon::prelude::*;
 use std::collections::BinaryHeap;
 use std::io::{Read, Write};
@@ -176,7 +175,6 @@ where
 }
 
 /// The core pipeline for parallel streaming decryption.
-#[allow(clippy::too_many_arguments)]
 pub fn decrypt_pipeline<S, R, W>(
     key: S::Key,
     base_nonce: [u8; 12],
