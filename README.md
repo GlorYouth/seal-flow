@@ -61,11 +61,12 @@ fn main() -> Result<()> {
     // Decrypt data held in memory.
     // The API promotes a safer two-step decryption process.
     // First, create a pending decryptor to inspect metadata without decrypting.
-    let pending_decryptor = seal.decrypt().from_slice(&ciphertext)?;
+    let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
 
     // You can now inspect the key ID from the header to find the correct key.
     // For this example, we'll use the key we already have.
-    let decrypted_text = pending_decryptor.with_key::<Aes256Gcm>(&key)?;
+    let key_bytes = key.to_bytes();
+    let decrypted_text = pending_decryptor.with_key_bytes(&key_bytes)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully encrypted and decrypted data!");
@@ -89,32 +90,32 @@ use std::io::Cursor;
 fn main() -> Result<()> {
     // 1. Setup a key store and create a key
     let mut key_store = HashMap::new();
-    let key1 = Aes256Gcm::generate_key()?;
+    let key = Aes256Gcm::generate_key()?;
     let key_id = "key-id-1".to_string();
-    key_store.insert(key_id.clone(), key1);
+    key_store.insert(key_id.clone(), key.to_bytes());
     
     let plaintext = b"some secret data";
     let seal = SymmetricSeal::new();
 
     // 2. Encrypt data with a specific key ID
     let ciphertext = seal
-        .encrypt::<Aes256Gcm>(key_store.get(&key_id).unwrap(), key_id)
+        .encrypt::<Aes256Gcm>(&key, key_id)
         .to_vec(plaintext)?;
 
     // --- The Decryption Workflow ---
 
     // 3. Begin the decryption process by creating a pending decryptor from a reader
-    let pending_decryptor = seal.decrypt().from_reader(Cursor::new(&ciphertext))?;
+    let pending_decryptor = seal.decrypt().reader(Cursor::new(&ciphertext))?;
 
     // 4. Get the key ID from the encrypted header. This is a cheap operation.
     let found_key_id = pending_decryptor.key_id().expect("Key ID not found in header!");
     println!("Found key ID: {}", found_key_id);
     
     // 5. Retrieve the correct key from your key store.
-    let decryption_key = key_store.get(found_key_id).expect("Key not found in store!");
+    let decryption_key_bytes = key_store.get(found_key_id).expect("Key not found in store!");
 
     // 6. Provide the key to get a fully operational decryptor.
-    let mut decryptor = pending_decryptor.with_key::<Aes256Gcm>(decryption_key)?;
+    let mut decryptor = pending_decryptor.with_key_bytes(decryption_key_bytes)?;
     
     // 7. Decrypt the data.
     let mut decrypted_text = Vec::new();
@@ -172,7 +173,7 @@ fn main() -> Result<()> {
 
     // 4. Decrypt using the provider.
     // `seal-flow` automatically calls `get_symmetric_key` with the ID from the header.
-    let pending_decryptor = seal.decrypt().from_slice(&ciphertext)?;
+    let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
     let decrypted_text = pending_decryptor.with_provider(&provider)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
@@ -208,22 +209,73 @@ fn main() -> Result<()> {
         .to_vec(plaintext)?;
 
     // To decrypt, you MUST provide the same AAD.
-    let pending_decryptor = seal.decrypt().from_slice(&ciphertext)?;
+    let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
     let decrypted_text = pending_decryptor
         .with_aad(aad) // Provide the same AAD
-        .with_key::<Aes256Gcm>(&key)?;
+        .with_key_bytes(&key.to_bytes())?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully decrypted with AAD!");
 
     // Attempting to decrypt with wrong or missing AAD will fail.
-    let pending_fail = seal.decrypt().from_slice(&ciphertext)?;
-    assert!(pending_fail.with_aad(b"wrong aad").with_key::<Aes256Gcm>(&key).is_err());
+    let pending_fail = seal.decrypt().slice(&ciphertext)?;
+    assert!(pending_fail.with_aad(b"wrong aad").with_key_bytes(&key.to_bytes()).is_err());
     
-    let pending_fail2 = seal.decrypt().from_slice(&ciphertext)?;
-    assert!(pending_fail2.with_key::<Aes256Gcm>(&key).is_err());
+    let pending_fail2 = seal.decrypt().slice(&ciphertext)?;
+    assert!(pending_fail2.with_key_bytes(&key.to_bytes()).is_err());
     
     println!("Correctly failed to decrypt with wrong/missing AAD.");
+
+    Ok(())
+}
+```
+
+### Hybrid Encryption Example
+
+Here is an example of hybrid encryption using the high-level API. This demonstrates encrypting with a public key and decrypting with the corresponding private key, retrieved as bytes from a key store.
+
+```rust
+use seal_flow::prelude::*;
+use seal_crypto::{
+    prelude::*,
+    schemes::asymmetric::traditional::rsa::Rsa2048,
+    schemes::hash::Sha256,
+    schemes::symmetric::aes_gcm::Aes256Gcm,
+};
+use std::collections::HashMap;
+
+type Kem = Rsa2048<Sha256>;
+type Dek = Aes256Gcm;
+
+fn main() -> Result<()> {
+    // 1. Setup: Generate a key pair and store the private key bytes.
+    let (pk, sk) = Kem::generate_keypair()?;
+    let sk_bytes = sk.to_bytes();
+
+    let mut private_key_store = HashMap::new();
+    let kek_id = "my-hybrid-key".to_string();
+    private_key_store.insert(kek_id.clone(), sk_bytes);
+
+    let plaintext = b"This is a secret message for hybrid encryption.";
+    let seal = HybridSeal::new();
+
+    // 2. Encrypt using the public key.
+    let ciphertext = seal
+        .encrypt::<Kem, Dek>(&pk, kek_id)
+        .to_vec(plaintext)?;
+
+    // 3. Decrypt: First, create a pending decryptor to inspect the header.
+    let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
+    
+    // 4. Find the key ID and retrieve the private key bytes from the store.
+    let found_kek_id = pending_decryptor.kek_id().unwrap();
+    let sk_bytes = private_key_store.get(found_kek_id).unwrap();
+
+    // 5. Use the private key bytes to decrypt the data.
+    let decrypted_text = pending_decryptor.with_key_bytes::<Dek>(sk_bytes)?;
+
+    assert_eq!(plaintext, &decrypted_text[..]);
+    println!("Successfully performed hybrid encryption and decryption!");
 
     Ok(())
 }

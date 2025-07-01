@@ -59,11 +59,12 @@ fn main() -> Result<()> {
     // 解密内存中的数据
     // API 推荐一个更安全的两步解密流程。
     // 首先，创建一个待定解密器，在不解密的情况下检查元数据。
-    let pending_decryptor = seal.decrypt().from_slice(&ciphertext)?;
+    let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
 
     // 现在你可以从头部检查密钥ID，以找到正确的密钥。
     // 在此示例中，我们将使用已有的密钥。
-    let decrypted_text = pending_decryptor.with_key::<Aes256Gcm>(&key)?;
+    let key_bytes = key.to_bytes();
+    let decrypted_text = pending_decryptor.with_key_bytes(&key_bytes)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("成功加密和解密数据！");
@@ -87,32 +88,32 @@ use std::io::Cursor;
 fn main() -> Result<()> {
     // 1. 设置一个密钥存储并创建一个密钥
     let mut key_store = HashMap::new();
-    let key1 = Aes256Gcm::generate_key()?;
+    let key = Aes256Gcm::generate_key()?;
     let key_id = "key-id-1".to_string();
-    key_store.insert(key_id.clone(), key1);
+    key_store.insert(key_id.clone(), key.to_bytes());
     
     let plaintext = b"一些机密数据";
     let seal = SymmetricSeal::new();
 
     // 2. 使用特定的密钥ID加密数据
     let ciphertext = seal
-        .encrypt::<Aes256Gcm>(key_store.get(&key_id).unwrap(), key_id)
+        .encrypt::<Aes256Gcm>(&key, key_id)
         .to_vec(plaintext)?;
 
     // --- 解密工作流 ---
 
     // 3. 通过从读取器创建一个待定解密器来开始解密过程
-    let pending_decryptor = seal.decrypt().from_reader(Cursor::new(&ciphertext))?;
+    let pending_decryptor = seal.decrypt().reader(Cursor::new(&ciphertext))?;
 
     // 4. 从加密头部获取密钥ID。这是一个廉价的操作。
     let found_key_id = pending_decryptor.key_id().expect("在头部未找到密钥ID！");
     println!("找到密钥ID: {}", found_key_id);
     
     // 5. 从你的密钥存储中检索正确的密钥。
-    let decryption_key = key_store.get(found_key_id).expect("在存储中未找到密钥！");
+    let decryption_key_bytes = key_store.get(found_key_id).expect("在存储中未找到密钥！");
 
     // 6. 提供密钥以获得一个功能完备的解密器。
-    let mut decryptor = pending_decryptor.with_key::<Aes256Gcm>(decryption_key)?;
+    let mut decryptor = pending_decryptor.with_key_bytes(decryption_key_bytes)?;
     
     // 7. 解密数据。
     let mut decrypted_text = Vec::new();
@@ -170,7 +171,7 @@ fn main() -> Result<()> {
 
     // 4. 使用 provider 进行解密。
     // `seal-flow` 会使用头部中的ID自动调用 `get_symmetric_key`。
-    let pending_decryptor = seal.decrypt().from_slice(&ciphertext)?;
+    let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
     let decrypted_text = pending_decryptor.with_provider(&provider)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
@@ -206,22 +207,73 @@ fn main() -> Result<()> {
         .to_vec(plaintext)?;
 
     // 解密时，你必须提供相同的 AAD。
-    let pending_decryptor = seal.decrypt().from_slice(&ciphertext)?;
+    let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
     let decrypted_text = pending_decryptor
         .with_aad(aad) // 提供相同的 AAD
-        .with_key::<Aes256Gcm>(&key)?;
+        .with_key_bytes(&key.to_bytes())?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("成功使用AAD解密！");
 
     // 尝试使用错误或缺失的 AAD 进行解密将会失败。
-    let pending_fail = seal.decrypt().from_slice(&ciphertext)?;
-    assert!(pending_fail.with_aad(b"错误的 aad").with_key::<Aes256Gcm>(&key).is_err());
+    let pending_fail = seal.decrypt().slice(&ciphertext)?;
+    assert!(pending_fail.with_aad(b"错误的 aad").with_key_bytes(&key.to_bytes()).is_err());
     
-    let pending_fail2 = seal.decrypt().from_slice(&ciphertext)?;
-    assert!(pending_fail2.with_key::<Aes256Gcm>(&key).is_err());
+    let pending_fail2 = seal.decrypt().slice(&ciphertext)?;
+    assert!(pending_fail2.with_key_bytes(&key.to_bytes()).is_err());
     
     println!("使用错误/缺失的AAD解密已按预期失败。");
+
+    Ok(())
+}
+```
+
+### 混合加密示例
+
+这是一个使用高层API进行混合加密的示例。它演示了如何使用公钥加密，并从密钥库中以字节形式检索相应的私钥进行解密。
+
+```rust
+use seal_flow::prelude::*;
+use seal_crypto::{
+    prelude::*,
+    schemes::asymmetric::traditional::rsa::Rsa2048,
+    schemes::hash::Sha256,
+    schemes::symmetric::aes_gcm::Aes256Gcm,
+};
+use std::collections::HashMap;
+
+type Kem = Rsa2048<Sha256>;
+type Dek = Aes256Gcm;
+
+fn main() -> Result<()> {
+    // 1. 设置：生成密钥对并存储私钥字节。
+    let (pk, sk) = Kem::generate_keypair()?;
+    let sk_bytes = sk.to_bytes();
+
+    let mut private_key_store = HashMap::new();
+    let kek_id = "my-hybrid-key".to_string();
+    private_key_store.insert(kek_id.clone(), sk_bytes);
+
+    let plaintext = b"这是一条用于混合加密的机密消息。";
+    let seal = HybridSeal::new();
+
+    // 2. 使用公钥进行加密。
+    let ciphertext = seal
+        .encrypt::<Kem, Dek>(&pk, kek_id)
+        .to_vec(plaintext)?;
+
+    // 3. 解密：首先，创建一个待定解密器以检查头部。
+    let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
+    
+    // 4. 找到密钥ID并从存储中检索私钥字节。
+    let found_kek_id = pending_decryptor.kek_id().unwrap();
+    let sk_bytes = private_key_store.get(found_kek_id).unwrap();
+
+    // 5. 使用私钥字节解密数据。
+    let decrypted_text = pending_decryptor.with_key_bytes::<Dek>(sk_bytes)?;
+
+    assert_eq!(plaintext, &decrypted_text[..]);
+    println!("成功执行混合加密和解密！");
 
     Ok(())
 }
