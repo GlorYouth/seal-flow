@@ -1,4 +1,5 @@
 use seal_crypto::prelude::*;
+use seal_crypto::schemes::kdf::{hkdf::HkdfSha256, pbkdf2::Pbkdf2Sha256};
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 use seal_flow::prelude::*;
 use std::collections::HashMap;
@@ -157,6 +158,129 @@ async fn main() -> Result<()> {
     let result_fail2 = pending_fail2.with_key(key_to_decrypt);
     assert!(result_fail2.is_err());
     println!("In-Memory with no AAD correctly failed!");
+
+    // --- Mode 7: 密钥派生功能 ---
+    println!("\n--- Testing Key Derivation ---");
+
+    // 从主密钥派生子密钥
+    let master_key = key_store.get_key(KEY_ID).unwrap();
+    let deriver = HkdfSha256::default();
+
+    // 使用不同上下文信息派生不同用途的子密钥
+    let salt = b"key-rotation-salt-2023";
+    let info_enc = b"encryption-key";
+    let info_auth = b"authentication-key";
+
+    let derived_enc_key = master_key.derive_key(&deriver, Some(salt), Some(info_enc), 32)?;
+
+    let _derived_auth_key = master_key.derive_key(&deriver, Some(salt), Some(info_auth), 32)?;
+
+    println!("成功从主密钥派生子密钥！");
+
+    // 使用派生的加密密钥加密数据
+    let derived_key_id = "derived-encryption-key";
+    let ciphertext7 = seal
+        .encrypt(derived_enc_key.clone(), derived_key_id.to_string())
+        .to_vec::<TheAlgorithm>(plaintext)?;
+
+    // 解密数据
+    let pending_decryptor7 = seal.decrypt().slice(&ciphertext7)?;
+    let found_key_id = pending_decryptor7.key_id().unwrap();
+    println!("从密文中读取的派生密钥ID: '{}'", found_key_id);
+    assert_eq!(found_key_id, derived_key_id);
+
+    // 使用同一个派生密钥解密
+    let decrypted7 = pending_decryptor7.with_key(derived_enc_key)?;
+    assert_eq!(plaintext, &decrypted7[..]);
+    println!("使用派生密钥加密/解密成功！");
+
+    // --- Mode 8: 从密码派生密钥 ---
+    println!("\n--- Testing Password-Based Key Derivation ---");
+
+    // 模拟用户密码
+    let password = b"secure-user-password-example";
+    let salt = b"random-salt-value";
+
+    // 在实际应用中应使用更高的迭代次数（至少100,000）
+    let pbkdf2_deriver = Pbkdf2Sha256::new(100_000);
+
+    // 从密码派生加密密钥
+    let password_derived_key =
+        SymmetricKey::derive_from_password(password, &pbkdf2_deriver, salt, 32)?;
+
+    // 使用密码派生的密钥加密数据
+    let password_key_id = "password-derived-key";
+    let ciphertext8 = seal
+        .encrypt(password_derived_key.clone(), password_key_id.to_string())
+        .to_vec::<TheAlgorithm>(plaintext)?;
+
+    // 解密数据
+    let pending_decryptor8 = seal.decrypt().slice(&ciphertext8)?;
+    let found_key_id = pending_decryptor8.key_id().unwrap();
+    println!("从密文中读取的密码派生密钥ID: '{}'", found_key_id);
+    assert_eq!(found_key_id, password_key_id);
+
+    // 在另一个环境中，我们可以从相同的密码和盐值重新派生出相同的密钥
+    let password_derived_key2 =
+        SymmetricKey::derive_from_password(password, &pbkdf2_deriver, salt, 32)?;
+
+    // 使用重新派生的密钥解密
+    let decrypted8 = pending_decryptor8.with_key(password_derived_key2)?;
+    assert_eq!(plaintext, &decrypted8[..]);
+    println!("使用从密码派生的密钥加密/解密成功！");
+
+    // --- 多级密钥派生示例 ---
+    println!("\n--- Testing Multi-Level Key Derivation ---");
+
+    // 从密码派生主密钥
+    let master_password = b"master-password";
+    let master_salt = b"master-salt";
+    let master_key_material = SymmetricKey::derive_from_password(
+        master_password,
+        &pbkdf2_deriver,
+        master_salt,
+        64, // 更长的密钥，用于进一步派生
+    )?;
+
+    // 然后使用HKDF从主密钥派生多个特定用途的子密钥
+    let app_salt = b"application-salt";
+
+    // 派生数据库加密密钥
+    let db_key = master_key_material.derive_key(
+        &deriver,
+        Some(app_salt),
+        Some(b"database-encryption"),
+        32,
+    )?;
+
+    // 派生文件加密密钥
+    let file_key =
+        master_key_material.derive_key(&deriver, Some(app_salt), Some(b"file-encryption"), 32)?;
+
+    // 派生API通信密钥
+    let api_key =
+        master_key_material.derive_key(&deriver, Some(app_salt), Some(b"api-communication"), 32)?;
+
+    println!("从主密码成功派生多级子密钥！");
+    println!("  - 数据库密钥长度: {} 字节", db_key.as_bytes().len());
+    println!("  - 文件密钥长度: {} 字节", file_key.as_bytes().len());
+    println!("  - API密钥长度: {} 字节", api_key.as_bytes().len());
+
+    // 使用数据库密钥加密
+    let db_key_id = "db-encryption-key";
+    let db_plaintext = b"Sensitive database content";
+    let _db_ciphertext = seal
+        .encrypt(db_key.clone(), db_key_id.to_string())
+        .to_vec::<TheAlgorithm>(db_plaintext)?;
+
+    // 使用文件密钥加密
+    let file_key_id = "file-encryption-key";
+    let file_plaintext = b"Sensitive file content";
+    let _file_ciphertext = seal
+        .encrypt(file_key.clone(), file_key_id.to_string())
+        .to_vec::<TheAlgorithm>(file_plaintext)?;
+
+    println!("使用派生的特定用途子密钥加密成功！");
 
     Ok(())
 }

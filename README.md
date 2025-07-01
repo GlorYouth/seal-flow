@@ -129,6 +129,155 @@ fn main() -> Result<()> {
 }
 ```
 
+### Key Derivation Features
+
+`seal-flow` offers robust key derivation capabilities that allow you to:
+
+1. Derive child keys from a master key (for key rotation or purpose-specific keys)
+2. Derive cryptographic keys from passwords (for password-based encryption)
+
+These features are provided through the `SymmetricKey` type:
+
+```rust
+use seal_flow::prelude::*;
+use seal_crypto::schemes::kdf::{hkdf::HkdfSha256, pbkdf2::Pbkdf2Sha256};
+use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+
+fn main() -> Result<()> {
+    // --- Derive Child Keys from Master Key ---
+    let master_key = SymmetricKey::new(vec![0u8; 32]); // Master key
+    let deriver = HkdfSha256::default();
+    
+    // Use different context info to derive keys for different purposes
+    let salt = b"key-rotation-salt";
+    let encryption_info = b"data-encryption-key";
+    let signing_info = b"hmac-signing-key";
+    
+    // Derive encryption key
+    let encryption_key = master_key.derive_key(
+        &deriver,
+        Some(salt),
+        Some(encryption_info),
+        32
+    )?;
+    
+    // Derive signing key
+    let signing_key = master_key.derive_key(
+        &deriver,
+        Some(salt),
+        Some(signing_info),
+        32
+    )?;
+    
+    // --- Derive Keys from Password ---
+    let password = b"user-secure-password";
+    let salt = b"random-salt-value";
+    
+    // In real applications, use higher iteration count (at least 100,000)
+    let pbkdf2_deriver = Pbkdf2Sha256::new(100_000);
+    
+    // Derive encryption key from password
+    let password_derived_key = SymmetricKey::derive_from_password(
+        password,
+        &pbkdf2_deriver,
+        salt,
+        32
+    )?;
+    
+    // Use the derived key for encryption
+    let seal = SymmetricSeal::new();
+    let plaintext = b"Data to encrypt";
+    
+    let ciphertext = seal
+        .encrypt(encryption_key, "derived-key-id".to_string())
+        .to_vec::<Aes256Gcm>(plaintext)?;
+    
+    println!("Successfully encrypted data using derived key!");
+    
+    Ok(())
+}
+```
+
+### Common Use Cases for Key Derivation
+
+#### 1. Key Rotation
+
+Implement key rotation easily without changing the master key using key derivation:
+
+```rust
+let master_key = SymmetricKey::new(/* master key bytes */);
+let deriver = HkdfSha256::default();
+
+// Version 1 key
+let key_v1 = master_key.derive_key(
+    &deriver,
+    Some(b"rotation-salt"),
+    Some(b"key-version-1"),
+    32
+)?;
+
+// Version 2 key (by changing context info)
+let key_v2 = master_key.derive_key(
+    &deriver,
+    Some(b"rotation-salt"),
+    Some(b"key-version-2"),
+    32
+)?;
+```
+
+#### 2. Multi-Level Key Derivation
+
+Create key hierarchies for different encryption tasks:
+
+```rust
+// Derive master key material from a password
+let master_key_material = SymmetricKey::derive_from_password(
+    password,
+    &pbkdf2_deriver,
+    salt,
+    64 // Larger key for further derivation
+)?;
+
+// Then derive purpose-specific child keys
+let db_key = master_key_material.derive_key(
+    &HkdfSha256::default(),
+    Some(b"app-salt"),
+    Some(b"database-encryption"),
+    32
+)?;
+
+let file_key = master_key_material.derive_key(
+    &HkdfSha256::default(),
+    Some(b"app-salt"),
+    Some(b"file-encryption"),
+    32
+)?;
+```
+
+#### 3. Key Derivation in Hybrid Encryption
+
+Use key derivation to protect Key Encryption Keys (KEKs) in hybrid encryption scenarios:
+
+```rust
+// Derive KEK protection key from user password
+let kek_protection_key = SymmetricKey::derive_from_password(
+    user_password,
+    &pbkdf2_deriver,
+    user_salt,
+    32
+)?;
+
+// Derive purpose-specific child keys
+let wrapping_key = kek_protection_key.derive_key(
+    &HkdfSha256::default(),
+    Some(b"kek-wrapping"),
+    Some(b"encryption-context"),
+    32
+)?;
+
+// In a real application, you'd use this key to encrypt the KEK
+```
+
 ### Simplified Key Management with Key Wrappers
 
 `seal-flow` uses strongly-typed key wrappers like `SymmetricKey` and `AsymmetricPrivateKey` to improve security and prevent key misuse. Instead of passing raw bytes, you pass these wrapper types.

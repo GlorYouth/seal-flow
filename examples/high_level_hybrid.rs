@@ -1,4 +1,5 @@
 use seal_crypto::schemes::asymmetric::post_quantum::dilithium::Dilithium2;
+use seal_crypto::schemes::kdf::{hkdf::HkdfSha256, pbkdf2::Pbkdf2Sha256};
 use seal_crypto::{prelude::*, schemes::asymmetric::traditional::rsa::Rsa2048};
 use seal_crypto::{schemes::hash::Sha256, schemes::symmetric::aes_gcm::Aes256Gcm};
 use seal_flow::prelude::*;
@@ -37,7 +38,7 @@ async fn main() -> Result<()> {
     // 1. Setup
     // 创建密钥对并将私钥存储在KeyStore中
     let (pk, sk) = Kem::generate_keypair()?;
-    let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
+    let pk_bytes = pk.to_bytes();
     let sk_bytes = sk.to_bytes();
 
     // 创建签名密钥对
@@ -51,7 +52,7 @@ async fn main() -> Result<()> {
     let mut public_keys = HashMap::new();
     public_keys.insert(SIGNER_KEY_ID.to_string(), sig_pk_bytes.to_vec());
 
-    let key_store = KeyStore {
+    let mut key_store = KeyStore {
         private_keys,
         public_keys,
     };
@@ -59,10 +60,13 @@ async fn main() -> Result<()> {
     let plaintext = b"This is a test message for hybrid interoperability.";
     let seal = HybridSeal::new();
 
+    // 每次需要时重新创建公钥包装
+    let get_pk_wrapped = || AsymmetricPublicKey::new(pk_bytes.clone());
+
     // --- Mode 1: In-Memory (Ordinary) ---
     println!("--- Testing Mode: In-Memory (Ordinary) ---");
     let ciphertext1 = seal
-        .encrypt::<Dek>(pk_wrapped.clone(), KEK_ID.to_string())
+        .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .to_vec::<Kem>(plaintext)?;
     let pending_decryptor1 = seal.decrypt().slice(&ciphertext1)?;
     let kek_id = pending_decryptor1.kek_id().unwrap();
@@ -74,7 +78,7 @@ async fn main() -> Result<()> {
     // --- Mode 2: In-Memory Parallel ---
     println!("\n--- Testing Mode: In-Memory Parallel ---");
     let ciphertext2 = seal
-        .encrypt::<Dek>(pk_wrapped.clone(), KEK_ID.to_string())
+        .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .to_vec_parallel::<Kem>(plaintext)?;
     let pending_decryptor2 = seal.decrypt().slice_parallel(&ciphertext2)?;
     let kek_id = pending_decryptor2.kek_id().unwrap();
@@ -87,7 +91,7 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Mode: Synchronous Streaming ---");
     let mut ciphertext3 = Vec::new();
     let mut encryptor = seal
-        .encrypt::<Dek>(pk_wrapped.clone(), KEK_ID.to_string())
+        .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .into_writer::<Kem, _>(&mut ciphertext3)?;
     encryptor.write_all(plaintext)?;
     encryptor.finish()?;
@@ -110,7 +114,7 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Mode: Asynchronous Streaming ---");
     let mut ciphertext4 = Vec::new();
     let mut encryptor = seal
-        .encrypt::<Dek>(pk_wrapped.clone(), KEK_ID.to_string())
+        .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .into_async_writer::<Kem, _>(&mut ciphertext4)
         .await?;
     encryptor.write_all(plaintext).await?;
@@ -136,7 +140,7 @@ async fn main() -> Result<()> {
     // --- Mode 5: Parallel Streaming ---
     println!("\n--- Testing Mode: Parallel Streaming ---");
     let mut ciphertext5 = Vec::new();
-    seal.encrypt::<Dek>(pk_wrapped.clone(), KEK_ID.to_string())
+    seal.encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .pipe_parallel::<Kem, _, _>(Cursor::new(plaintext), &mut ciphertext5)?;
 
     let mut decrypted5 = Vec::new();
@@ -157,7 +161,7 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Mode: In-Memory with AAD ---");
     let aad = b"Authenticated but not encrypted hybrid data";
     let ciphertext6 = seal
-        .encrypt::<Dek>(pk_wrapped.clone(), KEK_ID.to_string())
+        .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .with_aad(aad)
         .to_vec::<Kem>(plaintext)?;
 
@@ -193,7 +197,7 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Mode: Signed Encryption ---");
     let aad = b"AAD with signature";
     let ciphertext7 = seal
-        .encrypt::<Dek>(pk_wrapped, KEK_ID.to_string())
+        .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .with_aad(aad)
         .with_signer::<Signer>(sig_sk_wrapped, SIGNER_KEY_ID.to_string())
         .to_vec::<Kem>(plaintext)?;
@@ -212,6 +216,128 @@ async fn main() -> Result<()> {
 
     assert_eq!(plaintext, &decrypted7[..]);
     println!("Signed encryption with AAD roundtrip successful!");
+
+    // --- Mode 8: 从密码派生密钥保护 KEK ---
+    println!("\n--- Testing Password Protection for KEK ---");
+
+    // 1. 模拟从用户密码派生密钥保护材料
+    let user_password = b"complex-secure-password";
+    let user_salt = b"kek-protection-salt";
+    let pbkdf2_deriver = Pbkdf2Sha256::new(100_000);
+
+    let kek_protection_key =
+        SymmetricKey::derive_from_password(user_password, &pbkdf2_deriver, user_salt, 32)?;
+
+    println!("从用户密码成功派生 KEK 保护密钥");
+
+    // 2. 使用派生的密钥生成对称加密密钥（在实际场景中，这可能用于加密 KEK）
+    let hkdf_deriver = HkdfSha256::default();
+
+    // 派生用于加密 KEK 的密钥
+    let wrapping_key = kek_protection_key.derive_key(
+        &hkdf_deriver,
+        Some(b"kek-wrapping"),
+        Some(b"encryption-context"),
+        32,
+    )?;
+
+    // 派生用于认证的密钥
+    let auth_key = kek_protection_key.derive_key(
+        &hkdf_deriver,
+        Some(b"kek-wrapping"),
+        Some(b"authentication-context"),
+        32,
+    )?;
+
+    println!("成功派生 KEK 保护子密钥:");
+    println!("  - 包装密钥长度: {} 字节", wrapping_key.as_bytes().len());
+    println!("  - 认证密钥长度: {} 字节", auth_key.as_bytes().len());
+
+    // --- Mode 9: 使用派生密钥在多层加密系统中 ---
+    println!("\n--- Testing Multi-Layer Encryption with Derived Keys ---");
+
+    // 1. 模拟生成密钥派生材料
+    let master_key = SymmetricKey::new(vec![0u8; 64]); // 模拟主密钥
+
+    // 2. 从主密钥派生混合加密中的密钥加密密钥(KEK)和数据加密密钥(DEK)材料
+    // 注意：在真实混合加密中，KEK 通常是非对称密钥对，这里只是演示派生过程
+    let _kek_material = master_key.derive_key(
+        &hkdf_deriver,
+        Some(b"hybrid-keys"),
+        Some(b"kek-material"),
+        32,
+    )?;
+
+    let _dek_material = master_key.derive_key(
+        &hkdf_deriver,
+        Some(b"hybrid-keys"),
+        Some(b"dek-material"),
+        32,
+    )?;
+
+    // 3. 模拟派生/生成一个新的非对称密钥对用于此消息
+    let derived_key_id = "derived-hybrid-key";
+    let (derived_pk, derived_sk) = Kem::generate_keypair()?;
+    let derived_pk_wrapped = AsymmetricPublicKey::new(derived_pk.to_bytes());
+    key_store
+        .private_keys
+        .insert(derived_key_id.to_string(), derived_sk.to_bytes().to_vec());
+
+    let sensitive_data = b"This message is protected by a derived DEK in hybrid encryption.";
+
+    // 4. 使用派生的公钥加密
+    let ciphertext9 = seal
+        .encrypt::<Dek>(derived_pk_wrapped, derived_key_id.to_string())
+        .with_aad(b"Protected with derived keys")
+        .to_vec::<Kem>(sensitive_data)?;
+
+    // 5. 解密
+    let pending_decryptor9 = seal.decrypt().slice(&ciphertext9)?;
+    let found_key_id = pending_decryptor9.kek_id().unwrap();
+    println!("从密文中读取的派生混合密钥ID: '{}'", found_key_id);
+    assert_eq!(found_key_id, derived_key_id);
+
+    // 使用存储的派生私钥解密
+    let sk_wrapped = key_store.get_private_key(found_key_id).unwrap();
+    let decrypted9 = pending_decryptor9
+        .with_aad(b"Protected with derived keys")
+        .with_key::<Dek>(sk_wrapped)?;
+
+    assert_eq!(sensitive_data, &decrypted9[..]);
+    println!("在混合加密场景中使用派生密钥成功！");
+
+    // --- Mode 10: 密钥轮换场景 ---
+    println!("\n--- Testing Key Rotation Scenario ---");
+
+    // 1. 模拟密钥轮换：派生新版本的密钥
+    let rotation_master_key = SymmetricKey::new(vec![1u8; 32]); // 模拟主密钥
+
+    // 2. 派生不同版本的密钥
+    let key_v1_info = b"key-version-1";
+    let key_v2_info = b"key-version-2";
+    let rotation_salt = b"key-rotation-salt";
+
+    let key_v1 = rotation_master_key.derive_key(
+        &hkdf_deriver,
+        Some(rotation_salt),
+        Some(key_v1_info),
+        32,
+    )?;
+
+    let key_v2 = rotation_master_key.derive_key(
+        &hkdf_deriver,
+        Some(rotation_salt),
+        Some(key_v2_info),
+        32,
+    )?;
+
+    println!("成功派生不同版本的密钥用于密钥轮换");
+    println!("  - 密钥 V1 长度: {} 字节", key_v1.as_bytes().len());
+    println!("  - 密钥 V2 长度: {} 字节", key_v2.as_bytes().len());
+
+    // 比较两个派生的密钥是否不同
+    assert_ne!(key_v1.as_bytes(), key_v2.as_bytes());
+    println!("确认不同版本派生的密钥内容不同");
 
     Ok(())
 }

@@ -127,6 +127,155 @@ fn main() -> Result<()> {
 }
 ```
 
+### 密钥派生功能
+
+`seal-flow` 支持强大的密钥派生功能，允许您：
+
+1. 从主密钥派生子密钥（用于密钥轮换或特定用途的密钥）
+2. 从密码派生加密密钥（用于基于密码的加密）
+
+这些功能通过 `SymmetricKey` 类型提供：
+
+```rust
+use seal_flow::prelude::*;
+use seal_crypto::schemes::kdf::{hkdf::HkdfSha256, pbkdf2::Pbkdf2Sha256};
+use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+
+fn main() -> Result<()> {
+    // --- 从主密钥派生子密钥 ---
+    let master_key = SymmetricKey::new(vec![0u8; 32]); // 主密钥
+    let deriver = HkdfSha256::default();
+    
+    // 使用不同的上下文信息派生不同用途的子密钥
+    let salt = b"key-rotation-salt";
+    let encryption_info = b"data-encryption-key";
+    let signing_info = b"hmac-signing-key";
+    
+    // 派生加密密钥
+    let encryption_key = master_key.derive_key(
+        &deriver,
+        Some(salt),
+        Some(encryption_info),
+        32
+    )?;
+    
+    // 派生签名密钥
+    let signing_key = master_key.derive_key(
+        &deriver,
+        Some(salt),
+        Some(signing_info),
+        32
+    )?;
+    
+    // --- 从密码派生密钥 ---
+    let password = b"user-secure-password";
+    let salt = b"random-salt-value";
+    
+    // 在实际应用中应使用更高的迭代次数（至少100,000）
+    let pbkdf2_deriver = Pbkdf2Sha256::new(100_000);
+    
+    // 从密码派生加密密钥
+    let password_derived_key = SymmetricKey::derive_from_password(
+        password,
+        &pbkdf2_deriver,
+        salt,
+        32
+    )?;
+    
+    // 使用派生的密钥进行加密
+    let seal = SymmetricSeal::new();
+    let plaintext = b"要加密的数据";
+    
+    let ciphertext = seal
+        .encrypt(encryption_key, "derived-key-id".to_string())
+        .to_vec::<Aes256Gcm>(plaintext)?;
+    
+    println!("使用派生密钥成功加密数据！");
+    
+    Ok(())
+}
+```
+
+### 密钥派生的常见用例
+
+#### 1. 密钥轮换
+
+使用密钥派生轻松实现密钥轮换而无需更改主密钥：
+
+```rust
+let master_key = SymmetricKey::new(/* 主密钥字节 */);
+let deriver = HkdfSha256::default();
+
+// 版本1密钥
+let key_v1 = master_key.derive_key(
+    &deriver,
+    Some(b"rotation-salt"),
+    Some(b"key-version-1"),
+    32
+)?;
+
+// 版本2密钥（通过更改上下文信息）
+let key_v2 = master_key.derive_key(
+    &deriver,
+    Some(b"rotation-salt"),
+    Some(b"key-version-2"),
+    32
+)?;
+```
+
+#### 2. 多层密钥派生
+
+创建密钥层次结构，用于不同的加密任务：
+
+```rust
+// 从密码派生主密钥材料
+let master_key_material = SymmetricKey::derive_from_password(
+    password,
+    &pbkdf2_deriver,
+    salt,
+    64 // 更大的密钥用于进一步派生
+)?;
+
+// 然后派生特定用途的子密钥
+let db_key = master_key_material.derive_key(
+    &HkdfSha256::default(),
+    Some(b"app-salt"),
+    Some(b"database-encryption"),
+    32
+)?;
+
+let file_key = master_key_material.derive_key(
+    &HkdfSha256::default(),
+    Some(b"app-salt"),
+    Some(b"file-encryption"),
+    32
+)?;
+```
+
+#### 3. 混合加密中的密钥派生
+
+在混合加密场景中使用密钥派生来保护密钥加密密钥（KEK）：
+
+```rust
+// 从用户密码派生KEK保护密钥
+let kek_protection_key = SymmetricKey::derive_from_password(
+    user_password,
+    &pbkdf2_deriver,
+    user_salt,
+    32
+)?;
+
+// 派生特定用途的子密钥
+let wrapping_key = kek_protection_key.derive_key(
+    &HkdfSha256::default(),
+    Some(b"kek-wrapping"),
+    Some(b"encryption-context"),
+    32
+)?;
+
+// 在实际应用中，可以使用这个密钥来加密KEK
+```
+
 ### 使用密钥封装简化密钥管理
 
 `seal-flow` 使用强类型的密钥封装（如 `SymmetricKey` 和 `AsymmetricPrivateKey`）来提高安全性并防止密钥误用。开发者需要传递这些封装类型而不是原始字节。

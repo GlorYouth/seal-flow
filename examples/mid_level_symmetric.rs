@@ -1,8 +1,10 @@
 use seal_crypto::prelude::*;
+use seal_crypto::schemes::kdf::{hkdf::HkdfSha256, pbkdf2::Pbkdf2Sha256};
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 use seal_flow::common::header::Header;
 use seal_flow::error::Result;
 use seal_flow::flows::symmetric::*;
+use seal_flow::prelude::*;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -158,6 +160,80 @@ async fn main() -> Result<()> {
         .into_plaintext::<TheAlgorithm>(decryption_key6.clone(), Some(b"wrong aad"));
     assert!(result_fail.is_err());
     println!("In-Memory with wrong AAD correctly failed!");
+
+    // --- Mode 7: 密钥派生示例 ---
+    println!("\n--- Testing Key Derivation ---");
+
+    // 从主密钥派生子密钥 - 使用 HKDF
+    let master_key = SymmetricKey::new(key_store.get(KEY_ID).unwrap().to_bytes());
+    let deriver = HkdfSha256::default();
+
+    // 使用不同的上下文信息派生不同用途的子密钥
+    let salt = b"rotation-salt-2023";
+    let encryption_info = b"data-encryption-key";
+    let signing_info = b"signing-key";
+
+    let encryption_key = master_key.derive_key(&deriver, Some(salt), Some(encryption_info), 32)?;
+
+    let _signing_key = master_key.derive_key(&deriver, Some(salt), Some(signing_info), 32)?;
+
+    println!("成功从主密钥派生子密钥！");
+
+    // 使用派生的密钥进行加密
+    let derived_key_bytes = encryption_key.as_bytes();
+    let derived_key_id = "derived-encryption-key";
+
+    // 将派生的字节转换为算法密钥
+    let algo_key = <Aes256Gcm as SymmetricKeySet>::Key::from_bytes(derived_key_bytes)?;
+
+    let ciphertext7 =
+        ordinary::encrypt::<TheAlgorithm>(algo_key, plaintext, derived_key_id.to_string(), None)?;
+
+    // 使用派生的密钥进行解密
+    let pending_decryptor7 = ordinary::PendingDecryptor::from_ciphertext(&ciphertext7)?;
+    let algo_key2 = <Aes256Gcm as SymmetricKeySet>::Key::from_bytes(derived_key_bytes)?;
+    let decrypted7 = pending_decryptor7.into_plaintext::<TheAlgorithm>(algo_key2, None)?;
+
+    assert_eq!(plaintext, &decrypted7[..]);
+    println!("使用派生密钥加密/解密成功！");
+
+    // --- Mode 8: 从密码派生密钥 ---
+    println!("\n--- Testing Password-Based Key Derivation ---");
+
+    let password = b"user-secure-password";
+    let salt = b"random-salt-value";
+
+    // 在实际应用中应使用更高的迭代次数 (至少 100,000)
+    let pbkdf2_deriver = Pbkdf2Sha256::new(100_000);
+
+    // 从用户密码派生加密密钥
+    let password_derived_key =
+        SymmetricKey::derive_from_password(password, &pbkdf2_deriver, salt, 32)?;
+
+    // 使用从密码派生的密钥加密数据
+    let password_key_id = "password-derived-key";
+    let password_key =
+        <Aes256Gcm as SymmetricKeySet>::Key::from_bytes(password_derived_key.as_bytes())?;
+    let ciphertext8 = ordinary::encrypt::<TheAlgorithm>(
+        password_key,
+        plaintext,
+        password_key_id.to_string(),
+        None,
+    )?;
+
+    // 模拟另一个位置：重新从相同密码派生相同密钥进行解密
+    let password_derived_key2 =
+        SymmetricKey::derive_from_password(password, &pbkdf2_deriver, salt, 32)?;
+
+    let pending_decryptor8 = ordinary::PendingDecryptor::from_ciphertext(&ciphertext8)?;
+    let password_key2 =
+        <Aes256Gcm as SymmetricKeySet>::Key::from_bytes(password_derived_key2.as_bytes())?;
+    let decrypted8 = pending_decryptor8.into_plaintext::<TheAlgorithm>(password_key2, None)?;
+
+    assert_eq!(plaintext, &decrypted8[..]);
+    println!("从密码派生密钥并成功加密/解密数据！");
+
+    println!("\n所有密钥派生模式测试成功。");
 
     Ok(())
 }
