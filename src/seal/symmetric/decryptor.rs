@@ -1,6 +1,7 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::algorithms::SymmetricAlgorithm as SymmetricAlgorithmEnum;
 use crate::common::header::Header;
+use crate::keys::SymmetricKey;
 use std::io::{Read, Write};
 use tokio::io::AsyncRead;
 
@@ -135,8 +136,8 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         self
     }
 
-    /// Supplies a key directly from raw bytes for decryption
-    pub fn with_key_bytes(self, key_bytes: &[u8]) -> crate::Result<Vec<u8>> {
+    /// Supplies a key from its raw bytes for decryption.
+    pub fn with_key(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
 
         // 使用新的宏来替换重复的match语句
@@ -146,11 +147,11 @@ impl<'a> PendingInMemoryDecryptor<'a> {
             };
         }
 
-        dispatch_symmetric_key_bytes!(algorithm, key_bytes, do_decrypt,)
+        dispatch_symmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt,)
     }
 
-    /// Supplies the key and returns the decrypted plaintext.
-    pub fn with_key<S: SymmetricAlgorithm>(self, key: S::Key) -> crate::Result<Vec<u8>>
+    /// Supplies the typed key and returns the decrypted plaintext.
+    pub fn with_typed_key<S: SymmetricAlgorithm>(self, key: S::Key) -> crate::Result<Vec<u8>>
     where
         S::Key: Clone + Send + Sync,
     {
@@ -183,8 +184,8 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         self
     }
 
-    /// Supplies a key directly from raw bytes for decryption
-    pub fn with_key_bytes(self, key_bytes: &[u8]) -> crate::Result<Vec<u8>> {
+    /// Supplies a key from its raw bytes for decryption.
+    pub fn with_key(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
 
         // 使用新的宏来替换重复的match语句
@@ -194,11 +195,11 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
             };
         }
 
-        dispatch_symmetric_key_bytes!(algorithm, key_bytes, do_decrypt,)
+        dispatch_symmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt,)
     }
 
-    /// Supplies the key and returns the decrypted plaintext.
-    pub fn with_key<S: SymmetricAlgorithm>(self, key: S::Key) -> crate::Result<Vec<u8>>
+    /// Supplies the typed key and returns the decrypted plaintext.
+    pub fn with_typed_key<S: SymmetricAlgorithm>(self, key: S::Key) -> crate::Result<Vec<u8>>
     where
         S::Key: Clone + Send + Sync,
     {
@@ -231,8 +232,8 @@ impl<R: Read> PendingStreamingDecryptor<R> {
         self
     }
 
-    /// Supplies a key directly from raw bytes for decryption
-    pub fn with_key_bytes<'s>(self, key_bytes: &[u8]) -> crate::Result<Box<dyn Read + 's>>
+    /// Supplies a key from its raw bytes for decryption.
+    pub fn with_key<'s>(self, key: SymmetricKey) -> crate::Result<Box<dyn Read + 's>>
     where
         R: 's,
     {
@@ -247,11 +248,11 @@ impl<R: Read> PendingStreamingDecryptor<R> {
             };
         }
 
-        dispatch_symmetric_key_bytes!(algorithm, key_bytes, do_decrypt,)
+        dispatch_symmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt,)
     }
 
-    /// Supplies the key and returns a fully initialized `Decryptor`.
-    pub fn with_key<S: SymmetricAlgorithm>(
+    /// Supplies the typed key and returns a fully initialized `Decryptor`.
+    pub fn with_typed_key<S: SymmetricAlgorithm>(
         self,
         key: S::Key,
     ) -> crate::Result<crate::symmetric::streaming::Decryptor<R, S>>
@@ -292,12 +293,8 @@ where
         self
     }
 
-    /// Supplies a key directly from raw bytes and decrypts to the provided writer
-    pub fn with_key_bytes_to_writer<W: Write>(
-        self,
-        key_bytes: &[u8],
-        writer: W,
-    ) -> crate::Result<()> {
+    /// Supplies a key from its raw bytes and decrypts to the provided writer.
+    pub fn with_key_to_writer<W: Write>(self, key: SymmetricKey, writer: W) -> crate::Result<()> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
 
         // 使用新的宏来替换重复的match语句
@@ -308,11 +305,11 @@ where
             };
         }
 
-        dispatch_symmetric_key_bytes!(algorithm, key_bytes, do_decrypt, writer)
+        dispatch_symmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt, writer)
     }
 
-    /// Supplies the key and decrypts the stream, writing to the provided writer.
-    pub fn with_key_to_writer<S: SymmetricAlgorithm, W: Write>(
+    /// Supplies the typed key and decrypts the stream, writing to the provided writer.
+    pub fn with_typed_key_to_writer<S: SymmetricAlgorithm, W: Write>(
         self,
         key: S::Key,
         writer: W,
@@ -351,11 +348,8 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         self
     }
 
-    /// Supplies a key directly from raw bytes for decryption
-    pub fn with_key_bytes<'s>(
-        self,
-        key_bytes: &[u8],
-    ) -> crate::Result<Box<dyn AsyncRead + Unpin + 's>>
+    /// Supplies a key from its raw bytes for decryption.
+    pub fn with_key<'s>(self, key: SymmetricKey) -> crate::Result<Box<dyn AsyncRead + Unpin + 's>>
     where
         R: 's,
     {
@@ -370,11 +364,11 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
             };
         }
 
-        dispatch_symmetric_key_bytes!(algorithm, key_bytes, do_decrypt,)
+        dispatch_symmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt,)
     }
 
-    /// Supplies the key and returns a fully initialized `Decryptor`.
-    pub fn with_key<S: SymmetricAlgorithm>(
+    /// Supplies the typed key and returns a fully initialized `Decryptor`.
+    pub fn with_typed_key<S: SymmetricAlgorithm>(
         self,
         key: S::Key,
     ) -> crate::Result<crate::symmetric::asynchronous::Decryptor<R, S>>

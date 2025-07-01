@@ -1,7 +1,6 @@
-use crate::algorithms::traits::SymmetricAlgorithm;
+use crate::keys::SymmetricKey;
 use decryptor::SymmetricDecryptorBuilder;
 use encryptor::SymmetricEncryptor;
-use std::marker::PhantomData;
 
 pub mod decryptor;
 pub mod encryptor;
@@ -19,19 +18,14 @@ impl SymmetricSeal {
 
     /// Begins a symmetric encryption operation.
     ///
-    /// This captures the essential encryption parameters (algorithm, key, key ID)
+    /// This captures the essential encryption parameters (key, key ID)
     /// and returns a context object. You can then call methods on this context
     /// to select the desired execution mode (e.g., in-memory, streaming).
-    pub fn encrypt<'a, S>(&self, key: &'a S::Key, key_id: String) -> SymmetricEncryptor<'a, S>
-    where
-        S: SymmetricAlgorithm,
-        S::Key: Clone + Send + Sync,
-    {
+    pub fn encrypt(&self, key: SymmetricKey, key_id: String) -> SymmetricEncryptor {
         SymmetricEncryptor {
             key,
             key_id,
             aad: None,
-            _phantom: PhantomData,
         }
     }
 
@@ -47,6 +41,7 @@ impl SymmetricSeal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keys::SymmetricKey;
     use seal_crypto::prelude::*;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::collections::HashMap;
@@ -62,34 +57,38 @@ mod tests {
 
     #[test]
     fn test_in_memory_roundtrip() {
-        let key = Aes256Gcm::generate_key().unwrap();
+        let typed_key = Aes256Gcm::generate_key().unwrap();
+        let key = SymmetricKey::new(typed_key.to_bytes());
         let plaintext = get_test_data();
 
         let seal = SymmetricSeal::new();
         let encrypted = seal
-            .encrypt::<Aes256Gcm>(&key, TEST_KEY_ID.to_string())
-            .to_vec(plaintext)
+            .encrypt(key, TEST_KEY_ID.to_string())
+            .to_vec::<Aes256Gcm>(plaintext)
             .unwrap();
         let pending = seal.decrypt().slice(&encrypted).unwrap();
         assert_eq!(pending.key_id(), Some(TEST_KEY_ID));
-        let decrypted = pending.with_key::<Aes256Gcm>(key.clone()).unwrap();
+        let decrypted = pending
+            .with_typed_key::<Aes256Gcm>(typed_key.clone())
+            .unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
     }
 
     #[test]
     fn test_in_memory_parallel_roundtrip() -> crate::Result<()> {
-        let key = Aes256Gcm::generate_key()?;
+        let typed_key = Aes256Gcm::generate_key()?;
+        let key = SymmetricKey::new(typed_key.to_bytes());
         let plaintext = get_test_data();
         let key_id = "test-key-id-2".to_string();
         let seal = SymmetricSeal::new();
 
         let encrypted = seal
-            .encrypt::<Aes256Gcm>(&key, key_id.clone())
-            .to_vec_parallel(plaintext)?;
+            .encrypt(key, key_id.clone())
+            .to_vec_parallel::<Aes256Gcm>(plaintext)?;
 
         let pending = seal.decrypt().slice_parallel(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
-        let decrypted = pending.with_key::<Aes256Gcm>(key.clone())?;
+        let decrypted = pending.with_typed_key::<Aes256Gcm>(typed_key.clone())?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -98,8 +97,9 @@ mod tests {
     #[test]
     fn test_streaming_roundtrip() {
         let mut key_store = HashMap::new();
-        let key = Aes256Gcm::generate_key().unwrap();
-        key_store.insert(TEST_KEY_ID.to_string(), key.clone());
+        let typed_key = Aes256Gcm::generate_key().unwrap();
+        let key = SymmetricKey::new(typed_key.to_bytes());
+        key_store.insert(TEST_KEY_ID.to_string(), typed_key.clone());
 
         let plaintext = get_test_data();
         let seal = SymmetricSeal::new();
@@ -107,8 +107,8 @@ mod tests {
         // Encrypt
         let mut encrypted_data = Vec::new();
         let mut encryptor = seal
-            .encrypt::<Aes256Gcm>(&key, TEST_KEY_ID.to_string())
-            .into_writer(&mut encrypted_data)
+            .encrypt(key, TEST_KEY_ID.to_string())
+            .into_writer::<Aes256Gcm, _>(&mut encrypted_data)
             .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
@@ -118,7 +118,7 @@ mod tests {
         let key_id = pending.key_id().unwrap();
         let decryption_key = key_store.get(key_id).unwrap();
         let mut decryptor = pending
-            .with_key::<Aes256Gcm>(decryption_key.clone())
+            .with_typed_key::<Aes256Gcm>(decryption_key.clone())
             .unwrap();
 
         let mut decrypted_data = Vec::new();
@@ -128,20 +128,21 @@ mod tests {
 
     #[test]
     fn test_parallel_streaming_roundtrip() -> crate::Result<()> {
-        let key = Aes256Gcm::generate_key()?;
+        let typed_key = Aes256Gcm::generate_key()?;
+        let key = SymmetricKey::new(typed_key.to_bytes());
         let plaintext = get_test_data();
         let key_id = "test-key-id-p-streaming".to_string();
         let seal = SymmetricSeal::new();
 
         let mut encrypted = Vec::new();
-        seal.encrypt::<Aes256Gcm>(&key, key_id.clone())
-            .pipe_parallel(Cursor::new(plaintext), &mut encrypted)?;
+        seal.encrypt(key, key_id.clone())
+            .pipe_parallel::<Aes256Gcm, _, _>(Cursor::new(plaintext), &mut encrypted)?;
 
         let pending = seal.decrypt().reader_parallel(Cursor::new(&encrypted))?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
 
         let mut decrypted = Vec::new();
-        pending.with_key_to_writer::<Aes256Gcm, _>(key.clone(), &mut decrypted)?;
+        pending.with_typed_key_to_writer::<Aes256Gcm, _>(typed_key.clone(), &mut decrypted)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -149,21 +150,22 @@ mod tests {
 
     #[test]
     fn test_with_bytes_roundtrip() -> crate::Result<()> {
-        let key = Aes256Gcm::generate_key()?;
-        let key_bytes = key.to_bytes();
+        let typed_key = Aes256Gcm::generate_key()?;
+        let key_bytes = typed_key.to_bytes();
+        let key = SymmetricKey::new(typed_key.to_bytes());
         let plaintext = get_test_data();
         let key_id = "test-key-id-bytes".to_string();
         let seal = SymmetricSeal::new();
 
         // 使用原始密钥加密
         let encrypted = seal
-            .encrypt::<Aes256Gcm>(&key, key_id.clone())
-            .to_vec(plaintext)?;
+            .encrypt(key, key_id.clone())
+            .to_vec::<Aes256Gcm>(plaintext)?;
 
         // 使用密钥字节解密
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
-        let decrypted = pending.with_key_bytes(&key_bytes)?;
+        let decrypted = pending.with_key(SymmetricKey::new(key_bytes))?;
 
         assert_eq!(plaintext, &decrypted[..]);
         Ok(())
@@ -171,33 +173,36 @@ mod tests {
 
     #[test]
     fn test_aad_in_memory_roundtrip() -> crate::Result<()> {
-        let key = Aes256Gcm::generate_key()?;
+        let typed_key = Aes256Gcm::generate_key()?;
+        let key = SymmetricKey::new(typed_key.to_bytes());
         let plaintext = get_test_data();
         let aad = b"test-associated-data";
         let key_id = "aad-key".to_string();
         let seal = SymmetricSeal::new();
 
         let encrypted = seal
-            .encrypt::<Aes256Gcm>(&key, key_id.clone())
+            .encrypt(key, key_id.clone())
             .with_aad(aad)
-            .to_vec(plaintext)?;
+            .to_vec::<Aes256Gcm>(plaintext)?;
 
         // Decrypt with correct AAD
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
-        let decrypted = pending.with_aad(aad).with_key::<Aes256Gcm>(key.clone())?;
+        let decrypted = pending
+            .with_aad(aad)
+            .with_typed_key::<Aes256Gcm>(typed_key.clone())?;
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
         let pending_fail = seal.decrypt().slice(&encrypted)?;
         let result = pending_fail
             .with_aad(b"wrong-aad")
-            .with_key::<Aes256Gcm>(key.clone());
+            .with_typed_key::<Aes256Gcm>(typed_key.clone());
         assert!(result.is_err());
 
         // Decrypt with no AAD fails
         let pending_fail2 = seal.decrypt().slice(&encrypted)?;
-        let result2 = pending_fail2.with_key::<Aes256Gcm>(key);
+        let result2 = pending_fail2.with_typed_key::<Aes256Gcm>(typed_key);
         assert!(result2.is_err());
 
         Ok(())
@@ -212,8 +217,9 @@ mod tests {
         #[tokio::test]
         async fn test_asynchronous_streaming_roundtrip() {
             let mut key_store = HashMap::new();
-            let key = Aes256Gcm::generate_key().unwrap();
-            key_store.insert(TEST_KEY_ID.to_string(), key.clone());
+            let typed_key = Aes256Gcm::generate_key().unwrap();
+            let key = SymmetricKey::new(typed_key.to_bytes());
+            key_store.insert(TEST_KEY_ID.to_string(), typed_key.clone());
             let plaintext = get_test_data();
 
             let seal = SymmetricSeal::new();
@@ -221,8 +227,8 @@ mod tests {
             // Encrypt
             let mut encrypted_data = Vec::new();
             let mut encryptor = seal
-                .encrypt::<Aes256Gcm>(&key, TEST_KEY_ID.to_string())
-                .into_async_writer(&mut encrypted_data)
+                .encrypt(key, TEST_KEY_ID.to_string())
+                .into_async_writer::<Aes256Gcm, _>(&mut encrypted_data)
                 .await
                 .unwrap();
             encryptor.write_all(plaintext).await.unwrap();
@@ -237,7 +243,7 @@ mod tests {
             let key_id = pending.key_id().unwrap();
             let decryption_key = key_store.get(key_id).unwrap();
             let mut decryptor = pending
-                .with_key::<Aes256Gcm>(decryption_key.clone())
+                .with_typed_key::<Aes256Gcm>(decryption_key.clone())
                 .unwrap();
 
             let mut decrypted_data = Vec::new();

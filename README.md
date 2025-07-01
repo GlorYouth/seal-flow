@@ -54,9 +54,10 @@ fn main() -> Result<()> {
     let seal = SymmetricSeal::new();
 
     // Encrypt data held in memory
+    let key_wrapped = SymmetricKey::new(key.to_bytes());
     let ciphertext = seal
-        .encrypt::<Aes256Gcm>(&key, key_id)
-        .to_vec(plaintext)?;
+        .encrypt(key_wrapped, key_id)
+        .to_vec::<Aes256Gcm>(plaintext)?;
 
     // Decrypt data held in memory.
     // The API promotes a safer two-step decryption process.
@@ -65,8 +66,7 @@ fn main() -> Result<()> {
 
     // You can now inspect the key ID from the header to find the correct key.
     // For this example, we'll use the key we already have.
-    let key_bytes = key.to_bytes();
-    let decrypted_text = pending_decryptor.with_key_bytes(&key_bytes)?;
+    let decrypted_text = pending_decryptor.with_typed_key::<Aes256Gcm>(key)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully encrypted and decrypted data!");
@@ -92,15 +92,16 @@ fn main() -> Result<()> {
     let mut key_store = HashMap::new();
     let key = Aes256Gcm::generate_key()?;
     let key_id = "key-id-1".to_string();
-    key_store.insert(key_id.clone(), key.to_bytes());
+    key_store.insert(key_id.clone(), key.clone());
     
     let plaintext = b"some secret data";
     let seal = SymmetricSeal::new();
 
     // 2. Encrypt data with a specific key ID
+    let key_wrapped = SymmetricKey::new(key.to_bytes());
     let ciphertext = seal
-        .encrypt::<Aes256Gcm>(&key, key_id)
-        .to_vec(plaintext)?;
+        .encrypt(key_wrapped, key_id)
+        .to_vec::<Aes256Gcm>(plaintext)?;
 
     // --- The Decryption Workflow ---
 
@@ -112,10 +113,10 @@ fn main() -> Result<()> {
     println!("Found key ID: {}", found_key_id);
     
     // 5. Retrieve the correct key from your key store.
-    let decryption_key_bytes = key_store.get(found_key_id).expect("Key not found in store!");
+    let decryption_key = key_store.get(found_key_id).expect("Key not found in store!");
 
     // 6. Provide the key to get a fully operational decryptor.
-    let mut decryptor = pending_decryptor.with_key_bytes(decryption_key_bytes)?;
+    let mut decryptor = pending_decryptor.with_typed_key::<Aes256Gcm>(decryption_key.clone())?;
     
     // 7. Decrypt the data.
     let mut decrypted_text = Vec::new();
@@ -128,13 +129,17 @@ fn main() -> Result<()> {
 }
 ```
 
-### Key Management with Providers
+### Simplified Key Management with Key Wrappers
 
-For more robust and decoupled key management, `seal-flow` introduces the `SymmetricKeyProvider` and `AsymmetricKeyProvider` traits. Instead of manually fetching a key from a store, you can implement these traits to let the decryptor automatically look up the correct key.
+`seal-flow` uses strongly-typed key wrappers like `SymmetricKey` and `AsymmetricPrivateKey` to improve security and prevent key misuse. Instead of passing raw bytes, you pass these wrapper types.
 
-This is especially useful for integrating with a Key Management Service (KMS), a database, or other centralized configuration systems.
+For decryption, there are two primary methods to supply a key:
 
-Here's how to use a provider:
+1.  `with_key(key: K)`: This is the simplest method. `K` is a key wrapper struct (e.g., `SymmetricKey`). This method infers the cryptographic algorithm from the ciphertext header, providing a streamlined and secure default. It will automatically parse the header, select the right algorithm, and then attempt decryption. This is the recommended approach for most use cases.
+
+2.  `with_typed_key<A>(key: A::Key)`: This method is for advanced scenarios where you want to explicitly specify which cryptographic algorithm `A` to use, overriding what's in the header. `A::Key` is the concrete key type from `seal-crypto` (e.g., `aes_gcm::Key`). This can be useful for legacy systems or custom protocols where the header might not be trusted or available.
+
+Here's an example of the recommended `with_key` approach:
 
 ```rust
 use seal_flow::prelude::*;
@@ -142,39 +147,34 @@ use seal_crypto::prelude::SymmetricKeyGenerator;
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 use std::collections::HashMap;
 
-// 1. Define your key provider struct.
-struct MyKeyProvider {
-    key_store: HashMap<String, <Aes256Gcm as SymmetricKeySet>::Key>,
-}
-
-// 2. Implement the `SymmetricKeyProvider` trait.
-impl SymmetricKeyProvider for MyKeyProvider {
-    fn get_symmetric_key<'a>(&'a self, key_id: &str) -> Option<SymmetricKey<'a>> {
-        // Look up the key and wrap it in the `SymmetricKey` enum.
-        self.key_store.get(key_id).map(|k| SymmetricKey::Aes256Gcm(k))
-    }
-}
-
 fn main() -> Result<()> {
-    // 3. Create an instance of your provider.
-    let mut key_store = HashMap::new();
+    // Setup: Create and store a key.
     let key = Aes256Gcm::generate_key()?;
     let key_id = "my-kms-key".to_string();
-    key_store.insert(key_id.clone(), key);
-    let provider = MyKeyProvider { key_store };
-    
     let plaintext = b"some secret data";
+
+    // In a real application, you would store and retrieve the raw key bytes.
+    let key_bytes = key.to_bytes();
+    
     let seal = SymmetricSeal::new();
 
-    // Encrypt with the key from the provider (or any other source).
+    // Encrypt with the wrapped key.
+    let key_wrapped = SymmetricKey::new(key.to_bytes());
     let ciphertext = seal
-        .encrypt::<Aes256Gcm>(provider.key_store.get(&key_id).unwrap(), key_id)
-        .to_vec(plaintext)?;
+        .encrypt(key_wrapped, key_id)
+        .to_vec::<Aes256Gcm>(plaintext)?;
 
-    // 4. Decrypt using the provider.
-    // `seal-flow` automatically calls `get_symmetric_key` with the ID from the header.
+    // Decryption:
+    // 1. In a real scenario, you'd fetch the key bytes from a KMS or database.
+    let retrieved_key_bytes = key_bytes; // Simulate fetching
+
+    // 2. Wrap the raw bytes in the `SymmetricKey` type.
+    let decryption_key = SymmetricKey::new(retrieved_key_bytes);
+
+    // 3. Decrypt using `with_key`.
+    // `seal-flow` automatically infers the algorithm (Aes256Gcm) from the header.
     let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
-    let decrypted_text = pending_decryptor.with_provider(&provider)?;
+    let decrypted_text = pending_decryptor.with_key(decryption_key)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully decrypted using the key provider!");
@@ -203,26 +203,27 @@ fn main() -> Result<()> {
     let seal = SymmetricSeal::new();
 
     // Encrypt with AAD
+    let key_wrapped = SymmetricKey::new(key.to_bytes());
     let ciphertext = seal
-        .encrypt::<Aes256Gcm>(&key, key_id)
+        .encrypt(key_wrapped, key_id)
         .with_aad(aad)
-        .to_vec(plaintext)?;
+        .to_vec::<Aes256Gcm>(plaintext)?;
 
     // To decrypt, you MUST provide the same AAD.
     let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
     let decrypted_text = pending_decryptor
         .with_aad(aad) // Provide the same AAD
-        .with_key_bytes(&key.to_bytes())?;
+        .with_typed_key::<Aes256Gcm>(key.clone())?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully decrypted with AAD!");
 
     // Attempting to decrypt with wrong or missing AAD will fail.
     let pending_fail = seal.decrypt().slice(&ciphertext)?;
-    assert!(pending_fail.with_aad(b"wrong aad").with_key_bytes(&key.to_bytes()).is_err());
+    assert!(pending_fail.with_aad(b"wrong aad").with_typed_key::<Aes256Gcm>(key.clone()).is_err());
     
     let pending_fail2 = seal.decrypt().slice(&ciphertext)?;
-    assert!(pending_fail2.with_key_bytes(&key.to_bytes()).is_err());
+    assert!(pending_fail2.with_typed_key::<Aes256Gcm>(key).is_err());
     
     println!("Correctly failed to decrypt with wrong/missing AAD.");
 
@@ -248,31 +249,31 @@ type Kem = Rsa2048<Sha256>;
 type Dek = Aes256Gcm;
 
 fn main() -> Result<()> {
-    // 1. Setup: Generate a key pair and store the private key bytes.
+    // 1. Setup: Generate a key pair and store the private key.
     let (pk, sk) = Kem::generate_keypair()?;
-    let sk_bytes = sk.to_bytes();
 
     let mut private_key_store = HashMap::new();
     let kek_id = "my-hybrid-key".to_string();
-    private_key_store.insert(kek_id.clone(), sk_bytes);
+    private_key_store.insert(kek_id.clone(), sk.clone());
 
     let plaintext = b"This is a secret message for hybrid encryption.";
     let seal = HybridSeal::new();
 
     // 2. Encrypt using the public key.
+    let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
     let ciphertext = seal
-        .encrypt::<Kem, Dek>(&pk, kek_id)
-        .to_vec(plaintext)?;
+        .encrypt::<Dek>(pk_wrapped, kek_id)
+        .to_vec::<Kem>(plaintext)?;
 
     // 3. Decrypt: First, create a pending decryptor to inspect the header.
     let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
     
-    // 4. Find the key ID and retrieve the private key bytes from the store.
+    // 4. Find the key ID and retrieve the private key from the store.
     let found_kek_id = pending_decryptor.kek_id().unwrap();
-    let sk_bytes = private_key_store.get(found_kek_id).unwrap();
+    let private_key = private_key_store.get(found_kek_id).unwrap();
 
-    // 5. Use the private key bytes to decrypt the data.
-    let decrypted_text = pending_decryptor.with_key_bytes::<Dek>(sk_bytes)?;
+    // 5. Use the private key to decrypt the data.
+    let decrypted_text = pending_decryptor.with_typed_key::<Kem, Dek>(private_key)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully performed hybrid encryption and decryption!");

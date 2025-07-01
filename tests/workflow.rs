@@ -6,7 +6,10 @@
 use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm as TestDek;
 use seal_crypto::{prelude::*, schemes::hash::Sha256};
-use seal_flow::seal::{hybrid::HybridSeal, symmetric::SymmetricSeal};
+use seal_flow::{
+    prelude::*,
+    seal::{hybrid::HybridSeal, symmetric::SymmetricSeal},
+};
 use std::collections::HashMap;
 use std::io::Cursor;
 use tokio::io::AsyncReadExt;
@@ -67,9 +70,10 @@ fn test_symmetric_workflow() {
     let seal = SymmetricSeal::new();
 
     // --- Encryption Side ---
+    let key_wrapped = SymmetricKey::new(key.to_bytes());
     let encrypted = seal
-        .encrypt::<TestDek>(&key, key_id.clone())
-        .to_vec(plaintext)
+        .encrypt(key_wrapped, key_id.clone())
+        .to_vec::<TestDek>(plaintext)
         .unwrap();
 
     // --- Decryption Side (simulated) ---
@@ -83,7 +87,7 @@ fn test_symmetric_workflow() {
 
     // 3. Decrypt using the retrieved key.
     let decrypted = pending_decryptor
-        .with_key::<TestDek>(decryption_key.clone())
+        .with_typed_key::<TestDek>(decryption_key.clone())
         .unwrap();
 
     // --- Verification ---
@@ -102,9 +106,10 @@ fn test_hybrid_workflow() {
     let seal = HybridSeal::new();
 
     // --- Encryption Side ---
+    let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
     let encrypted = seal
-        .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
-        .to_vec(plaintext)
+        .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
+        .to_vec::<TestKem>(plaintext)
         .unwrap();
 
     // --- Decryption Side (simulated) ---
@@ -118,7 +123,7 @@ fn test_hybrid_workflow() {
 
     // 3. Decrypt using the retrieved private key.
     let decrypted = pending_decryptor
-        .with_private_key::<TestKem, TestDek>(decryption_key)
+        .with_typed_key::<TestKem, TestDek>(decryption_key)
         .unwrap();
 
     // --- Verification ---
@@ -143,9 +148,10 @@ mod async_workflow_tests {
 
         // --- Encryption Side ---
         let mut encrypted_data = Vec::new();
+        let key_wrapped = SymmetricKey::new(key.to_bytes());
         let mut encryptor = seal
-            .encrypt::<TestDek>(&key, key_id.clone())
-            .into_async_writer(&mut encrypted_data)
+            .encrypt(key_wrapped, key_id.clone())
+            .into_async_writer::<TestDek, _>(&mut encrypted_data)
             .await
             .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
@@ -167,7 +173,7 @@ mod async_workflow_tests {
         // 3. Decrypt asynchronously.
         let mut decrypted_data = Vec::new();
         let mut decryptor = pending_decryptor
-            .with_key::<TestDek>(decryption_key.clone())
+            .with_typed_key::<TestDek>(decryption_key.clone())
             .unwrap();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();
 
@@ -188,9 +194,10 @@ mod async_workflow_tests {
 
         // --- Encryption Side ---
         let mut encrypted_data = Vec::new();
+        let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
         let mut encryptor = seal
-            .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
-            .into_async_writer(&mut encrypted_data)
+            .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
+            .into_async_writer::<TestKem, _>(&mut encrypted_data)
             .await
             .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
@@ -212,7 +219,7 @@ mod async_workflow_tests {
         // 3. Decrypt asynchronously.
         let mut decrypted_data = Vec::new();
         let mut decryptor = pending_decryptor
-            .with_private_key::<TestKem, TestDek>(decryption_key.clone())
+            .with_typed_key::<TestKem, TestDek>(decryption_key.clone())
             .await
             .unwrap();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();

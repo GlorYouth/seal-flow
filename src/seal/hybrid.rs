@@ -1,4 +1,5 @@
-use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::algorithms::traits::SymmetricAlgorithm;
+use crate::keys::AsymmetricPublicKey;
 
 use decryptor::HybridDecryptorBuilder;
 use encryptor::HybridEncryptor;
@@ -22,13 +23,8 @@ impl HybridSeal {
     /// This captures the essential encryption parameters (algorithms, public key, KEK ID)
     /// and returns a context object. You can then call methods on this context
     /// to select the desired execution mode (e.g., in-memory, streaming).
-    pub fn encrypt<'a, A, S>(
-        &self,
-        pk: &'a A::PublicKey,
-        kek_id: String,
-    ) -> HybridEncryptor<'a, A, S>
+    pub fn encrypt<S>(&self, pk: AsymmetricPublicKey, kek_id: String) -> HybridEncryptor<S>
     where
-        A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
     {
         HybridEncryptor {
@@ -52,7 +48,7 @@ impl HybridSeal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keys::SignaturePublicKey;
+    use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
     use crate::Error;
     use seal_crypto::prelude::*;
     use seal_crypto::schemes::asymmetric::post_quantum::dilithium::Dilithium2;
@@ -76,17 +72,18 @@ mod tests {
     #[test]
     fn test_in_memory_roundtrip() -> crate::Result<()> {
         let (pk, sk) = TestKem::generate_keypair()?;
+        let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
         let plaintext = get_test_data();
         let kek_id = "test-kek-id".to_string();
         let seal = HybridSeal::new();
 
         let encrypted = seal
-            .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
-            .to_vec(plaintext)?;
+            .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
+            .to_vec::<TestKem>(plaintext)?;
 
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
-        let decrypted = pending.with_private_key::<TestKem, TestDek>(&sk)?;
+        let decrypted = pending.with_typed_key::<TestKem, TestDek>(&sk)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -95,17 +92,18 @@ mod tests {
     #[test]
     fn test_in_memory_parallel_roundtrip() -> crate::Result<()> {
         let (pk, sk) = TestKem::generate_keypair()?;
+        let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
         let plaintext = get_test_data();
         let kek_id = "test-kek-id-parallel".to_string();
         let seal = HybridSeal::new();
 
         let encrypted = seal
-            .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
-            .to_vec_parallel(plaintext)?;
+            .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
+            .to_vec_parallel::<TestKem>(plaintext)?;
 
         let pending = seal.decrypt().slice_parallel(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
-        let decrypted = pending.with_private_key::<TestKem, TestDek>(&sk)?;
+        let decrypted = pending.with_typed_key::<TestKem, TestDek>(&sk)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -115,6 +113,7 @@ mod tests {
     fn test_streaming_roundtrip() {
         let mut key_store = HashMap::new();
         let (pk, sk) = TestKem::generate_keypair().unwrap();
+        let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
         key_store.insert(TEST_KEK_ID.to_string(), sk);
 
         let plaintext = get_test_data();
@@ -123,8 +122,8 @@ mod tests {
         // Encrypt
         let mut encrypted_data = Vec::new();
         let mut encryptor = seal
-            .encrypt::<TestKem, TestDek>(&pk, TEST_KEK_ID.to_string())
-            .into_writer(&mut encrypted_data)
+            .encrypt::<TestDek>(pk_wrapped, TEST_KEK_ID.to_string())
+            .into_writer::<TestKem, _>(&mut encrypted_data)
             .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
@@ -134,7 +133,7 @@ mod tests {
         let kek_id = pending.kek_id().unwrap();
         let decryption_key = key_store.get(kek_id).unwrap();
         let mut decryptor = pending
-            .with_private_key::<TestKem, TestDek>(decryption_key)
+            .with_typed_key::<TestKem, TestDek>(decryption_key)
             .unwrap();
 
         let mut decrypted_data = Vec::new();
@@ -145,19 +144,20 @@ mod tests {
     #[test]
     fn test_parallel_streaming_roundtrip() -> crate::Result<()> {
         let (pk, sk) = TestKem::generate_keypair()?;
+        let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
         let plaintext = get_test_data();
         let kek_id = "test-kek-id-p-streaming".to_string();
         let seal = HybridSeal::new();
 
         let mut encrypted = Vec::new();
-        seal.encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
-            .pipe_parallel(Cursor::new(plaintext), &mut encrypted)?;
+        seal.encrypt::<TestDek>(pk_wrapped, kek_id.clone())
+            .pipe_parallel::<TestKem, _, _>(Cursor::new(plaintext), &mut encrypted)?;
 
         let pending = seal.decrypt().reader_parallel(Cursor::new(&encrypted))?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
 
         let mut decrypted = Vec::new();
-        pending.with_private_key_to_writer::<TestKem, TestDek, _>(&sk, &mut decrypted)?;
+        pending.with_typed_key_to_writer::<TestKem, TestDek, _>(&sk, &mut decrypted)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -166,18 +166,19 @@ mod tests {
     #[test]
     fn test_with_key_bytes_roundtrip() -> crate::Result<()> {
         let (pk, sk) = TestKem::generate_keypair()?;
-        let sk_bytes = sk.to_bytes();
+        let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
+        let sk_wrapped = AsymmetricPrivateKey::new(sk.to_bytes());
         let plaintext = get_test_data();
         let kek_id = "test-kek-id-bytes".to_string();
         let seal = HybridSeal::new();
 
         let encrypted = seal
-            .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
-            .to_vec(plaintext)?;
+            .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
+            .to_vec::<TestKem>(plaintext)?;
 
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
-        let decrypted = pending.with_key_bytes::<TestDek>(&sk_bytes)?;
+        let decrypted = pending.with_key::<TestDek>(sk_wrapped)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -186,6 +187,7 @@ mod tests {
     #[test]
     fn test_aad_roundtrip() -> crate::Result<()> {
         let (pk, sk) = TestKem::generate_keypair()?;
+        let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
         let plaintext = get_test_data();
         let aad = b"test-associated-data-for-hybrid";
         let kek_id = "aad-kek".to_string();
@@ -193,28 +195,28 @@ mod tests {
 
         // Encrypt with AAD
         let encrypted = seal
-            .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
+            .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
             .with_aad(aad)
-            .to_vec(plaintext)?;
+            .to_vec::<TestKem>(plaintext)?;
 
         // Decrypt with correct AAD
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
         let decrypted = pending
             .with_aad(aad)
-            .with_private_key::<TestKem, TestDek>(&sk)?;
+            .with_typed_key::<TestKem, TestDek>(&sk)?;
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
         let pending_fail = seal.decrypt().slice(&encrypted)?;
         let result = pending_fail
             .with_aad(b"wrong-aad")
-            .with_private_key::<TestKem, TestDek>(&sk);
+            .with_typed_key::<TestKem, TestDek>(&sk);
         assert!(result.is_err());
 
         // Decrypt with no AAD fails
         let pending_fail2 = seal.decrypt().slice(&encrypted)?;
-        let result2 = pending_fail2.with_private_key::<TestKem, TestDek>(&sk);
+        let result2 = pending_fail2.with_typed_key::<TestKem, TestDek>(&sk);
         assert!(result2.is_err());
 
         Ok(())
@@ -224,7 +226,9 @@ mod tests {
     fn test_signed_aad_tampering_fails() -> crate::Result<()> {
         // 1. Setup keys
         let (enc_pk, enc_sk) = TestKem::generate_keypair()?;
+        let enc_pk_wrapped = AsymmetricPublicKey::new(enc_pk.to_bytes());
         let (sig_pk, sig_sk) = TestSigner::generate_keypair()?;
+        let sig_sk_wrapped = AsymmetricPrivateKey::new(sig_sk.to_bytes());
         let sig_pk_bytes = sig_pk.to_bytes();
 
         // 2. Setup verification key
@@ -238,10 +242,10 @@ mod tests {
 
         // 3. Encrypt with signer and AAD
         let encrypted = seal
-            .encrypt::<TestKem, TestDek>(&enc_pk, kek_id)
+            .encrypt::<TestDek>(enc_pk_wrapped, kek_id)
             .with_aad(aad)
-            .with_signer::<TestSigner>(sig_sk, signer_key_id.clone())
-            .to_vec(plaintext)?;
+            .with_signer::<TestSigner>(sig_sk_wrapped, signer_key_id.clone())
+            .to_vec::<TestKem>(plaintext)?;
 
         // 4. Successful roundtrip with correct verifier and AAD
         let decrypted = seal
@@ -249,7 +253,7 @@ mod tests {
             .slice(&encrypted)?
             .with_aad(aad)
             .with_verification_key(verification_key.clone())?
-            .with_private_key::<TestKem, TestDek>(&enc_sk)?;
+            .with_typed_key::<TestKem, TestDek>(&enc_sk)?;
         assert_eq!(decrypted.as_slice(), plaintext);
 
         // 5. Fails with wrong AAD
@@ -258,7 +262,7 @@ mod tests {
             .slice(&encrypted)?
             .with_aad(b"wrong aad")
             .with_verification_key(verification_key.clone())?
-            .with_private_key::<TestKem, TestDek>(&enc_sk);
+            .with_typed_key::<TestKem, TestDek>(&enc_sk);
         assert!(res.is_err(), "Decryption should fail with wrong AAD");
         assert!(matches!(res.err(), Some(Error::Crypto(_))));
 
@@ -267,7 +271,7 @@ mod tests {
             .decrypt()
             .slice(&encrypted)?
             .with_verification_key(verification_key)?
-            .with_private_key::<TestKem, TestDek>(&enc_sk);
+            .with_typed_key::<TestKem, TestDek>(&enc_sk);
         assert!(res2.is_err(), "Decryption should fail with no AAD");
 
         Ok(())
@@ -282,6 +286,7 @@ mod tests {
         async fn test_asynchronous_streaming_roundtrip() {
             let mut key_store = HashMap::new();
             let (pk, sk) = TestKem::generate_keypair().unwrap();
+            let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
             key_store.insert(TEST_KEK_ID.to_string(), sk.clone());
 
             let plaintext = get_test_data();
@@ -290,8 +295,8 @@ mod tests {
             // Encrypt
             let mut encrypted_data = Vec::new();
             let mut encryptor = seal
-                .encrypt::<TestKem, TestDek>(&pk, TEST_KEK_ID.to_string())
-                .into_async_writer(&mut encrypted_data)
+                .encrypt::<TestDek>(pk_wrapped, TEST_KEK_ID.to_string())
+                .into_async_writer::<TestKem, _>(&mut encrypted_data)
                 .await
                 .unwrap();
             encryptor.write_all(plaintext).await.unwrap();
@@ -306,7 +311,7 @@ mod tests {
             let kek_id = pending.kek_id().unwrap();
             let decryption_key = key_store.get(kek_id).unwrap();
             let mut decryptor = pending
-                .with_private_key::<TestKem, TestDek>(decryption_key.clone())
+                .with_typed_key::<TestKem, TestDek>(decryption_key.clone())
                 .await
                 .unwrap();
 
@@ -318,7 +323,9 @@ mod tests {
         #[tokio::test]
         async fn test_async_signed_aad_tampering_fails() -> crate::Result<()> {
             let (enc_pk, enc_sk) = TestKem::generate_keypair()?;
+            let enc_pk_wrapped = AsymmetricPublicKey::new(enc_pk.to_bytes());
             let (sig_pk, sig_sk) = TestSigner::generate_keypair()?;
+            let sig_sk_wrapped = AsymmetricPrivateKey::new(sig_sk.to_bytes());
             let sig_pk_bytes = sig_pk.to_bytes();
             let verification_key = SignaturePublicKey::new(sig_pk_bytes);
 
@@ -331,10 +338,10 @@ mod tests {
             // Encrypt
             let mut encrypted = Vec::new();
             let mut encryptor = seal
-                .encrypt::<TestKem, TestDek>(&enc_pk, kek_id)
+                .encrypt::<TestDek>(enc_pk_wrapped, kek_id)
                 .with_aad(aad)
-                .with_signer::<TestSigner>(sig_sk, signer_key_id)
-                .into_async_writer(&mut encrypted)
+                .with_signer::<TestSigner>(sig_sk_wrapped, signer_key_id)
+                .into_async_writer::<TestKem, _>(&mut encrypted)
                 .await?;
             encryptor.write_all(plaintext).await?;
             encryptor.shutdown().await?;
@@ -347,7 +354,7 @@ mod tests {
                 .with_aad(aad)
                 .with_verification_key(verification_key.clone())
                 .await?
-                .with_private_key::<TestKem, TestDek>(enc_sk.clone())
+                .with_typed_key::<TestKem, TestDek>(enc_sk.clone())
                 .await?;
             let mut decrypted_ok = Vec::new();
             decryptor.read_to_end(&mut decrypted_ok).await?;
@@ -361,7 +368,7 @@ mod tests {
                 .with_aad(b"wrong-aad")
                 .with_verification_key(verification_key)
                 .await?
-                .with_private_key::<TestKem, TestDek>(enc_sk.clone())
+                .with_typed_key::<TestKem, TestDek>(enc_sk.clone())
                 .await;
             assert!(res.is_err());
 

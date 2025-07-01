@@ -10,7 +10,9 @@ pub use seal_crypto as crypto;
 pub mod prelude {
     //! A "prelude" for users of the `seal-flow` crate.
     pub use crate::error::{Error, Result};
-    pub use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey, SymmetricKey};
+    pub use crate::keys::{
+        AsymmetricPrivateKey, AsymmetricPublicKey, SignaturePublicKey, SymmetricKey,
+    };
     pub use crate::seal::{HybridSeal, SymmetricSeal};
 }
 
