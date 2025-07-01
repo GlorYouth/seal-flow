@@ -52,10 +52,8 @@ impl HybridSeal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
-    use crate::provider::{AsymmetricKeyProvider, SignatureKeyProvider};
+    use crate::keys::SignaturePublicKey;
     use crate::Error;
-    use once_cell::sync::Lazy;
     use seal_crypto::prelude::*;
     use seal_crypto::schemes::asymmetric::post_quantum::dilithium::Dilithium2;
     use seal_crypto::schemes::{
@@ -74,53 +72,6 @@ mod tests {
     type TestKem = Rsa2048<Sha256>;
     type TestDek = Aes256Gcm;
     type TestSigner = Dilithium2;
-
-    static TEST_KEY_PAIR_RSA2048: Lazy<(
-        <TestKem as AsymmetricKeySet>::PublicKey,
-        <TestKem as AsymmetricKeySet>::PrivateKey,
-    )> = Lazy::new(|| TestKem::generate_keypair().unwrap());
-
-    struct TestKeyProvider {
-        keys: HashMap<String, AsymmetricPrivateKey>,
-    }
-
-    impl TestKeyProvider {
-        fn new() -> Self {
-            let mut keys = HashMap::new();
-            keys.insert(
-                "test-provider-key".to_string(),
-                AsymmetricPrivateKey::Rsa2048(TEST_KEY_PAIR_RSA2048.1.clone()),
-            );
-            Self { keys }
-        }
-    }
-
-    impl AsymmetricKeyProvider for TestKeyProvider {
-        fn get_asymmetric_key(&self, kek_id: &str) -> Option<AsymmetricPrivateKey> {
-            self.keys.get(kek_id).cloned()
-        }
-    }
-
-    struct TestSignatureProvider {
-        keys: HashMap<String, SignaturePublicKey>,
-    }
-
-    impl TestSignatureProvider {
-        fn new() -> Self {
-            Self {
-                keys: HashMap::new(),
-            }
-        }
-        fn add_key(&mut self, id: String, key: SignaturePublicKey) {
-            self.keys.insert(id, key);
-        }
-    }
-
-    impl SignatureKeyProvider for TestSignatureProvider {
-        fn get_signature_key(&self, signer_key_id: &str) -> Option<SignaturePublicKey> {
-            self.keys.get(signer_key_id).cloned()
-        }
-    }
 
     #[test]
     fn test_in_memory_roundtrip() -> crate::Result<()> {
@@ -213,22 +164,20 @@ mod tests {
     }
 
     #[test]
-    fn test_with_provider_roundtrip() -> crate::Result<()> {
-        let provider = TestKeyProvider::new();
-        let kek_id = "test-provider-key".to_string();
-
-        let pk = &TEST_KEY_PAIR_RSA2048.0;
-
+    fn test_with_key_bytes_roundtrip() -> crate::Result<()> {
+        let (pk, sk) = TestKem::generate_keypair()?;
+        let sk_bytes = sk.to_bytes();
         let plaintext = get_test_data();
+        let kek_id = "test-kek-id-bytes".to_string();
         let seal = HybridSeal::new();
 
         let encrypted = seal
-            .encrypt::<TestKem, TestDek>(pk, kek_id.clone())
+            .encrypt::<TestKem, TestDek>(&pk, kek_id.clone())
             .to_vec(plaintext)?;
 
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
-        let decrypted = pending.with_provider::<_, TestDek>(&provider)?;
+        let decrypted = pending.with_key_bytes::<TestDek>(&sk_bytes)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -276,14 +225,11 @@ mod tests {
         // 1. Setup keys
         let (enc_pk, enc_sk) = TestKem::generate_keypair()?;
         let (sig_pk, sig_sk) = TestSigner::generate_keypair()?;
+        let sig_pk_bytes = sig_pk.to_bytes();
 
-        // 2. Setup provider for verifier
+        // 2. Setup verification key
         let signer_key_id = "test-signer-key-mem".to_string();
-        let mut sig_provider = TestSignatureProvider::new();
-        sig_provider.add_key(
-            signer_key_id.clone(),
-            SignaturePublicKey::Dilithium2(sig_pk),
-        );
+        let verification_key = SignaturePublicKey::new(sig_pk_bytes);
 
         let plaintext = get_test_data();
         let aad = b"test-signed-aad-memory";
@@ -302,7 +248,7 @@ mod tests {
             .decrypt()
             .slice(&encrypted)?
             .with_aad(aad)
-            .with_verifier(&sig_provider)?
+            .with_verification_key(verification_key.clone())?
             .with_private_key::<TestKem, TestDek>(&enc_sk)?;
         assert_eq!(decrypted.as_slice(), plaintext);
 
@@ -311,7 +257,7 @@ mod tests {
             .decrypt()
             .slice(&encrypted)?
             .with_aad(b"wrong aad")
-            .with_verifier(&sig_provider)?
+            .with_verification_key(verification_key.clone())?
             .with_private_key::<TestKem, TestDek>(&enc_sk);
         assert!(res.is_err(), "Decryption should fail with wrong AAD");
         assert!(matches!(res.err(), Some(Error::Crypto(_))));
@@ -320,7 +266,7 @@ mod tests {
         let res2 = seal
             .decrypt()
             .slice(&encrypted)?
-            .with_verifier(&sig_provider)?
+            .with_verification_key(verification_key)?
             .with_private_key::<TestKem, TestDek>(&enc_sk);
         assert!(res2.is_err(), "Decryption should fail with no AAD");
 
@@ -373,14 +319,10 @@ mod tests {
         async fn test_async_signed_aad_tampering_fails() -> crate::Result<()> {
             let (enc_pk, enc_sk) = TestKem::generate_keypair()?;
             let (sig_pk, sig_sk) = TestSigner::generate_keypair()?;
+            let sig_pk_bytes = sig_pk.to_bytes();
+            let verification_key = SignaturePublicKey::new(sig_pk_bytes);
 
             let signer_key_id = "test-signer-key-async".to_string();
-            let mut sig_provider = TestSignatureProvider::new();
-            sig_provider.add_key(
-                signer_key_id.clone(),
-                SignaturePublicKey::Dilithium2(sig_pk),
-            );
-
             let plaintext = get_test_data();
             let aad = b"test-signed-aad-async";
             let kek_id = "test-signed-aad-kek-async".to_string();
@@ -403,7 +345,7 @@ mod tests {
                 .async_reader(Cursor::new(&encrypted))
                 .await?
                 .with_aad(aad)
-                .with_verifier(&sig_provider)
+                .with_verification_key(verification_key.clone())
                 .await?
                 .with_private_key::<TestKem, TestDek>(enc_sk.clone())
                 .await?;
@@ -417,7 +359,7 @@ mod tests {
                 .async_reader(Cursor::new(&encrypted))
                 .await?
                 .with_aad(b"wrong-aad")
-                .with_verifier(&sig_provider)
+                .with_verification_key(verification_key)
                 .await?
                 .with_private_key::<TestKem, TestDek>(enc_sk.clone())
                 .await;

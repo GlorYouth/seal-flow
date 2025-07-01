@@ -1,57 +1,68 @@
-//! This module defines type-erased wrappers for cryptographic keys.
-use seal_crypto::{
-    prelude::*,
-    schemes::{
-        asymmetric::{
-            post_quantum::{
-                dilithium::{Dilithium2, Dilithium3, Dilithium5},
-                kyber::{Kyber1024, Kyber512, Kyber768},
-            },
-            traditional::{
-                rsa::{Rsa2048, Rsa4096},
-                ecc::{Ed25519, EcdsaP256},
-            },
-        },
-        symmetric::{
-            aes_gcm::{Aes128Gcm, Aes256Gcm},
-            chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305},
-        },
-    },
-};
+//! This module defines byte wrappers for cryptographic keys.
+use bytes::Bytes;
 
-/// A type-erased wrapper for a symmetric encryption key.
+/// A byte wrapper for a symmetric encryption key.
 ///
-/// This enum allows high-level APIs to accept a key without needing to know the
-/// specific algorithm at compile time. This is particularly useful for key providers
-/// or other key management systems that need to handle multiple key types and choose
-/// the correct cryptographic implementation based on the algorithm specified in the
-/// ciphertext header.
+/// This struct stores raw key bytes that can be converted to specific algorithm keys
+/// when needed. This simplifies key management while maintaining flexibility.
 #[derive(Debug, Clone)]
-pub enum SymmetricKey {
-    Aes128Gcm(<Aes128Gcm as SymmetricKeySet>::Key),
-    Aes256Gcm(<Aes256Gcm as SymmetricKeySet>::Key),
-    Chacha20Poly1305(<ChaCha20Poly1305 as SymmetricKeySet>::Key),
-    XChaCha20Poly1305(<XChaCha20Poly1305 as SymmetricKeySet>::Key),
+pub struct SymmetricKey(pub Bytes);
+
+impl SymmetricKey {
+    /// Create a new symmetric key from bytes
+    pub fn new(bytes: impl Into<Bytes>) -> Self {
+        Self(bytes.into())
+    }
+
+    /// Get a reference to the raw bytes of the key
+    pub fn as_bytes(&self) -> &Bytes {
+        &self.0
+    }
+
+    /// Consume the key and return the inner bytes
+    pub fn into_bytes(self) -> Bytes {
+        self.0
+    }
 }
 
-/// A type-erased wrapper for an asymmetric private key.
-///
-/// This enum allows high-level APIs to accept a key without needing to know the
-/// specific algorithm at compile time.
+/// A byte wrapper for an asymmetric private key.
 #[derive(Debug, Clone)]
-pub enum AsymmetricPrivateKey {
-    Rsa2048(<Rsa2048 as AsymmetricKeySet>::PrivateKey),
-    Rsa4096(<Rsa4096 as AsymmetricKeySet>::PrivateKey),
-    Kyber512(<Kyber512 as AsymmetricKeySet>::PrivateKey),
-    Kyber768(<Kyber768 as AsymmetricKeySet>::PrivateKey),
-    Kyber1024(<Kyber1024 as AsymmetricKeySet>::PrivateKey),
+pub struct AsymmetricPrivateKey(pub Bytes);
+
+impl AsymmetricPrivateKey {
+    /// Create a new asymmetric private key from bytes
+    pub fn new(bytes: impl Into<Bytes>) -> Self {
+        Self(bytes.into())
+    }
+
+    /// Get a reference to the raw bytes of the key
+    pub fn as_bytes(&self) -> &Bytes {
+        &self.0
+    }
+
+    /// Consume the key and return the inner bytes
+    pub fn into_bytes(self) -> Bytes {
+        self.0
+    }
 }
 
+/// A byte wrapper for a signature public key.
 #[derive(Debug, Clone)]
-pub enum SignaturePublicKey {
-    Dilithium2(<Dilithium2 as AsymmetricKeySet>::PublicKey),
-    Dilithium3(<Dilithium3 as AsymmetricKeySet>::PublicKey),
-    Dilithium5(<Dilithium5 as AsymmetricKeySet>::PublicKey),
-    Ed25519(<Ed25519 as AsymmetricKeySet>::PublicKey),
-    EcdsaP256(<EcdsaP256 as AsymmetricKeySet>::PublicKey),
+pub struct SignaturePublicKey(pub Bytes);
+
+impl SignaturePublicKey {
+    /// Create a new signature public key from bytes
+    pub fn new(bytes: impl Into<Bytes>) -> Self {
+        Self(bytes.into())
+    }
+
+    /// Get a reference to the raw bytes of the key
+    pub fn as_bytes(&self) -> &Bytes {
+        &self.0
+    }
+
+    /// Consume the key and return the inner bytes
+    pub fn into_bytes(self) -> Bytes {
+        self.0
+    }
 }

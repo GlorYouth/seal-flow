@@ -1,41 +1,39 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
+use crate::common::algorithms::SymmetricAlgorithm as SymmetricAlgorithmEnum;
 use crate::common::header::Header;
-use crate::prelude::SymmetricKeyProvider;
-use crate::Error;
 use std::io::{Read, Write};
 use tokio::io::AsyncRead;
 
-macro_rules! dispatch_symmetric_algorithm {
-    // Internal rule for processing the algorithm list.
-    (@internal $algorithm:expr, $key:expr, $callback:ident, $extra_args:tt,
-     $(($algo_enum:path, $algo_type:ty, $key_enum:path)),*
+use seal_crypto::prelude::*;
+use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};
+use seal_crypto::schemes::symmetric::chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305};
+
+/// 创建一个宏来处理从原始字节转换为特定算法密钥的过程
+/// 这个宏替代了旧的枚举类型调度方式，直接从字节转换到密钥
+macro_rules! dispatch_symmetric_key_bytes {
+    // 内部规则，处理算法列表
+    (@internal $algorithm:expr, $key_bytes:expr, $callback:ident, $extra_args:tt,
+     $(($algo_enum:path, $algo_type:ty)),*
     ) => {
         {
-            use crate::common::algorithms::SymmetricAlgorithm as SymmetricAlgorithmEnum;
-            use crate::keys::SymmetricKey;
-            use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};
-            use seal_crypto::schemes::symmetric::chacha20_poly1305::{
-                ChaCha20Poly1305, XChaCha20Poly1305,
-            };
-
             match $algorithm {
                 $(
-                    $algo_enum => match $key {
-                        $key_enum(k) => $callback!(k, $algo_type, $extra_args),
-                        _ => Err(Error::MismatchedKeyType),
+                    $algo_enum => {
+                        let key = <$algo_type as SymmetricKeySet>::Key::from_bytes($key_bytes)?;
+                        $callback!(key, $algo_type, $extra_args)
                     },
                 )*
             }
         }
     };
 
-    // Public entry point for the macro.
-    ($algorithm:expr, $key:expr, $callback:ident, $($extra_args:tt)*) => {
-        dispatch_symmetric_algorithm!(@internal $algorithm, $key, $callback, ($($extra_args)*),
-            (SymmetricAlgorithmEnum::Aes128Gcm, Aes128Gcm, SymmetricKey::Aes128Gcm),
-            (SymmetricAlgorithmEnum::Aes256Gcm, Aes256Gcm, SymmetricKey::Aes256Gcm),
-            (SymmetricAlgorithmEnum::ChaCha20Poly1305, ChaCha20Poly1305, SymmetricKey::Chacha20Poly1305),
-            (SymmetricAlgorithmEnum::XChaCha20Poly1305, XChaCha20Poly1305, SymmetricKey::XChaCha20Poly1305)
+    // 宏的公共入口点
+    ($algorithm:expr, $key_bytes:expr, $callback:ident, $($extra_args:tt)*) => {
+        dispatch_symmetric_key_bytes!(@internal $algorithm, $key_bytes, $callback, ($($extra_args)*),
+            (SymmetricAlgorithmEnum::Aes128Gcm, Aes128Gcm),
+            (SymmetricAlgorithmEnum::Aes256Gcm, Aes256Gcm),
+            (SymmetricAlgorithmEnum::ChaCha20Poly1305, ChaCha20Poly1305),
+            (SymmetricAlgorithmEnum::XChaCha20Poly1305, XChaCha20Poly1305)
         )
     };
 }
@@ -137,22 +135,18 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         self
     }
 
-    /// Supplies a `SymmetricKeyProvider` to automatically look up the key and decrypt.
-    pub fn with_provider<P: SymmetricKeyProvider>(self, provider: &P) -> crate::Result<Vec<u8>> {
-        let key_id = self.key_id().ok_or(Error::InvalidHeader)?;
-        let key = provider
-            .get_symmetric_key(key_id)
-            .ok_or(Error::KeyNotFound)?;
+    /// Supplies a key directly from raw bytes for decryption
+    pub fn with_key_bytes(self, key_bytes: &[u8]) -> crate::Result<Vec<u8>> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
 
+        // 使用新的宏来替换重复的match语句
         macro_rules! do_decrypt {
             ($k:ident, $S:ty, ()) => {
-                self.inner
-                    .into_plaintext::<$S>($k.clone(), self.aad.as_deref())
+                self.inner.into_plaintext::<$S>($k, self.aad.as_deref())
             };
         }
 
-        dispatch_symmetric_algorithm!(algorithm, key, do_decrypt,)
+        dispatch_symmetric_key_bytes!(algorithm, key_bytes, do_decrypt,)
     }
 
     /// Supplies the key and returns the decrypted plaintext.
@@ -189,22 +183,18 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         self
     }
 
-    /// Supplies a `SymmetricKeyProvider` to automatically look up the key and decrypt.
-    pub fn with_provider<P: SymmetricKeyProvider>(self, provider: &P) -> crate::Result<Vec<u8>> {
-        let key_id = self.key_id().ok_or(Error::InvalidHeader)?;
-        let key = provider
-            .get_symmetric_key(key_id)
-            .ok_or(Error::KeyNotFound)?;
+    /// Supplies a key directly from raw bytes for decryption
+    pub fn with_key_bytes(self, key_bytes: &[u8]) -> crate::Result<Vec<u8>> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
 
+        // 使用新的宏来替换重复的match语句
         macro_rules! do_decrypt {
             ($k:ident, $S:ty, ()) => {
-                self.inner
-                    .into_plaintext::<$S>($k.clone(), self.aad.as_deref())
+                self.inner.into_plaintext::<$S>($k, self.aad.as_deref())
             };
         }
 
-        dispatch_symmetric_algorithm!(algorithm, key, do_decrypt,)
+        dispatch_symmetric_key_bytes!(algorithm, key_bytes, do_decrypt,)
     }
 
     /// Supplies the key and returns the decrypted plaintext.
@@ -241,28 +231,25 @@ impl<R: Read> PendingStreamingDecryptor<R> {
         self
     }
 
-    /// Supplies a `SymmetricKeyProvider` to automatically look up the key and create a decryptor.
-    pub fn with_provider<'s, P>(self, provider: &'s P) -> crate::Result<Box<dyn Read + 's>>
+    /// Supplies a key directly from raw bytes for decryption
+    pub fn with_key_bytes<'s>(self, key_bytes: &[u8]) -> crate::Result<Box<dyn Read + 's>>
     where
-        P: SymmetricKeyProvider,
         R: 's,
     {
-        let key_id = self.key_id().ok_or(Error::InvalidHeader)?;
-        let key = provider
-            .get_symmetric_key(key_id)
-            .ok_or(Error::KeyNotFound)?;
         let algorithm = self.inner.header().payload.symmetric_algorithm();
 
+        // 使用新的宏来替换重复的match语句
         macro_rules! do_decrypt {
             ($k:ident, $S:ty, ()) => {
                 self.inner
-                    .into_decryptor::<$S>($k.clone(), self.aad.as_deref())
+                    .into_decryptor::<$S>($k, self.aad.as_deref())
                     .map(|d| Box::new(d) as Box<dyn Read>)
             };
         }
 
-        dispatch_symmetric_algorithm!(algorithm, key, do_decrypt,)
+        dispatch_symmetric_key_bytes!(algorithm, key_bytes, do_decrypt,)
     }
+
     /// Supplies the key and returns a fully initialized `Decryptor`.
     pub fn with_key<S: SymmetricAlgorithm>(
         self,
@@ -305,27 +292,25 @@ where
         self
     }
 
-    /// Supplies a `SymmetricKeyProvider` to automatically look up the key and decrypt the stream.
-    pub fn with_provider<W, P>(self, provider: &P, writer: W) -> crate::Result<()>
-    where
-        W: Write + Send,
-        P: SymmetricKeyProvider,
-    {
-        let key_id = self.key_id().ok_or(Error::InvalidHeader)?;
-        let key = provider
-            .get_symmetric_key(key_id)
-            .ok_or(Error::KeyNotFound)?;
+    /// Supplies a key directly from raw bytes and decrypts to the provided writer
+    pub fn with_key_bytes_to_writer<W: Write>(
+        self,
+        key_bytes: &[u8],
+        writer: W,
+    ) -> crate::Result<()> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
 
+        // 使用新的宏来替换重复的match语句
         macro_rules! do_decrypt {
             ($k:ident, $S:ty, ($writer:ident)) => {
                 self.inner
-                    .decrypt_to_writer::<$S, W>($k.clone(), $writer, self.aad.as_deref())
+                    .decrypt_to_writer::<$S, W>($k, $writer, self.aad.as_deref())
             };
         }
 
-        dispatch_symmetric_algorithm!(algorithm, key, do_decrypt, writer)
+        dispatch_symmetric_key_bytes!(algorithm, key_bytes, do_decrypt, writer)
     }
+
     /// Supplies the key and decrypts the stream, writing to the provided writer.
     pub fn with_key_to_writer<S: SymmetricAlgorithm, W: Write>(
         self,
@@ -366,30 +351,26 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         self
     }
 
-    /// Supplies a `SymmetricKeyProvider` to automatically look up the key and create a decryptor.
-    pub fn with_provider<'s, P>(
+    /// Supplies a key directly from raw bytes for decryption
+    pub fn with_key_bytes<'s>(
         self,
-        provider: &'s P,
+        key_bytes: &[u8],
     ) -> crate::Result<Box<dyn AsyncRead + Unpin + 's>>
     where
-        P: SymmetricKeyProvider,
         R: 's,
     {
-        let key_id = self.key_id().ok_or(Error::InvalidHeader)?;
-        let key = provider
-            .get_symmetric_key(key_id)
-            .ok_or(Error::KeyNotFound)?;
         let algorithm = self.inner.header().payload.symmetric_algorithm();
 
+        // 使用新的宏来替换重复的match语句
         macro_rules! do_decrypt {
             ($k:ident, $S:ty, ()) => {
                 self.inner
-                    .into_decryptor::<$S>($k.clone(), self.aad.as_deref())
+                    .into_decryptor::<$S>($k, self.aad.as_deref())
                     .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>)
             };
         }
 
-        dispatch_symmetric_algorithm!(algorithm, key, do_decrypt,)
+        dispatch_symmetric_key_bytes!(algorithm, key_bytes, do_decrypt,)
     }
 
     /// Supplies the key and returns a fully initialized `Decryptor`.

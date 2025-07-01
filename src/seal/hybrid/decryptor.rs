@@ -1,66 +1,44 @@
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::common::algorithms::AsymmetricAlgorithm as AsymmetricAlgorithmEnum;
 use crate::common::header::Header;
 use crate::keys::SignaturePublicKey;
-use crate::prelude::AsymmetricKeyProvider;
-use crate::provider::SignatureKeyProvider;
 use crate::Error;
+use seal_crypto::prelude::*;
+use seal_crypto::schemes::asymmetric::{
+    post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
+    traditional::rsa::{Rsa2048, Rsa4096},
+};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 use tokio::io::AsyncRead;
 
-/// Dispatches a call to a handler macro based on the asymmetric algorithm.
-///
-/// This macro abstracts the repetitive `match` block for handling different
-/// asymmetric algorithms and their corresponding private key types.
-///
-/// # Arguments
-///
-/// * `$algorithm`: An expression that evaluates to `common::algorithms::AsymmetricAlgorithm`.
-/// * `$key`: An expression that evaluates to `keys::AsymmetricPrivateKey`.
-/// * `$callback`: The identifier of a macro to call upon a successful match.
-/// * `$($extra_args:tt)*`: Optional extra arguments to pass to the callback macro.
-///
-/// # Callback Macro Signature
-///
-/// The callback macro will receive:
-/// 1. The unwrapped private key variable (`k`).
-/// 2. The corresponding algorithm type (e.g., `Rsa2048`).
-/// 3. Any extra arguments passed to this macro.
-macro_rules! dispatch_asymmetric_algorithm {
-    // Internal rule for processing the algorithm list.
-    (@internal $algorithm:expr, $key:expr, $callback:ident, $extra_args:tt,
-     $(($algo_enum:path, $algo_type:ty, $key_enum:path)),*
+/// 创建一个宏来处理从原始字节转换为特定非对称算法密钥的过程
+/// 这个宏替代了旧的枚举类型调度方式，直接从字节转换到密钥
+macro_rules! dispatch_asymmetric_key_bytes {
+    // 内部规则，处理算法列表
+    (@internal $algorithm:expr, $key_bytes:expr, $callback:ident, $extra_args:tt,
+     $(($algo_enum:path, $algo_type:ty)),*
     ) => {
         {
-            // Note: The `use` statements are now inside the final expansion,
-            // so they are only included when the macro is used.
-            use crate::common::algorithms::AsymmetricAlgorithm as AsymmetricAlgorithmEnum;
-            use crate::keys::AsymmetricPrivateKey;
-            use seal_crypto::schemes::asymmetric::{
-                post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
-                traditional::rsa::{Rsa2048, Rsa4096},
-            };
-
             match $algorithm {
                 $(
-                    $algo_enum => match $key {
-                        $key_enum(k) => $callback!(k, $algo_type, $extra_args),
-                        _ => Err(Error::MismatchedKeyType),
+                    $algo_enum => {
+                        let sk = <$algo_type as AsymmetricKeySet>::PrivateKey::from_bytes($key_bytes)?;
+                        $callback!(sk, $algo_type, $extra_args)
                     },
                 )*
             }
         }
     };
 
-    // Public entry point for the macro.
-    // It "transcribes" the list of algorithms and "pushes down" to the internal rule.
-    ($algorithm:expr, $key:expr, $callback:ident, $($extra_args:tt)*) => {
-        dispatch_asymmetric_algorithm!(@internal $algorithm, $key, $callback, ($($extra_args)*),
-            (AsymmetricAlgorithmEnum::Rsa2048, Rsa2048, AsymmetricPrivateKey::Rsa2048),
-            (AsymmetricAlgorithmEnum::Rsa4096, Rsa4096, AsymmetricPrivateKey::Rsa4096),
-            (AsymmetricAlgorithmEnum::Kyber512, Kyber512, AsymmetricPrivateKey::Kyber512),
-            (AsymmetricAlgorithmEnum::Kyber768, Kyber768, AsymmetricPrivateKey::Kyber768),
-            (AsymmetricAlgorithmEnum::Kyber1024, Kyber1024, AsymmetricPrivateKey::Kyber1024)
+    // 宏的公共入口点
+    ($algorithm:expr, $key_bytes:expr, $callback:ident, $($extra_args:tt)*) => {
+        dispatch_asymmetric_key_bytes!(@internal $algorithm, $key_bytes, $callback, ($($extra_args)*),
+            (AsymmetricAlgorithmEnum::Rsa2048, Rsa2048),
+            (AsymmetricAlgorithmEnum::Rsa4096, Rsa4096),
+            (AsymmetricAlgorithmEnum::Kyber512, Kyber512),
+            (AsymmetricAlgorithmEnum::Kyber768, Kyber768),
+            (AsymmetricAlgorithmEnum::Kyber1024, Kyber1024)
         )
     };
 }
@@ -170,33 +148,22 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         self
     }
 
-    /// Supplies a key provider to automatically look up the verification key.
-    pub fn with_verifier<P>(mut self, provider: &'a P) -> crate::Result<Self>
-    where
-        P: SignatureKeyProvider,
-    {
-        let signer_id = self.signer_key_id().ok_or(Error::SignerKeyIdMissing)?;
-        let verification_key = provider
-            .get_signature_key(signer_id)
-            .ok_or(Error::KeyNotFound)?;
+    /// Supplies a verification key from raw bytes
+    pub fn with_verification_key(
+        mut self,
+        verification_key: SignaturePublicKey,
+    ) -> crate::Result<Self> {
         self.verification_key = Some(verification_key);
         Ok(self)
     }
 
-    /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and decrypt.
-    pub fn with_provider<P, S>(self, provider: &P) -> crate::Result<Vec<u8>>
+    /// Supplies a private key directly from raw bytes for decryption
+    pub fn with_key_bytes<S: SymmetricAlgorithm>(self, key_bytes: &[u8]) -> crate::Result<Vec<u8>>
     where
-        P: AsymmetricKeyProvider,
-        S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-
-        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
-        let key = provider
-            .get_asymmetric_key(kek_id)
-            .ok_or(Error::KeyNotFound)?;
 
         let algorithm = self
             .header()
@@ -204,13 +171,14 @@ impl<'a> PendingInMemoryDecryptor<'a> {
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
+        // 使用新的宏来替换重复的match语句
         macro_rules! do_decrypt {
-            ($k:ident, $A:ty, ()) => {
-                self.with_private_key::<$A, S>(&$k)
+            ($sk:ident, $A:ty, ()) => {
+                self.with_private_key::<$A, S>(&$sk)
             };
         }
 
-        dispatch_asymmetric_algorithm!(algorithm, key, do_decrypt,)
+        dispatch_asymmetric_key_bytes!(algorithm, key_bytes, do_decrypt,)
     }
 
     /// Supplies the private key and returns the decrypted plaintext.
@@ -257,32 +225,22 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         self
     }
 
-    /// Supplies a key provider to automatically look up the verification key.
-    pub fn with_verifier<P>(mut self, provider: &'a P) -> crate::Result<Self>
-    where
-        P: SignatureKeyProvider,
-    {
-        let signer_id = self.signer_key_id().ok_or(Error::SignerKeyIdMissing)?;
-        let verification_key = provider
-            .get_signature_key(signer_id)
-            .ok_or(Error::KeyNotFound)?;
+    /// Supplies a verification key from raw bytes
+    pub fn with_verification_key(
+        mut self,
+        verification_key: SignaturePublicKey,
+    ) -> crate::Result<Self> {
         self.verification_key = Some(verification_key);
         Ok(self)
     }
 
-    /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and decrypt.
-    pub fn with_provider<P, S>(self, provider: &P) -> crate::Result<Vec<u8>>
+    /// Supplies a private key directly from raw bytes for decryption
+    pub fn with_key_bytes<S: SymmetricAlgorithm>(self, key_bytes: &[u8]) -> crate::Result<Vec<u8>>
     where
-        P: AsymmetricKeyProvider,
-        S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
-        let key = provider
-            .get_asymmetric_key(kek_id)
-            .ok_or(Error::KeyNotFound)?;
 
         let algorithm = self
             .header()
@@ -290,13 +248,14 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
+        // 使用新的宏来替换重复的match语句
         macro_rules! do_decrypt {
-            ($k:ident, $A:ty, ()) => {
-                self.with_private_key::<$A, S>(&$k)
+            ($sk:ident, $A:ty, ()) => {
+                self.with_private_key::<$A, S>(&$sk)
             };
         }
 
-        dispatch_asymmetric_algorithm!(algorithm, key, do_decrypt,)
+        dispatch_asymmetric_key_bytes!(algorithm, key_bytes, do_decrypt,)
     }
 
     /// Supplies the private key and returns the decrypted plaintext.
@@ -344,33 +303,25 @@ impl<R: Read + 'static> PendingStreamingDecryptor<R> {
         self
     }
 
-    /// Supplies a key provider to automatically look up the verification key.
-    pub fn with_verifier<P>(mut self, provider: &P) -> crate::Result<Self>
-    where
-        P: SignatureKeyProvider,
-    {
-        let signer_id = self.signer_key_id().ok_or(Error::SignerKeyIdMissing)?;
-        let verification_key = provider
-            .get_signature_key(signer_id)
-            .ok_or(Error::KeyNotFound)?;
+    /// Supplies a verification key from raw bytes
+    pub fn with_verification_key(
+        mut self,
+        verification_key: SignaturePublicKey,
+    ) -> crate::Result<Self> {
         self.verification_key = Some(verification_key);
         Ok(self)
     }
 
-    /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and create a decryptor.
-    pub fn with_provider<P, S>(self, provider: &P) -> crate::Result<Box<dyn Read + 'static>>
+    /// Supplies a private key directly from raw bytes for decryption
+    pub fn with_key_bytes<S: SymmetricAlgorithm>(
+        self,
+        key_bytes: &[u8],
+    ) -> crate::Result<Box<dyn Read + 'static>>
     where
-        P: AsymmetricKeyProvider,
-        S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-
-        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
-        let key = provider
-            .get_asymmetric_key(kek_id)
-            .ok_or(Error::KeyNotFound)?;
 
         let algorithm = self
             .header()
@@ -378,14 +329,15 @@ impl<R: Read + 'static> PendingStreamingDecryptor<R> {
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
+        // 使用新的宏来替换重复的match语句
         macro_rules! do_decrypt {
-            ($k:ident, $A:ty, ()) => {
-                self.with_private_key::<$A, S>(&$k)
+            ($sk:ident, $A:ty, ()) => {
+                self.with_private_key::<$A, S>(&$sk)
                     .map(|d| Box::new(d) as Box<dyn Read>)
             };
         }
 
-        dispatch_asymmetric_algorithm!(algorithm, key, do_decrypt,)
+        dispatch_asymmetric_key_bytes!(algorithm, key_bytes, do_decrypt,)
     }
 
     /// Supplies the private key and returns a fully initialized `Decryptor`.
@@ -442,34 +394,26 @@ where
         self
     }
 
-    /// Supplies a key provider to automatically look up the verification key.
-    pub fn with_verifier<P>(mut self, provider: &P) -> crate::Result<Self>
-    where
-        P: SignatureKeyProvider,
-    {
-        let signer_id = self.signer_key_id().ok_or(Error::SignerKeyIdMissing)?;
-        let verification_key = provider
-            .get_signature_key(signer_id)
-            .ok_or(Error::KeyNotFound)?;
-        self.verification_key = Some(verification_key.clone());
+    /// Supplies a verification key from raw bytes
+    pub fn with_verification_key(
+        mut self,
+        verification_key: SignaturePublicKey,
+    ) -> crate::Result<Self> {
+        self.verification_key = Some(verification_key);
         Ok(self)
     }
 
-    /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and decrypt the stream.
-    pub fn with_provider<P, S, W>(self, provider: &P, writer: W) -> crate::Result<()>
+    /// Supplies a private key directly from raw bytes and decrypts to the provided writer
+    pub fn with_key_bytes_to_writer<S: SymmetricAlgorithm, W: Write>(
+        self,
+        key_bytes: &[u8],
+        writer: W,
+    ) -> crate::Result<()>
     where
-        P: AsymmetricKeyProvider,
-        S: SymmetricAlgorithm,
-        W: Write,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-
-        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
-        let key = provider
-            .get_asymmetric_key(kek_id)
-            .ok_or(Error::KeyNotFound)?;
 
         let algorithm = self
             .header()
@@ -477,13 +421,14 @@ where
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
+        // 使用新的宏来替换重复的match语句
         macro_rules! do_decrypt {
-            ($k:ident, $A:ty, ($writer:ident)) => {
-                self.with_private_key_to_writer::<$A, S, W>(&$k, $writer)
+            ($sk:ident, $A:ty, ($writer:ident)) => {
+                self.with_private_key_to_writer::<$A, S, W>(&$sk, $writer)
             };
         }
 
-        dispatch_asymmetric_algorithm!(algorithm, key, do_decrypt, writer)
+        dispatch_asymmetric_key_bytes!(algorithm, key_bytes, do_decrypt, writer)
     }
 
     /// Supplies the private key and decrypts the stream, writing to the provided writer.
@@ -538,37 +483,26 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         self
     }
 
-    /// Supplies a key provider to automatically look up the verification key.
-    pub async fn with_verifier<P>(mut self, provider: &P) -> crate::Result<Self>
-    where
-        P: SignatureKeyProvider,
-    {
-        let signer_id = self.signer_key_id().ok_or(Error::SignerKeyIdMissing)?;
-        let verification_key = provider
-            .get_signature_key(signer_id)
-            .ok_or(Error::KeyNotFound)?;
-        self.verification_key = Some(verification_key.clone());
+    /// Supplies a verification key from raw bytes
+    pub async fn with_verification_key(
+        mut self,
+        verification_key: SignaturePublicKey,
+    ) -> crate::Result<Self> {
+        self.verification_key = Some(verification_key);
         Ok(self)
     }
 
-    /// Supplies a `AsymmetricKeyProvider` to automatically look up the key and create a decryptor.
-    pub async fn with_provider<'s, P, S>(
+    /// Supplies a private key directly from raw bytes for decryption
+    pub async fn with_key_bytes<'s, S: SymmetricAlgorithm>(
         self,
-        provider: &'s P,
+        key_bytes: &[u8],
     ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 's>>
     where
-        P: AsymmetricKeyProvider,
-        S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
         R: Send + 's,
     {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-
-        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
-        let key = provider
-            .get_asymmetric_key(kek_id)
-            .ok_or(Error::KeyNotFound)?;
 
         let algorithm = self
             .header()
@@ -576,15 +510,16 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
+        // 使用新的宏来替换重复的match语句
         macro_rules! do_decrypt {
-            ($k:ident, $A:ty, ()) => {
-                self.with_private_key::<$A, S>($k.clone())
+            ($sk:ident, $A:ty, ()) => {
+                self.with_private_key::<$A, S>($sk)
                     .await
                     .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>)
             };
         }
 
-        dispatch_asymmetric_algorithm!(algorithm, key, do_decrypt,)
+        dispatch_asymmetric_key_bytes!(algorithm, key_bytes, do_decrypt,)
     }
 
     /// Supplies the private key and returns a fully initialized `Decryptor`.

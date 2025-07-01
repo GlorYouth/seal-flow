@@ -47,7 +47,6 @@ impl SymmetricSeal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::SymmetricKeyProvider;
     use seal_crypto::prelude::*;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::collections::HashMap;
@@ -148,60 +147,23 @@ mod tests {
         Ok(())
     }
 
-    // A mock key provider for testing purposes.
-    struct TestKeyProvider {
-        keys: HashMap<String, SymmetricKey>,
-    }
-
-    // Note: This is a bit of a hack for testing.
-    // In a real scenario, you wouldn't use static lifetimes like this.
-    // We'd likely have keys owned by the provider struct itself.
-    // But for a simple test, we can create static keys.
-    use crate::prelude::SymmetricKey;
-    use once_cell::sync::Lazy;
-
-    static TEST_KEY_AES256: Lazy<<Aes256Gcm as SymmetricKeySet>::Key> =
-        Lazy::new(|| Aes256Gcm::generate_key().unwrap());
-
-    impl TestKeyProvider {
-        fn new() -> Self {
-            let mut keys = HashMap::new();
-            keys.insert(
-                "test-provider-key".to_string(),
-                SymmetricKey::Aes256Gcm(TEST_KEY_AES256.clone()),
-            );
-            Self { keys }
-        }
-    }
-
-    impl SymmetricKeyProvider for TestKeyProvider {
-        fn get_symmetric_key(&self, key_id: &str) -> Option<SymmetricKey> {
-            self.keys.get(key_id).cloned()
-        }
-    }
-
     #[test]
-    fn test_with_provider_roundtrip() -> crate::Result<()> {
-        let provider = TestKeyProvider::new();
-        let key_id = "test-provider-key".to_string();
-        let key = provider.get_symmetric_key(&key_id).unwrap();
-
+    fn test_with_bytes_roundtrip() -> crate::Result<()> {
+        let key = Aes256Gcm::generate_key()?;
+        let key_bytes = key.to_bytes();
         let plaintext = get_test_data();
+        let key_id = "test-key-id-bytes".to_string();
         let seal = SymmetricSeal::new();
 
-        // Extract the raw key for encryption
-        let raw_key = match key {
-            SymmetricKey::Aes256Gcm(k) => k,
-            _ => panic!("Wrong key type"),
-        };
-
+        // 使用原始密钥加密
         let encrypted = seal
-            .encrypt::<Aes256Gcm>(&raw_key, key_id.clone())
+            .encrypt::<Aes256Gcm>(&key, key_id.clone())
             .to_vec(plaintext)?;
 
-        // Decrypt using the provider
+        // 使用密钥字节解密
         let pending = seal.decrypt().slice(&encrypted)?;
-        let decrypted = pending.with_provider(&provider)?;
+        assert_eq!(pending.key_id(), Some(key_id.as_str()));
+        let decrypted = pending.with_key_bytes(&key_bytes)?;
 
         assert_eq!(plaintext, &decrypted[..]);
         Ok(())

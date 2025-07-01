@@ -11,8 +11,8 @@ use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
 };
 use seal_crypto::schemes::asymmetric::post_quantum::kyber::{Kyber1024, Kyber512, Kyber768};
 use seal_crypto::schemes::asymmetric::traditional::{
+    ecc::{EcdsaP256, Ed25519},
     rsa::{Rsa2048, Rsa4096},
-    ecc::{Ed25519, EcdsaP256},
 };
 use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};
 use seal_crypto::schemes::symmetric::chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305};

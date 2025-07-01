@@ -227,40 +227,40 @@ impl Header {
             use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
                 Dilithium2, Dilithium3, Dilithium5,
             };
-            use seal_crypto::schemes::asymmetric::traditional::ecc::{Ed25519, EcdsaP256};
+            use seal_crypto::schemes::asymmetric::traditional::ecc::{EcdsaP256, Ed25519};
 
-            // 根据签名算法选择正确的验证方法
+            // 根据签名算法选择正确的验证方法并直接从原始字节恢复密钥
             match algo {
-                SignatureAlgorithm::Dilithium2 => match verification_key {
-                    crate::keys::SignaturePublicKey::Dilithium2(key) => {
-                        Dilithium2::verify(&key, &payload_bytes, &Signature(signature))?;
-                    }
-                    _ => return Err(Error::UnsupportedOperation),
-                },
-                SignatureAlgorithm::Dilithium3 => match verification_key {
-                    crate::keys::SignaturePublicKey::Dilithium3(key) => {
-                        Dilithium3::verify(&key, &payload_bytes, &Signature(signature))?;
-                    }
-                    _ => return Err(Error::UnsupportedOperation),
-                },
-                SignatureAlgorithm::Dilithium5 => match verification_key {
-                    crate::keys::SignaturePublicKey::Dilithium5(key) => {
-                        Dilithium5::verify(&key, &payload_bytes, &Signature(signature))?;
-                    }
-                    _ => return Err(Error::UnsupportedOperation),
-                },
-                SignatureAlgorithm::Ed25519 => match verification_key {
-                    crate::keys::SignaturePublicKey::Ed25519(key) => {
-                        Ed25519::verify(&key, &payload_bytes, &Signature(signature))?;
-                    }
-                    _ => return Err(Error::UnsupportedOperation),
-                },
-                SignatureAlgorithm::EcdsaP256 => match verification_key {
-                    crate::keys::SignaturePublicKey::EcdsaP256(key) => {
-                        EcdsaP256::verify(&key, &payload_bytes, &Signature(signature))?;
-                    }
-                    _ => return Err(Error::UnsupportedOperation),
-                },
+                SignatureAlgorithm::Dilithium2 => {
+                    let pk = <Dilithium2 as AsymmetricKeySet>::PublicKey::from_bytes(
+                        verification_key.as_bytes(),
+                    )?;
+                    Dilithium2::verify(&pk, &payload_bytes, &Signature(signature))?;
+                }
+                SignatureAlgorithm::Dilithium3 => {
+                    let pk = <Dilithium3 as AsymmetricKeySet>::PublicKey::from_bytes(
+                        verification_key.as_bytes(),
+                    )?;
+                    Dilithium3::verify(&pk, &payload_bytes, &Signature(signature))?;
+                }
+                SignatureAlgorithm::Dilithium5 => {
+                    let pk = <Dilithium5 as AsymmetricKeySet>::PublicKey::from_bytes(
+                        verification_key.as_bytes(),
+                    )?;
+                    Dilithium5::verify(&pk, &payload_bytes, &Signature(signature))?;
+                }
+                SignatureAlgorithm::Ed25519 => {
+                    let pk = <Ed25519 as AsymmetricKeySet>::PublicKey::from_bytes(
+                        verification_key.as_bytes(),
+                    )?;
+                    Ed25519::verify(&pk, &payload_bytes, &Signature(signature))?;
+                }
+                SignatureAlgorithm::EcdsaP256 => {
+                    let pk = <EcdsaP256 as AsymmetricKeySet>::PublicKey::from_bytes(
+                        verification_key.as_bytes(),
+                    )?;
+                    EcdsaP256::verify(&pk, &payload_bytes, &Signature(signature))?;
+                }
             }
             Ok(())
         } else {
