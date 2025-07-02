@@ -2,7 +2,8 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{Header, HeaderPayload, KdfInfo};
+use crate::common::header::{Header, HeaderPayload};
+use crate::common::KdfSet;
 use crate::common::SignerSet;
 use crate::error::{Error, Result};
 use crate::impls::parallel_streaming::{decrypt_pipeline, encrypt_pipeline};
@@ -19,8 +20,7 @@ pub fn encrypt<'a, A, S, R, W>(
     kek_id: String,
     signer: Option<SignerSet>,
     aad: Option<&'a [u8]>,
-    kdf_info: Option<KdfInfo>,
-    kdf_fn: Option<Box<dyn Fn(&[u8]) -> Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>>,
+    kdf: Option<KdfSet>,
 ) -> Result<()>
 where
     A: AsymmetricAlgorithm,
@@ -30,8 +30,10 @@ where
     R: Read + Send,
     W: Write,
 {
+    let (info, kdf_fn) = kdf.map(|kdf| (kdf.kdf_info, kdf.kdf)).unzip();
+
     let (header, base_nonce, shared_secret) =
-        create_header::<A, S>(pk, kek_id, signer, aad, kdf_info)?;
+        create_header::<A, S>(pk, kek_id, signer, aad, info)?;
 
     let dek = if let Some(f) = kdf_fn {
         f(&shared_secret)?
@@ -179,7 +181,6 @@ mod tests {
             None,
             None,
             None,
-            None,
         )
         .unwrap();
 
@@ -208,7 +209,6 @@ mod tests {
             None,
             None,
             None,
-            None,
         )
         .unwrap();
 
@@ -234,7 +234,6 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
-            None,
             None,
             None,
             None,
@@ -272,7 +271,6 @@ mod tests {
             None,
             None,
             None,
-            None,
         )
         .unwrap();
 
@@ -300,7 +298,6 @@ mod tests {
             "test_kek_id_aad".to_string(),
             None,
             Some(aad),
-            None,
             None,
         )
         .unwrap();
@@ -368,8 +365,10 @@ mod tests {
             kek_id.clone(),
             None,
             None,
-            Some(kdf_info),
-            Some(kdf_fn),
+            Some(KdfSet {
+                kdf_info,
+                kdf: kdf_fn,
+            }),
         )
         .unwrap();
 

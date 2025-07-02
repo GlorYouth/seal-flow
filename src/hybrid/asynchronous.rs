@@ -3,7 +3,8 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{Header, HeaderPayload, KdfInfo};
+use crate::common::header::{Header, HeaderPayload};
+use crate::common::KdfSet;
 use crate::common::SignerSet;
 use crate::error::{Error, Result};
 use crate::impls::asynchronous::{DecryptorImpl, EncryptorImpl};
@@ -42,13 +43,13 @@ where
         kek_id: String,
         signer: Option<SignerSet>,
         aad: Option<&'a [u8]>,
-        kdf_info: Option<KdfInfo>,
-        kdf_fn: Option<Box<dyn Fn(&[u8]) -> Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>>,
+        kdf: Option<KdfSet<'a>>,
     ) -> Result<Self> {
+        let (info, kdf_fn) = kdf.map(|kdf| (kdf.kdf_info, kdf.kdf)).unzip();
         let aad_vec = aad.map(|a| a.to_vec());
         let (header, base_nonce, shared_secret) = tokio::task::spawn_blocking(move || {
             let aad = aad_vec.as_deref();
-            create_header::<A, S>(&pk.into(), kek_id, signer, aad, kdf_info)
+            create_header::<A, S>(&pk.into(), kek_id, signer, aad, info)
         })
         .await??;
 
@@ -234,7 +235,6 @@ mod tests {
             None,
             aad,
             None,
-            None,
         )
         .await
         .unwrap();
@@ -293,7 +293,6 @@ mod tests {
             None,
             None,
             None,
-            None,
         )
         .await
         .unwrap();
@@ -327,7 +326,6 @@ mod tests {
             &mut encrypted_data,
             pk,
             "test_kek_id".to_string(),
-            None,
             None,
             None,
             None,
@@ -366,7 +364,6 @@ mod tests {
             "key1".to_string(),
             None,
             Some(aad1),
-            None,
             None,
         )
         .await
@@ -407,7 +404,7 @@ mod tests {
         let info = b"info-async";
         let output_len = 32;
 
-        let kdf_info = KdfInfo {
+        let kdf_info = crate::common::header::KdfInfo {
             kdf_algorithm: crate::common::algorithms::KdfAlgorithm::HkdfSha256,
             salt: Some(salt.to_vec()),
             info: Some(info.to_vec()),
@@ -430,8 +427,10 @@ mod tests {
             kek_id.clone(),
             None,
             None,
-            Some(kdf_info),
-            Some(kdf_fn),
+            Some(KdfSet {
+                kdf_info,
+                kdf: kdf_fn,
+            }),
         )
         .await
         .unwrap();

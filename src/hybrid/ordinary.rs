@@ -2,7 +2,8 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{Header, HeaderPayload, KdfInfo};
+use crate::common::header::{Header, HeaderPayload};
+use crate::common::KdfSet;
 use crate::common::SignerSet;
 use crate::error::{Error, Result};
 use crate::impls::ordinary::{decrypt_in_memory, encrypt_in_memory};
@@ -17,8 +18,7 @@ pub fn encrypt<'a, A, S>(
     kek_id: String,
     signer: Option<SignerSet>,
     aad: Option<&[u8]>,
-    kdf_info: Option<KdfInfo>,
-    kdf_fn: Option<Box<dyn Fn(&[u8]) -> Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>>,
+    kdf: Option<KdfSet>,
 ) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
@@ -26,9 +26,11 @@ where
     S: SymmetricAlgorithm,
     S::Key: From<Zeroizing<Vec<u8>>>,
 {
+    let (info, kdf_fn) = kdf.map(|kdf| (kdf.kdf_info, kdf.kdf)).unzip();
+
     // 1. Create header, nonce, and shared secret
     let (header, base_nonce, shared_secret) =
-        create_header::<A, S>(pk, kek_id, signer, aad, kdf_info)?;
+        create_header::<A, S>(pk, kek_id, signer, aad, info)?;
 
     // 2. Derive key if KDF is specified
     let dek = if let Some(f) = kdf_fn {
@@ -143,6 +145,7 @@ mod tests {
     use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+    use crate::common::header::KdfInfo;
 
     type TestKem = Rsa2048<Sha256>;
     type TestDek = Aes256Gcm;
@@ -176,8 +179,10 @@ mod tests {
             "test_kek_id".to_string(),
             None,
             None,
-            Some(kdf_info),
-            Some(kdf_fn),
+            Some(KdfSet {
+                kdf_info,
+                kdf: kdf_fn,
+            }),
         )
         .unwrap();
 
@@ -197,7 +202,6 @@ mod tests {
             &pk,
             plaintext,
             "test_kek_id".to_string(),
-            None,
             None,
             None,
             None,
@@ -230,7 +234,6 @@ mod tests {
             None,
             None,
             None,
-            None,
         )
         .unwrap();
 
@@ -254,7 +257,6 @@ mod tests {
             None,
             None,
             None,
-            None,
         )
         .unwrap();
 
@@ -275,7 +277,6 @@ mod tests {
             &pk,
             plaintext,
             "test_kek_id".to_string(),
-            None,
             None,
             None,
             None,
@@ -305,7 +306,6 @@ mod tests {
             None,
             None,
             None,
-            None,
         )
         .unwrap();
 
@@ -326,7 +326,6 @@ mod tests {
             "aad_kek_id".to_string(),
             None,
             Some(aad),
-            None,
             None,
         )
         .unwrap();

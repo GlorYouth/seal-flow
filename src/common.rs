@@ -1,5 +1,7 @@
 use crate::common::algorithms::SignatureAlgorithm;
+use crate::common::header::KdfInfo;
 use bytes::BytesMut;
+use seal_crypto::zeroize::Zeroizing;
 
 pub mod algorithms;
 pub(crate) mod buffer;
@@ -53,4 +55,9 @@ pub struct SignerSet {
     pub(crate) signer_key_id: String,
     pub(crate) signer_algorithm: SignatureAlgorithm,
     pub(crate) signer: Box<dyn Fn(&[u8], Option<&[u8]>) -> crate::Result<Vec<u8>> + Send + Sync>,
+}
+
+pub struct KdfSet<'a> {
+    pub(crate) kdf_info: KdfInfo,
+    pub(crate) kdf: Box<dyn Fn(&[u8]) -> crate::Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>,
 }

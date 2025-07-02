@@ -2,7 +2,7 @@ use crate::algorithms::traits::{
     AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm,
 };
 use crate::common::header::KdfInfo;
-use crate::common::SignerSet;
+use crate::common::{KdfSet, SignerSet};
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
 use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
@@ -19,10 +19,7 @@ where
     pub(crate) kek_id: String,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) signer: Option<SignerSet>,
-    pub(crate) kdf_config: Option<(
-        KdfInfo,
-        Box<dyn Fn(&[u8]) -> crate::Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>,
-    )>,
+    pub(crate) kdf_config: Option<KdfSet<'a>>,
     pub(crate) _phantom: PhantomData<S>,
 }
 
@@ -69,7 +66,10 @@ where
                 .map_err(|e| e.into())
         });
 
-        self.kdf_config = Some((kdf_info, deriver_fn));
+        self.kdf_config = Some(KdfSet {
+            kdf_info,
+            kdf: deriver_fn,
+        });
         self
     }
 
@@ -107,10 +107,6 @@ where
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
         let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
-        let (kdf_info, kdf_fn) = match self.kdf_config {
-            Some((info, f)) => (Some(info), Some(f)),
-            None => (None, None),
-        };
 
         crate::hybrid::ordinary::encrypt::<A, S>(
             &pk,
@@ -118,8 +114,7 @@ where
             self.kek_id,
             self.signer,
             self.aad.as_deref(),
-            kdf_info,
-            kdf_fn,
+            self.kdf_config,
         )
     }
 
@@ -131,18 +126,13 @@ where
         Vec<u8>: From<<A as seal_crypto::prelude::Kem>::EncapsulatedKey>,
     {
         let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
-        let (kdf_info, kdf_fn) = match self.kdf_config {
-            Some((info, f)) => (Some(info), Some(f)),
-            None => (None, None),
-        };
         crate::hybrid::parallel::encrypt::<A, S>(
             &pk,
             plaintext,
             self.kek_id,
             self.signer,
             self.aad.as_deref(),
-            kdf_info,
-            kdf_fn,
+            self.kdf_config,
         )
     }
 
@@ -156,18 +146,14 @@ where
         S::Key: From<Zeroizing<Vec<u8>>> + Clone,
     {
         let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
-        let (kdf_info, kdf_fn) = match self.kdf_config {
-            Some((info, f)) => (Some(info), Some(f)),
-            None => (None, None),
-        };
+
         crate::hybrid::streaming::Encryptor::new(
             writer,
             &pk,
             self.kek_id,
             self.signer,
             self.aad.as_deref(),
-            kdf_info,
-            kdf_fn,
+            self.kdf_config,
         )
     }
 
@@ -181,10 +167,6 @@ where
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
         let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
-        let (kdf_info, kdf_fn) = match self.kdf_config {
-            Some((info, f)) => (Some(info), Some(f)),
-            None => (None, None),
-        };
         crate::hybrid::parallel_streaming::encrypt::<A, S, R, W>(
             &pk,
             reader,
@@ -192,8 +174,7 @@ where
             self.kek_id,
             self.signer,
             self.aad.as_deref(),
-            kdf_info,
-            kdf_fn,
+            self.kdf_config,
         )
     }
 
@@ -212,18 +193,13 @@ where
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
         let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
-        let (kdf_info, kdf_fn) = match self.kdf_config {
-            Some((info, f)) => (Some(info), Some(f)),
-            None => (None, None),
-        };
         crate::hybrid::asynchronous::Encryptor::new(
             writer,
             pk,
             self.kek_id,
             self.signer,
             self.aad.as_deref(),
-            kdf_info,
-            kdf_fn,
+            self.kdf_config,
         )
         .await
     }

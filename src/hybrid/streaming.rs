@@ -1,7 +1,8 @@
 //! Synchronous, streaming hybrid encryption and decryption implementation.
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{Header, HeaderPayload, KdfInfo};
+use crate::common::header::{Header, HeaderPayload};
+use crate::common::KdfSet;
 use crate::common::SignerSet;
 use crate::error::{Error, Result};
 use crate::impls::streaming::{DecryptorImpl, EncryptorImpl};
@@ -35,12 +36,13 @@ where
         kek_id: String,
         signer: Option<SignerSet>,
         aad: Option<&[u8]>,
-        kdf_info: Option<KdfInfo>,
-        kdf_fn: Option<Box<dyn Fn(&[u8]) -> Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>>,
+        kdf: Option<KdfSet>,
     ) -> Result<Self> {
+        let (info, kdf_fn) = kdf.map(|kdf| (kdf.kdf_info, kdf.kdf)).unzip();
+
         // 1. Create header, nonce, and shared secret
         let (header, base_nonce, shared_secret) =
-            create_header::<A, S>(pk, kek_id, signer, aad, kdf_info)?;
+            create_header::<A, S>(pk, kek_id, signer, aad, info)?;
 
         // 2. Derive key if KDF is specified
         let dek = if let Some(f) = kdf_fn {
@@ -208,7 +210,7 @@ mod tests {
             let info = b"info-stream";
             let output_len = 32;
 
-            kdf_info = Some(KdfInfo {
+            kdf_info = Some(crate::common::header::KdfInfo {
                 kdf_algorithm: crate::common::algorithms::KdfAlgorithm::HkdfSha256,
                 salt: Some(salt.to_vec()),
                 info: Some(info.to_vec()),
@@ -226,14 +228,17 @@ mod tests {
 
         // Encrypt
         let mut encrypted_data = Vec::new();
+        let kdf = kdf_info.map(|info| KdfSet {
+            kdf_info: info,
+            kdf: kdf_fn.unwrap(),
+        });
         let mut encryptor = Encryptor::<_, TestKem, TestDek>::new(
             &mut encrypted_data,
             &pk,
             kek_id.clone(),
             None,
             aad,
-            kdf_info,
-            kdf_fn,
+            kdf,
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
@@ -311,7 +316,6 @@ mod tests {
             None,
             None,
             None,
-            None,
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
@@ -345,7 +349,6 @@ mod tests {
             None,
             None,
             None,
-            None,
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
@@ -371,7 +374,6 @@ mod tests {
             "test_kek_id".to_string(),
             None,
             Some(aad),
-            None,
             None,
         )
         .unwrap();
