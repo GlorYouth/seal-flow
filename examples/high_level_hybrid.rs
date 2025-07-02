@@ -1,4 +1,5 @@
 use seal_crypto::schemes::asymmetric::post_quantum::dilithium::Dilithium2;
+use seal_crypto::schemes::asymmetric::post_quantum::kyber::Kyber512;
 use seal_crypto::schemes::kdf::{hkdf::HkdfSha256, pbkdf2::Pbkdf2Sha256};
 use seal_crypto::{prelude::*, schemes::asymmetric::traditional::rsa::Rsa2048};
 use seal_crypto::{schemes::hash::Sha256, schemes::symmetric::aes_gcm::Aes256Gcm};
@@ -58,17 +59,16 @@ async fn main() -> Result<()> {
     };
 
     let plaintext = b"This is a test message for hybrid interoperability.";
-    let seal = HybridSeal::new();
 
     // 每次需要时重新创建公钥包装
     let get_pk_wrapped = || AsymmetricPublicKey::new(pk_bytes.clone());
 
     // --- Mode 1: In-Memory (Ordinary) ---
     println!("--- Testing Mode: In-Memory (Ordinary) ---");
-    let ciphertext1 = seal
+    let ciphertext1 = HybridSeal
         .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .to_vec::<Kem>(plaintext)?;
-    let pending_decryptor1 = seal.decrypt().slice(&ciphertext1)?;
+    let pending_decryptor1 = HybridSeal.decrypt().slice(&ciphertext1)?;
     let kek_id = pending_decryptor1.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
     let decrypted1 = pending_decryptor1.with_key::<Dek>(sk_wrapped)?;
@@ -77,10 +77,10 @@ async fn main() -> Result<()> {
 
     // --- Mode 2: In-Memory Parallel ---
     println!("\n--- Testing Mode: In-Memory Parallel ---");
-    let ciphertext2 = seal
+    let ciphertext2 = HybridSeal
         .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .to_vec_parallel::<Kem>(plaintext)?;
-    let pending_decryptor2 = seal.decrypt().slice_parallel(&ciphertext2)?;
+    let pending_decryptor2 = HybridSeal.decrypt().slice_parallel(&ciphertext2)?;
     let kek_id = pending_decryptor2.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
     let decrypted2 = pending_decryptor2.with_key::<Dek>(sk_wrapped)?;
@@ -90,13 +90,13 @@ async fn main() -> Result<()> {
     // --- Mode 3: Synchronous Streaming ---
     println!("\n--- Testing Mode: Synchronous Streaming ---");
     let mut ciphertext3 = Vec::new();
-    let mut encryptor = seal
+    let mut encryptor = HybridSeal
         .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .into_writer::<Kem, _>(&mut ciphertext3)?;
     encryptor.write_all(plaintext)?;
     encryptor.finish()?;
 
-    let pending_decryptor3 = seal.decrypt().reader(Cursor::new(ciphertext3))?;
+    let pending_decryptor3 = HybridSeal.decrypt().reader(Cursor::new(ciphertext3))?;
     println!(
         "Found KEK ID in stream: '{}'",
         pending_decryptor3.kek_id().unwrap()
@@ -113,14 +113,14 @@ async fn main() -> Result<()> {
     // --- Mode 4: Asynchronous Streaming ---
     println!("\n--- Testing Mode: Asynchronous Streaming ---");
     let mut ciphertext4 = Vec::new();
-    let mut encryptor = seal
+    let mut encryptor = HybridSeal
         .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .into_async_writer::<Kem, _>(&mut ciphertext4)
         .await?;
     encryptor.write_all(plaintext).await?;
     encryptor.shutdown().await?;
 
-    let pending_decryptor4 = seal
+    let pending_decryptor4 = HybridSeal
         .decrypt()
         .async_reader(Cursor::new(&ciphertext4))
         .await?;
@@ -140,11 +140,14 @@ async fn main() -> Result<()> {
     // --- Mode 5: Parallel Streaming ---
     println!("\n--- Testing Mode: Parallel Streaming ---");
     let mut ciphertext5 = Vec::new();
-    seal.encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
+    HybridSeal
+        .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .pipe_parallel::<Kem, _, _>(Cursor::new(plaintext), &mut ciphertext5)?;
 
     let mut decrypted5 = Vec::new();
-    let pending_decryptor5 = seal.decrypt().reader_parallel(Cursor::new(&ciphertext5))?;
+    let pending_decryptor5 = HybridSeal
+        .decrypt()
+        .reader_parallel(Cursor::new(&ciphertext5))?;
     println!(
         "Found KEK ID in parallel stream: '{}'",
         pending_decryptor5.kek_id().unwrap()
@@ -160,13 +163,13 @@ async fn main() -> Result<()> {
     // --- Mode 6: In-Memory with AAD ---
     println!("\n--- Testing Mode: In-Memory with AAD ---");
     let aad = b"Authenticated but not encrypted hybrid data";
-    let ciphertext6 = seal
+    let ciphertext6 = HybridSeal
         .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .with_aad(aad)
         .to_vec::<Kem>(plaintext)?;
 
     // Decrypt with correct AAD
-    let pending_decryptor6 = seal.decrypt().slice(&ciphertext6)?;
+    let pending_decryptor6 = HybridSeal.decrypt().slice(&ciphertext6)?;
     let kek_id = pending_decryptor6.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
     let decrypted6 = pending_decryptor6
@@ -176,7 +179,7 @@ async fn main() -> Result<()> {
     println!("In-Memory with AAD roundtrip successful!");
 
     // Decrypt with wrong AAD should fail
-    let pending_fail = seal.decrypt().slice(&ciphertext6)?;
+    let pending_fail = HybridSeal.decrypt().slice(&ciphertext6)?;
     let kek_id = pending_fail.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
     let result_fail = pending_fail
@@ -186,7 +189,7 @@ async fn main() -> Result<()> {
     println!("In-Memory with wrong AAD correctly failed!");
 
     // Decrypt with no AAD should also fail
-    let pending_fail2 = seal.decrypt().slice(&ciphertext6)?;
+    let pending_fail2 = HybridSeal.decrypt().slice(&ciphertext6)?;
     let kek_id = pending_fail2.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
     let result_fail2 = pending_fail2.with_key::<Dek>(sk_wrapped);
@@ -196,14 +199,14 @@ async fn main() -> Result<()> {
     // --- Mode 7: Signed Encryption ---
     println!("\n--- Testing Mode: Signed Encryption ---");
     let aad = b"AAD with signature";
-    let ciphertext7 = seal
+    let ciphertext7 = HybridSeal
         .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .with_aad(aad)
         .with_signer::<Signer>(sig_sk_wrapped, SIGNER_KEY_ID.to_string())
         .to_vec::<Kem>(plaintext)?;
 
     // 解密 - 使用正确的签名验证密钥和AAD
-    let pending_decryptor7 = seal.decrypt().slice(&ciphertext7)?;
+    let pending_decryptor7 = HybridSeal.decrypt().slice(&ciphertext7)?;
     let verification_key = key_store.get_public_key(SIGNER_KEY_ID).unwrap();
 
     let kek_id = pending_decryptor7.kek_id().unwrap();
@@ -286,13 +289,13 @@ async fn main() -> Result<()> {
     let sensitive_data = b"This message is protected by a derived DEK in hybrid encryption.";
 
     // 4. 使用派生的公钥加密
-    let ciphertext9 = seal
+    let ciphertext9 = HybridSeal
         .encrypt::<Dek>(derived_pk_wrapped, derived_key_id.to_string())
         .with_aad(b"Protected with derived keys")
         .to_vec::<Kem>(sensitive_data)?;
 
     // 5. 解密
-    let pending_decryptor9 = seal.decrypt().slice(&ciphertext9)?;
+    let pending_decryptor9 = HybridSeal.decrypt().slice(&ciphertext9)?;
     let found_key_id = pending_decryptor9.kek_id().unwrap();
     println!("从密文中读取的派生混合密钥ID: '{}'", found_key_id);
     assert_eq!(found_key_id, derived_key_id);
@@ -338,6 +341,54 @@ async fn main() -> Result<()> {
     // 比较两个派生的密钥是否不同
     assert_ne!(key_v1.as_bytes(), key_v2.as_bytes());
     println!("确认不同版本派生的密钥内容不同");
+
+    // --- Mode 11: Hybrid Encryption with KDF (Kyber + HkdfSha256) ---
+    println!("\n--- Testing Mode: Hybrid Encryption with KDF (Kyber + HkdfSha256) ---");
+
+    type KemKdf = Kyber512;
+    type DemKdf = Aes256Gcm;
+    type KdfAlgo = HkdfSha256;
+
+    // 1. Setup keys for the KDF scenario
+    let kdf_key_id = "kyber-key-for-kdf";
+    let (kdf_pk, kdf_sk) = KemKdf::generate_keypair()?;
+    key_store
+        .private_keys
+        .insert(kdf_key_id.to_string(), kdf_sk.to_bytes().to_vec());
+    let kdf_pk_wrapped = AsymmetricPublicKey::new(kdf_pk.to_bytes());
+    let kdf_plaintext =
+        b"This message is protected by a KEM/KDF hybrid scheme with Kyber and HkdfSha256.";
+
+    // 2. Encrypt using with_kdf
+    println!("Alice: Encrypting data with Kyber and deriving DEK with HkdfSha256.");
+    let kdf_ciphertext = HybridSeal
+        .encrypt::<DemKdf>(kdf_pk_wrapped, kdf_key_id.to_string())
+        .with_kdf(
+            KdfAlgo::default(),
+            Some(b"kdf-salt"), // Using a salt is good practice
+            Some(b"kdf-info"), // Contextual info
+            <DemKdf as SymmetricCipher>::KEY_SIZE as u32,
+        )
+        .to_vec::<KemKdf>(kdf_plaintext)?;
+
+    println!(
+        "Ciphertext generated. Size: {} bytes.",
+        kdf_ciphertext.len()
+    );
+
+    // 3. Decrypt
+    println!("Bob: Decrypting data. The library will handle KDF internally.");
+    let pending_decryptor_kdf = HybridSeal.decrypt().slice(&kdf_ciphertext)?;
+    let found_kdf_key_id = pending_decryptor_kdf.kek_id().unwrap();
+    assert_eq!(found_kdf_key_id, kdf_key_id);
+
+    let kdf_sk_wrapped = key_store.get_private_key(found_kdf_key_id).unwrap();
+    let kdf_decrypted = pending_decryptor_kdf.with_key::<DemKdf>(kdf_sk_wrapped)?;
+
+    // 4. Verify
+    assert_eq!(kdf_plaintext.as_ref(), kdf_decrypted.as_slice());
+    println!("Successfully decrypted data using KDF-derived key.");
+    println!("Kyber + HkdfSha256 + AES-256-GCM roundtrip successful!");
 
     Ok(())
 }

@@ -1,6 +1,8 @@
 use bincode::{Decode, Encode};
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享
-use crate::common::algorithms::{AsymmetricAlgorithm, SignatureAlgorithm, SymmetricAlgorithm};
+use crate::common::algorithms::{
+    AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm,
+};
 use crate::error::{Error, Result};
 use std::io::Read;
 
@@ -28,6 +30,19 @@ pub struct SingerInfo {
     pub signature: Vec<u8>,
 }
 
+/// 密钥派生函数 (KDF) 的配置信息
+#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
+pub struct KdfInfo {
+    /// KDF 算法
+    pub kdf_algorithm: KdfAlgorithm,
+    /// 用于 KDF 的盐
+    pub salt: Option<Vec<u8>>,
+    /// 用于 KDF 的上下文信息
+    pub info: Option<Vec<u8>>,
+    /// 派生密钥的期望长度
+    pub output_len: u32,
+}
+
 /// HeaderPayload 包含了特定于加密模式的元数据
 #[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
 pub enum HeaderPayload {
@@ -43,6 +58,7 @@ pub enum HeaderPayload {
         encrypted_dek: Vec<u8>,
         stream_info: Option<StreamInfo>, // 混合模式理论上也可以流式处理
         signature: Option<SingerInfo>,
+        kdf_info: Option<KdfInfo>,
     },
 }
 

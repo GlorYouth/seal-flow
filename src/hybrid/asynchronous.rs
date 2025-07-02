@@ -3,11 +3,13 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{Header, HeaderPayload};
+use crate::common::header::{Header, HeaderPayload, KdfInfo};
 use crate::common::SignerSet;
 use crate::error::{Error, Result};
 use crate::impls::asynchronous::{DecryptorImpl, EncryptorImpl};
 use pin_project_lite::pin_project;
+use seal_crypto::prelude::*;
+use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
 use seal_crypto::zeroize::Zeroizing;
 use std::io;
 use std::pin::Pin;
@@ -34,19 +36,27 @@ where
     S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
 {
     /// Creates a new `Encryptor`.
-    pub async fn new(
+    pub async fn new<'a>(
         mut writer: W,
         pk: A::PublicKey,
         kek_id: String,
         signer: Option<SignerSet>,
-        aad: Option<&[u8]>,
+        aad: Option<&'a [u8]>,
+        kdf_info: Option<KdfInfo>,
+        kdf_fn: Option<Box<dyn Fn(&[u8]) -> Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>>,
     ) -> Result<Self> {
         let aad_vec = aad.map(|a| a.to_vec());
         let (header, base_nonce, shared_secret) = tokio::task::spawn_blocking(move || {
             let aad = aad_vec.as_deref();
-            create_header::<A, S>(&pk.into(), kek_id, signer, aad)
+            create_header::<A, S>(&pk.into(), kek_id, signer, aad, kdf_info)
         })
         .await??;
+
+        let dek = if let Some(f) = kdf_fn {
+            f(&shared_secret)?
+        } else {
+            shared_secret
+        };
 
         let header_bytes = header.encode_to_vec()?;
         use tokio::io::AsyncWriteExt;
@@ -55,7 +65,7 @@ where
             .await?;
         writer.write_all(&header_bytes).await?;
 
-        let inner = EncryptorImpl::new(writer, shared_secret.into(), base_nonce, aad.as_deref());
+        let inner = EncryptorImpl::new(writer, dek.into(), base_nonce, aad.as_deref());
 
         Ok(Self {
             inner,
@@ -122,18 +132,39 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
         S: SymmetricAlgorithm + 'static,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
     {
-        let (encapsulated_key, chunk_size, base_nonce) = match self.header.payload {
+        let (encapsulated_key, chunk_size, base_nonce, kdf_info) = match &self.header.payload {
             HeaderPayload::Hybrid {
                 encrypted_dek,
                 stream_info: Some(info),
+                kdf_info,
                 ..
-            } => (encrypted_dek.into(), info.chunk_size, info.base_nonce),
+            } => (
+                encrypted_dek.clone().into(),
+                info.chunk_size,
+                info.base_nonce,
+                kdf_info.clone(),
+            ),
             _ => return Err(Error::InvalidHeader),
         };
 
-        let shared_secret =
-            tokio::task::spawn_blocking(move || A::decapsulate(&sk.into(), &encapsulated_key))
-                .await??;
+        let dek = tokio::task::spawn_blocking(move || -> Result<_> {
+            let shared_secret = A::decapsulate(&sk.into(), &encapsulated_key)?;
+            if let Some(info) = kdf_info {
+                let derived = match info.kdf_algorithm {
+                    crate::common::algorithms::KdfAlgorithm::HkdfSha256 => HkdfSha256::default()
+                        .derive(
+                            &shared_secret,
+                            info.salt.as_deref(),
+                            info.info.as_deref(),
+                            info.output_len as usize,
+                        ),
+                }?;
+                Ok(Zeroizing::new(derived.as_bytes().to_vec()))
+            } else {
+                Ok(shared_secret)
+            }
+        })
+        .await??;
 
         let tag_len = S::TAG_SIZE;
         let encrypted_chunk_size = chunk_size as usize + tag_len;
@@ -141,7 +172,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
 
         let inner = DecryptorImpl::new(
             self.reader,
-            shared_secret.into(),
+            dek.into(),
             base_nonce,
             encrypted_chunk_size,
             decrypted_chunk_size,
@@ -202,6 +233,8 @@ mod tests {
             kek_id.clone(),
             None,
             aad,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -259,6 +292,8 @@ mod tests {
             "test-kek-id".to_string(),
             None,
             None,
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -283,8 +318,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_wrong_private_key_fails_async() {
-        let (pk, _) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (pk, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
@@ -292,6 +326,8 @@ mod tests {
             &mut encrypted_data,
             pk,
             "test_kek_id".to_string(),
+            None,
+            None,
             None,
             None,
         )
@@ -337,6 +373,8 @@ mod tests {
             "key1".to_string(),
             None,
             Some(aad1),
+            None,
+            None,
         )
         .await
         .unwrap();
@@ -364,5 +402,59 @@ mod tests {
             .unwrap();
         let result2 = decryptor2.read_to_end(&mut Vec::new()).await;
         assert!(result2.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_roundtrip_with_kdf_async() {
+        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let kek_id = "test-rsa-key-kdf".to_string();
+        let plaintext = b"This is a test message with KDF in async streaming.";
+
+        let salt = b"salt-async";
+        let info = b"info-async";
+        let output_len = 32;
+
+        let kdf_info = KdfInfo {
+            kdf_algorithm: crate::common::algorithms::KdfAlgorithm::HkdfSha256,
+            salt: Some(salt.to_vec()),
+            info: Some(info.to_vec()),
+            output_len,
+        };
+
+        let deriver = HkdfSha256::default();
+        let kdf_fn = Box::new(move |ikm: &[u8]| {
+            deriver
+                .derive(ikm, Some(salt), Some(info), output_len as usize)
+                .map(|dk| Zeroizing::new(dk.as_bytes().to_vec()))
+                .map_err(|e| e.into())
+        });
+
+        // Encrypt
+        let mut encrypted_data = Vec::new();
+        let mut encryptor = Encryptor::<_, Rsa2048<Sha256>, Aes256Gcm>::new(
+            &mut encrypted_data,
+            pk,
+            kek_id.clone(),
+            None,
+            None,
+            Some(kdf_info),
+            Some(kdf_fn),
+        )
+        .await
+        .unwrap();
+        encryptor.write_all(plaintext).await.unwrap();
+        encryptor.shutdown().await.unwrap();
+
+        // Decrypt
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data))
+            .await
+            .unwrap();
+        let mut decryptor = pending
+            .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk, None)
+            .await
+            .unwrap();
+        let mut decrypted_data = Vec::new();
+        decryptor.read_to_end(&mut decrypted_data).await.unwrap();
+        assert_eq!(plaintext, decrypted_data.as_slice());
     }
 }

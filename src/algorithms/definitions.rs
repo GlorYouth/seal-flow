@@ -1,7 +1,8 @@
 //! Defines the concrete algorithm types and implements the corresponding traits.
 
 use super::traits::{
-    AsymmetricAlgorithmDetails, SignatureAlgorithmDetails, SymmetricAlgorithmDetails,
+    AsymmetricAlgorithmDetails, KdfAlgorithmDetails, SignatureAlgorithmDetails,
+    SymmetricAlgorithmDetails,
 };
 use crate::common;
 use seal_crypto::prelude::Hasher;
@@ -14,6 +15,7 @@ use seal_crypto::schemes::asymmetric::traditional::{
     ecc::{EcdsaP256, Ed25519},
     rsa::{Rsa2048, Rsa4096},
 };
+use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
 use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};
 use seal_crypto::schemes::symmetric::chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305};
 
@@ -90,4 +92,9 @@ impl SignatureAlgorithmDetails for Ed25519 {
 impl SignatureAlgorithmDetails for EcdsaP256 {
     const ALGORITHM: common::algorithms::SignatureAlgorithm =
         common::algorithms::SignatureAlgorithm::EcdsaP256;
+}
+
+impl KdfAlgorithmDetails for HkdfSha256 {
+    const ALGORITHM: common::algorithms::KdfAlgorithm =
+        common::algorithms::KdfAlgorithm::HkdfSha256;
 }

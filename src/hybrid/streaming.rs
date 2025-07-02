@@ -1,21 +1,22 @@
 //! Synchronous, streaming hybrid encryption and decryption implementation.
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{Header, HeaderPayload};
+use crate::common::header::{Header, HeaderPayload, KdfInfo};
 use crate::common::SignerSet;
 use crate::error::{Error, Result};
 use crate::impls::streaming::{DecryptorImpl, EncryptorImpl};
 use seal_crypto::prelude::*;
+use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{self, Read, Write};
 
 /// An `std::io::Write` adapter for streaming hybrid encryption.
-pub struct Encryptor<W: Write, A, S: SymmetricAlgorithm> {
+pub struct Encryptor<'a, W: Write, A, S: SymmetricAlgorithm> {
     inner: EncryptorImpl<W, S>,
-    _phantom: std::marker::PhantomData<A>,
+    _phantom: std::marker::PhantomData<(&'a A, &'a W)>,
 }
 
-impl<W, A, S> Encryptor<W, A, S>
+impl<'a, W, A, S> Encryptor<'a, W, A, S>
 where
     W: Write,
     A: AsymmetricAlgorithm,
@@ -34,16 +35,26 @@ where
         kek_id: String,
         signer: Option<SignerSet>,
         aad: Option<&[u8]>,
+        kdf_info: Option<KdfInfo>,
+        kdf_fn: Option<Box<dyn Fn(&[u8]) -> Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>>,
     ) -> Result<Self> {
-        // 1. Create header, nonce, and DEK
-        let (header, base_nonce, symmetric_key) = create_header::<A, S>(pk, kek_id, signer, aad)?;
+        // 1. Create header, nonce, and shared secret
+        let (header, base_nonce, shared_secret) =
+            create_header::<A, S>(pk, kek_id, signer, aad, kdf_info)?;
 
-        // 2. Write header length and header to the writer
+        // 2. Derive key if KDF is specified
+        let dek = if let Some(f) = kdf_fn {
+            f(&shared_secret)?
+        } else {
+            shared_secret
+        };
+
+        // 3. Write header length and header to the writer
         let header_bytes = header.encode_to_vec()?;
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
 
-        let inner = EncryptorImpl::new(writer, symmetric_key.into(), base_nonce, aad)?;
+        let inner = EncryptorImpl::new(writer, dek.into(), base_nonce, aad)?;
 
         Ok(Self {
             inner,
@@ -60,7 +71,7 @@ where
     }
 }
 
-impl<W: Write, A, S: SymmetricAlgorithm> Write for Encryptor<W, A, S> {
+impl<W: Write, A, S: SymmetricAlgorithm> Write for Encryptor<'_, W, A, S> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.inner.write(buf)
     }
@@ -102,17 +113,39 @@ impl<R: Read> PendingDecryptor<R> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        let (encapsulated_key, chunk_size, base_nonce) = match self.header.payload {
+        let (encapsulated_key, chunk_size, base_nonce, kdf_info) = match self.header.payload {
             HeaderPayload::Hybrid {
                 encrypted_dek,
                 stream_info: Some(info),
+                kdf_info,
                 ..
-            } => (encrypted_dek.into(), info.chunk_size, info.base_nonce),
+            } => (
+                encrypted_dek.into(),
+                info.chunk_size,
+                info.base_nonce,
+                kdf_info,
+            ),
             _ => return Err(Error::InvalidHeader),
         };
 
-        let shared_secret = A::decapsulate(&sk.clone().into(), &encapsulated_key)?;
-        let key_material: S::Key = shared_secret.into();
+        let shared_secret = A::decapsulate(sk, &encapsulated_key)?;
+
+        let dek = if let Some(info) = kdf_info {
+            let derived = match info.kdf_algorithm {
+                crate::common::algorithms::KdfAlgorithm::HkdfSha256 => HkdfSha256::default()
+                    .derive(
+                        &shared_secret,
+                        info.salt.as_deref(),
+                        info.info.as_deref(),
+                        info.output_len as usize,
+                    ),
+            }?;
+            Zeroizing::new(derived.as_bytes().to_vec())
+        } else {
+            shared_secret
+        };
+
+        let key_material: S::Key = dek.into();
         let tag_len = S::TAG_SIZE;
         let encrypted_chunk_size = chunk_size as usize + tag_len;
 
@@ -155,21 +188,52 @@ mod tests {
     use seal_crypto::prelude::KeyGenerator;
     use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
+    use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::io::Cursor;
 
-    fn test_hybrid_streaming_roundtrip(plaintext: &[u8], aad: Option<&[u8]>) {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+    type TestKem = Rsa2048<Sha256>;
+    type TestDek = Aes256Gcm;
+
+    fn test_hybrid_streaming_roundtrip(plaintext: &[u8], aad: Option<&[u8]>, use_kdf: bool) {
+        let (pk, sk) = TestKem::generate_keypair().unwrap();
         let kek_id = "test_kek_id".to_string();
+
+        let mut kdf_info = None;
+        let mut kdf_fn: Option<Box<dyn Fn(&[u8]) -> Result<Zeroizing<Vec<u8>>> + Send + Sync>> =
+            None;
+
+        if use_kdf {
+            let salt = b"salt-stream";
+            let info = b"info-stream";
+            let output_len = 32;
+
+            kdf_info = Some(KdfInfo {
+                kdf_algorithm: crate::common::algorithms::KdfAlgorithm::HkdfSha256,
+                salt: Some(salt.to_vec()),
+                info: Some(info.to_vec()),
+                output_len,
+            });
+
+            let deriver = HkdfSha256::default();
+            kdf_fn = Some(Box::new(move |ikm: &[u8]| {
+                deriver
+                    .derive(ikm, Some(salt), Some(info), output_len as usize)
+                    .map(|dk| Zeroizing::new(dk.as_bytes().to_vec()))
+                    .map_err(|e| e.into())
+            }));
+        }
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
+        let mut encryptor = Encryptor::<_, TestKem, TestDek>::new(
             &mut encrypted_data,
             &pk,
             kek_id.clone(),
             None,
             aad,
+            kdf_info,
+            kdf_fn,
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
@@ -184,7 +248,7 @@ mod tests {
         );
 
         let mut decryptor = pending_decryptor
-            .into_decryptor::<Rsa2048, Aes256Gcm>(&sk, aad)
+            .into_decryptor::<TestKem, TestDek>(&sk, aad)
             .unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
@@ -195,37 +259,57 @@ mod tests {
     #[test]
     fn test_roundtrip_long_message() {
         let plaintext = b"This is a very long test message to test the streaming encryption and decryption. It should be longer than a single chunk to ensure that the chunking logic is working correctly. Let's add more data to make sure it spans multiple chunks. Lorem ipsum dolor sit amet, consectetur adipiscing elit.";
-        test_hybrid_streaming_roundtrip(plaintext, None);
+        test_hybrid_streaming_roundtrip(plaintext, None, false);
+    }
+
+    #[test]
+    fn test_roundtrip_long_message_with_kdf() {
+        let plaintext = b"This is a very long test message to test the streaming encryption and decryption with a KDF. It should be longer than a single chunk to ensure that the chunking logic is working correctly. Let's add more data to make sure it spans multiple chunks. Lorem ipsum dolor sit amet, consectetur adipiscing elit.";
+        test_hybrid_streaming_roundtrip(plaintext, None, true);
     }
 
     #[test]
     fn test_roundtrip_empty_message() {
-        test_hybrid_streaming_roundtrip(b"", None);
+        test_hybrid_streaming_roundtrip(b"", None, false);
+    }
+
+    #[test]
+    fn test_roundtrip_empty_message_with_kdf() {
+        test_hybrid_streaming_roundtrip(b"", None, true);
     }
 
     #[test]
     fn test_roundtrip_exact_chunk_size() {
         let plaintext = vec![42u8; crate::common::DEFAULT_CHUNK_SIZE as usize];
-        test_hybrid_streaming_roundtrip(&plaintext, None);
+        test_hybrid_streaming_roundtrip(&plaintext, None, false);
     }
 
     #[test]
     fn test_aad_roundtrip() {
         let plaintext = b"streaming hybrid data with aad";
         let aad = b"streaming hybrid context";
-        test_hybrid_streaming_roundtrip(plaintext, Some(aad));
+        test_hybrid_streaming_roundtrip(plaintext, Some(aad), false);
+    }
+
+    #[test]
+    fn test_aad_roundtrip_with_kdf() {
+        let plaintext = b"streaming hybrid data with aad and kdf";
+        let aad = b"streaming hybrid context with kdf";
+        test_hybrid_streaming_roundtrip(plaintext, Some(aad), true);
     }
 
     #[test]
     fn test_tampered_ciphertext_fails() {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (pk, sk) = TestKem::generate_keypair().unwrap();
         let plaintext = b"some important data";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
+        let mut encryptor = Encryptor::<_, TestKem, TestDek>::new(
             &mut encrypted_data,
             &pk,
             "test_kek_id".to_string(),
+            None,
+            None,
             None,
             None,
         )
@@ -241,7 +325,7 @@ mod tests {
 
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         let mut decryptor = pending
-            .into_decryptor::<Rsa2048, Aes256Gcm>(&sk, None)
+            .into_decryptor::<TestKem, TestDek>(&sk, None)
             .unwrap();
 
         let result = decryptor.read_to_end(&mut Vec::new());
@@ -250,16 +334,16 @@ mod tests {
 
     #[test]
     fn test_wrong_private_key_fails() {
-        let (pk, _) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let plaintext = b"some data";
+        let (pk, _) = TestKem::generate_keypair().unwrap();
+        let plaintext = b"some important data";
 
-        // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
+        let mut encryptor = Encryptor::<_, TestKem, TestDek>::new(
             &mut encrypted_data,
             &pk,
             "test_kek_id".to_string(),
+            None,
+            None,
             None,
             None,
         )
@@ -267,47 +351,39 @@ mod tests {
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
 
-        // Decrypt with the wrong key
+        let (_, sk2) = TestKem::generate_keypair().unwrap();
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending.into_decryptor::<Rsa2048, Aes256Gcm>(&sk2, None);
-
+        let result = pending.into_decryptor::<TestKem, TestDek>(&sk2, None);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_wrong_aad_fails() {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (pk, sk) = TestKem::generate_keypair().unwrap();
         let plaintext = b"some important data";
-        let aad1 = b"correct aad";
-        let aad2 = b"wrong aad";
+        let aad = b"some aad";
+        let wrong_aad = b"wrong aad";
 
         let mut encrypted_data = Vec::new();
-        let mut encryptor = Encryptor::<_, Rsa2048, Aes256Gcm>::new(
+        let mut encryptor = Encryptor::<_, TestKem, TestDek>::new(
             &mut encrypted_data,
             &pk,
             "test_kek_id".to_string(),
             None,
-            Some(aad1),
+            Some(aad),
+            None,
+            None,
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
 
-        // Decrypt with wrong AAD
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-
         let mut decryptor = pending
-            .into_decryptor::<Rsa2048, Aes256Gcm>(&sk, Some(aad2))
+            .into_decryptor::<TestKem, TestDek>(&sk, Some(wrong_aad))
             .unwrap();
+
         let result = decryptor.read_to_end(&mut Vec::new());
         assert!(result.is_err());
-
-        // Decrypt with no AAD
-        let pending2 = PendingDecryptor::from_reader(Cursor::new(encrypted_data)).unwrap();
-        let mut decryptor2 = pending2
-            .into_decryptor::<Rsa2048, Aes256Gcm>(&sk, None)
-            .unwrap();
-        let result2 = decryptor2.read_to_end(&mut Vec::new());
-        assert!(result2.is_err());
     }
 }

@@ -28,3 +28,9 @@ pub enum SignatureAlgorithm {
     Ed25519,
     EcdsaP256,
 }
+
+/// 密钥派生函数 (KDF) 算法枚举
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
+pub enum KdfAlgorithm {
+    HkdfSha256,
+}

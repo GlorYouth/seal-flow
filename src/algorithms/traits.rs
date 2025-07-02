@@ -16,6 +16,19 @@ pub trait SymmetricAlgorithm: SymmetricAlgorithmDetails {}
 
 impl<T: SymmetricAlgorithmDetails> SymmetricAlgorithm for T {}
 
+/// Trait to provide the details for a specific key-based key derivation function (KDF).
+/// The implementor of this trait is the scheme itself.
+pub trait KdfAlgorithmDetails: KeyBasedDerivation + 'static {
+    /// The corresponding algorithm enum.
+    const ALGORITHM: common::algorithms::KdfAlgorithm;
+}
+
+/// Represents a concrete key-based key derivation function (KDF).
+/// This is a marker trait that bundles `KdfAlgorithmDetails`.
+pub trait KdfAlgorithm: KdfAlgorithmDetails {}
+
+impl<T: KdfAlgorithmDetails> KdfAlgorithm for T {}
+
 /// Trait to provide the details for a specific asymmetric algorithm.
 /// The implementor of this trait is the scheme itself.
 pub trait AsymmetricAlgorithmDetails: Kem + KeyGenerator + 'static {

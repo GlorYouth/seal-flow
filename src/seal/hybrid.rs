@@ -32,6 +32,7 @@ impl HybridSeal {
             kek_id,
             aad: None,
             signer: None,
+            kdf_config: None,
             _phantom: PhantomData,
         }
     }

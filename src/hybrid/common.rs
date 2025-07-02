@@ -1,5 +1,5 @@
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{Header, HeaderPayload, SealMode, SingerInfo, StreamInfo};
+use crate::common::header::{Header, HeaderPayload, KdfInfo, SealMode, SingerInfo, StreamInfo};
 use crate::common::SignerSet;
 use crate::common::DEFAULT_CHUNK_SIZE;
 use crate::error::Result;
@@ -13,6 +13,7 @@ pub fn create_header<A, S>(
     kek_id: String,
     signer: Option<SignerSet>,
     aad: Option<&[u8]>,
+    kdf_info: Option<KdfInfo>,
 ) -> Result<(Header, [u8; 12], Zeroizing<Vec<u8>>)>
 where
     A: AsymmetricAlgorithm,
@@ -37,6 +38,7 @@ where
             base_nonce,
         }),
         signature: None,
+        kdf_info,
     };
 
     // 4. Sign the payload and mutate it if a signer is provided

@@ -1,19 +1,22 @@
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{Header, HeaderPayload};
+use crate::common::header::{Header, HeaderPayload, KdfInfo};
 use crate::common::SignerSet;
 use crate::error::{Error, Result};
 use crate::impls::parallel::{decrypt_parallel, encrypt_parallel};
 use seal_crypto::prelude::*;
+use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
 use seal_crypto::zeroize::Zeroizing;
 
 /// Performs parallel, in-memory hybrid encryption.
-pub fn encrypt<A, S>(
+pub fn encrypt<'a, A, S>(
     pk: &A::PublicKey,
     plaintext: &[u8],
     kek_id: String,
     signer: Option<SignerSet>,
     aad: Option<&[u8]>,
+    kdf_info: Option<KdfInfo>,
+    kdf_fn: Option<Box<dyn Fn(&[u8]) -> Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>>,
 ) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
@@ -21,13 +24,20 @@ where
     S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     Vec<u8>: From<<A as Kem>::EncapsulatedKey>,
 {
-    // 1. Create header, nonce, and DEK
+    // 1. Create header, nonce, and shared secret
     let (header, base_nonce, shared_secret) =
-        create_header::<A, S>(&pk.clone().into(), kek_id, signer, aad)?;
+        create_header::<A, S>(pk, kek_id, signer, aad, kdf_info)?;
 
-    // 2. Serialize the header and prepare for encryption
+    // 2. Derive key if KDF is specified
+    let dek = if let Some(f) = kdf_fn {
+        f(&shared_secret)?
+    } else {
+        shared_secret
+    };
+
+    // 3. Serialize the header and prepare for encryption
     let header_bytes = header.encode_to_vec()?;
-    let key_material: S::Key = shared_secret.into();
+    let key_material: S::Key = dek.into();
 
     encrypt_parallel::<S>(key_material, base_nonce, header_bytes, plaintext, aad)
 }
@@ -86,21 +96,39 @@ where
     A::PrivateKey: Clone,
     A::EncapsulatedKey: From<Vec<u8>>,
 {
-    let (encapsulated_key, chunk_size, base_nonce) = match &header.payload {
+    let (encapsulated_key, chunk_size, base_nonce, kdf_info) = match &header.payload {
         HeaderPayload::Hybrid {
             encrypted_dek,
             stream_info: Some(info),
+            kdf_info,
             ..
         } => (
             encrypted_dek.clone().into(),
             info.chunk_size,
             info.base_nonce,
+            kdf_info.clone(),
         ),
         _ => return Err(Error::InvalidHeader),
     };
 
-    let shared_secret = A::decapsulate(&sk.clone().into(), &encapsulated_key)?;
-    let key_material: S::Key = shared_secret.into();
+    let shared_secret = A::decapsulate(sk, &encapsulated_key)?;
+
+    // 3. Derive key if KDF was used.
+    let dek = if let Some(info) = kdf_info {
+        let derived = match info.kdf_algorithm {
+            crate::common::algorithms::KdfAlgorithm::HkdfSha256 => HkdfSha256::default().derive(
+                &shared_secret,
+                info.salt.as_deref(),
+                info.info.as_deref(),
+                info.output_len as usize,
+            ),
+        }?;
+        Zeroizing::new(derived.as_bytes().to_vec())
+    } else {
+        shared_secret
+    };
+
+    let key_material: S::Key = dek.into();
 
     decrypt_parallel::<S>(key_material, base_nonce, chunk_size, ciphertext_body, aad)
 }
@@ -108,32 +136,85 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::header::KdfInfo;
     use crate::common::DEFAULT_CHUNK_SIZE;
     use seal_crypto::prelude::KeyGenerator;
     use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
+    use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+
+    type TestKem = Rsa2048<Sha256>;
+    type TestDek = Aes256Gcm;
+
+    #[test]
+    fn test_hybrid_parallel_roundtrip_with_kdf() {
+        let (pk, sk) = TestKem::generate_keypair().unwrap();
+        let plaintext = b"This is a test message with KDF in parallel.";
+        let salt = b"salt-parallel";
+        let info = b"info-parallel";
+        let output_len = 32;
+
+        let kdf_info = KdfInfo {
+            kdf_algorithm: crate::common::algorithms::KdfAlgorithm::HkdfSha256,
+            salt: Some(salt.to_vec()),
+            info: Some(info.to_vec()),
+            output_len,
+        };
+
+        let deriver = HkdfSha256::default();
+        let kdf_fn = Box::new(move |ikm: &[u8]| {
+            deriver
+                .derive(ikm, Some(salt), Some(info), output_len as usize)
+                .map(|dk| Zeroizing::new(dk.as_bytes().to_vec()))
+                .map_err(|e| e.into())
+        });
+
+        let encrypted = encrypt::<TestKem, TestDek>(
+            &pk,
+            plaintext,
+            "test_kek_id_kdf".to_string(),
+            None,
+            None,
+            Some(kdf_info),
+            Some(kdf_fn),
+        )
+        .unwrap();
+
+        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let decrypted = pending
+            .into_plaintext::<TestKem, TestDek>(&sk, None)
+            .unwrap();
+        assert_eq!(plaintext, decrypted.as_slice());
+    }
 
     #[test]
     fn test_hybrid_parallel_roundtrip() {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (pk, sk) = TestKem::generate_keypair().unwrap();
         let plaintext = b"This is a test message for hybrid parallel encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
-        let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None, None)
-                .unwrap();
+        let encrypted = encrypt::<TestKem, TestDek>(
+            &pk,
+            plaintext,
+            "test_kek_id".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         // Test convenience function
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
         let decrypted = pending
-            .into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None)
+            .into_plaintext::<TestKem, TestDek>(&sk, None)
             .unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Test separated functions
         let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
         assert_eq!(header.payload.kek_id(), Some("test_kek_id"));
-        let decrypted_body = decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body, None).unwrap();
+        let decrypted_body = decrypt_body::<TestKem, TestDek>(&sk, &header, body, None).unwrap();
         assert_eq!(plaintext, decrypted_body.as_slice());
 
         // Tamper with the ciphertext body
@@ -141,22 +222,29 @@ mod tests {
         encrypted_tampered[300] ^= 1;
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted_tampered).unwrap();
-        let result = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None);
+        let result = pending.into_plaintext::<TestKem, TestDek>(&sk, None);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_empty_plaintext() {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (pk, sk) = TestKem::generate_keypair().unwrap();
         let plaintext = b"";
 
-        let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None, None)
-                .unwrap();
+        let encrypted = encrypt::<TestKem, TestDek>(
+            &pk,
+            plaintext,
+            "test_kek_id".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
         let decrypted = pending
-            .into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None)
+            .into_plaintext::<TestKem, TestDek>(&sk, None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
@@ -164,16 +252,23 @@ mod tests {
 
     #[test]
     fn test_exact_chunk_size() {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (pk, sk) = TestKem::generate_keypair().unwrap();
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
-        let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, &plaintext, "test_kek_id".to_string(), None, None)
-                .unwrap();
+        let encrypted = encrypt::<TestKem, TestDek>(
+            &pk,
+            &plaintext,
+            "test_kek_id".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
         let decrypted = pending
-            .into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None)
+            .into_plaintext::<TestKem, TestDek>(&sk, None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted);
@@ -181,61 +276,81 @@ mod tests {
 
     #[test]
     fn test_wrong_private_key_fails() {
-        let (pk, _) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (pk, _) = TestKem::generate_keypair().unwrap();
+        let (_, sk2) = TestKem::generate_keypair().unwrap();
         let plaintext = b"some data";
 
-        let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None, None)
-                .unwrap();
+        let encrypted = encrypt::<TestKem, TestDek>(
+            &pk,
+            plaintext,
+            "test_kek_id".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext::<Rsa2048, Aes256Gcm>(&sk2, None);
+        let result = pending.into_plaintext::<TestKem, TestDek>(&sk2, None);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_internal_functions() {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (pk, sk) = TestKem::generate_keypair().unwrap();
         let plaintext = b"some plaintext for parallel";
-        let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "test_kek_id".to_string(), None, None)
-                .unwrap();
+        let encrypted = encrypt::<TestKem, TestDek>(
+            &pk,
+            plaintext,
+            "test_kek_id".to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         // Test the separated functions
         let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
         assert_eq!(header.payload.kek_id(), Some("test_kek_id"));
-        let decrypted_body = decrypt_body::<Rsa2048, Aes256Gcm>(&sk, &header, body, None).unwrap();
+        let decrypted_body = decrypt_body::<TestKem, TestDek>(&sk, &header, body, None).unwrap();
         assert_eq!(plaintext, decrypted_body.as_slice());
     }
 
     #[test]
     fn test_aad_roundtrip() {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (pk, sk) = TestKem::generate_keypair().unwrap();
         let plaintext = b"some parallel data to protect";
         let aad = b"some parallel context data";
 
         // Encrypt with AAD
-        let encrypted =
-            encrypt::<Rsa2048, Aes256Gcm>(&pk, plaintext, "aad_key".to_string(), None, Some(aad))
-                .unwrap();
+        let encrypted = encrypt::<TestKem, TestDek>(
+            &pk,
+            plaintext,
+            "aad_key".to_string(),
+            None,
+            Some(aad),
+            None,
+            None,
+        )
+        .unwrap();
 
         // Decrypt with correct AAD
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
         let decrypted = pending
-            .into_plaintext::<Rsa2048, Aes256Gcm>(&sk, Some(aad))
+            .into_plaintext::<TestKem, TestDek>(&sk, Some(aad))
             .unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
         let pending_fail = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result_fail =
-            pending_fail.into_plaintext::<Rsa2048, Aes256Gcm>(&sk, Some(b"wrong aad"));
+        let result_fail = pending_fail.into_plaintext::<TestKem, TestDek>(&sk, Some(b"wrong aad"));
         assert!(result_fail.is_err());
 
         // Decrypt with no AAD fails
         let pending_fail2 = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result_fail2 = pending_fail2.into_plaintext::<Rsa2048, Aes256Gcm>(&sk, None);
+        let result_fail2 = pending_fail2.into_plaintext::<TestKem, TestDek>(&sk, None);
         assert!(result_fail2.is_err());
     }
 }

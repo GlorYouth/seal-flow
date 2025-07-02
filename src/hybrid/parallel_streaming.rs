@@ -2,21 +2,25 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{Header, HeaderPayload};
+use crate::common::header::{Header, HeaderPayload, KdfInfo};
 use crate::common::SignerSet;
 use crate::error::{Error, Result};
 use crate::impls::parallel_streaming::{decrypt_pipeline, encrypt_pipeline};
+use seal_crypto::prelude::*;
+use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 
 /// Encrypts data from a reader and writes to a writer using a parallel streaming approach.
-pub fn encrypt<A, S, R, W>(
-    pk: &A::PublicKey,
+pub fn encrypt<'a, A, S, R, W>(
+    pk: &'a A::PublicKey,
     reader: R,
     mut writer: W,
     kek_id: String,
     signer: Option<SignerSet>,
-    aad: Option<&[u8]>,
+    aad: Option<&'a [u8]>,
+    kdf_info: Option<KdfInfo>,
+    kdf_fn: Option<Box<dyn Fn(&[u8]) -> Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>>,
 ) -> Result<()>
 where
     A: AsymmetricAlgorithm,
@@ -26,13 +30,20 @@ where
     R: Read + Send,
     W: Write,
 {
-    let (header, base_nonce, symmetric_key) = create_header::<A, S>(pk, kek_id, signer, aad)?;
+    let (header, base_nonce, shared_secret) =
+        create_header::<A, S>(pk, kek_id, signer, aad, kdf_info)?;
+
+    let dek = if let Some(f) = kdf_fn {
+        f(&shared_secret)?
+    } else {
+        shared_secret
+    };
 
     let header_bytes = header.encode_to_vec()?;
     writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
     writer.write_all(&header_bytes)?;
 
-    let key: S::Key = symmetric_key.into();
+    let key: S::Key = dek.into();
     encrypt_pipeline::<S, R, W>(key, base_nonce, reader, writer, aad)
 }
 
@@ -101,21 +112,39 @@ where
     R: Read + Send,
     W: Write,
 {
-    let (chunk_size, base_nonce, encapsulated_key) = match &header.payload {
+    let (chunk_size, base_nonce, encapsulated_key, kdf_info) = match &header.payload {
         HeaderPayload::Hybrid {
             stream_info: Some(info),
             encrypted_dek,
+            kdf_info,
             ..
         } => (
             info.chunk_size,
             info.base_nonce,
             encrypted_dek.clone().into(),
+            kdf_info.clone(),
         ),
         _ => return Err(Error::InvalidHeader),
     };
 
     let shared_secret = A::decapsulate(&sk.clone().into(), &encapsulated_key)?;
-    let key_material: S::Key = shared_secret.into();
+
+    // Derive key if KDF was used.
+    let dek = if let Some(info) = kdf_info {
+        let derived = match info.kdf_algorithm {
+            crate::common::algorithms::KdfAlgorithm::HkdfSha256 => HkdfSha256::default().derive(
+                &shared_secret,
+                info.salt.as_deref(),
+                info.info.as_deref(),
+                info.output_len as usize,
+            ),
+        }?;
+        Zeroizing::new(derived.as_bytes().to_vec())
+    } else {
+        shared_secret
+    };
+
+    let key_material: S::Key = dek.into();
 
     decrypt_pipeline::<S, R, W>(key_material, base_nonce, chunk_size, reader, writer, aad)
 }
@@ -123,9 +152,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::header::KdfInfo;
     use seal_crypto::prelude::KeyGenerator;
     use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
+    use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::io::Cursor;
 
@@ -145,6 +176,8 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
+            None,
+            None,
             None,
             None,
         )
@@ -174,6 +207,8 @@ mod tests {
             kek_id.clone(),
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
 
@@ -199,6 +234,8 @@ mod tests {
             Cursor::new(&plaintext),
             &mut encrypted_data,
             kek_id.clone(),
+            None,
+            None,
             None,
             None,
         )
@@ -234,6 +271,8 @@ mod tests {
             kek_id.clone(),
             None,
             None,
+            None,
+            None,
         )
         .unwrap();
 
@@ -261,6 +300,8 @@ mod tests {
             "test_kek_id_aad".to_string(),
             None,
             Some(aad),
+            None,
+            None,
         )
         .unwrap();
 
@@ -292,5 +333,53 @@ mod tests {
             None,
         );
         assert!(result2.is_err());
+    }
+
+    #[test]
+    fn test_hybrid_parallel_streaming_roundtrip_with_kdf() {
+        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let kek_id = "test-kek-id-kdf".to_string();
+        let plaintext = get_test_data(1024 * 1024); // 1 MiB
+
+        let salt = b"salt-parallel-streaming";
+        let info = b"info-parallel-streaming";
+        let output_len = 32;
+
+        let kdf_info = KdfInfo {
+            kdf_algorithm: crate::common::algorithms::KdfAlgorithm::HkdfSha256,
+            salt: Some(salt.to_vec()),
+            info: Some(info.to_vec()),
+            output_len,
+        };
+
+        let deriver = HkdfSha256::default();
+        let kdf_fn = Box::new(move |ikm: &[u8]| {
+            deriver
+                .derive(ikm, Some(salt), Some(info), output_len as usize)
+                .map(|dk| Zeroizing::new(dk.as_bytes().to_vec()))
+                .map_err(|e| e.into())
+        });
+
+        let mut encrypted_data = Vec::new();
+        encrypt::<Rsa2048<Sha256>, Aes256Gcm, _, _>(
+            &pk,
+            Cursor::new(&plaintext),
+            &mut encrypted_data,
+            kek_id.clone(),
+            None,
+            None,
+            Some(kdf_info),
+            Some(kdf_fn),
+        )
+        .unwrap();
+
+        let mut decrypted_data = Vec::new();
+        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
+        pending
+            .decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk, &mut decrypted_data, None)
+            .unwrap();
+
+        assert_eq!(plaintext, decrypted_data);
     }
 }
