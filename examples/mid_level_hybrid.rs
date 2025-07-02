@@ -25,7 +25,7 @@ async fn main() -> Result<()> {
     // --- Mode 1: In-Memory (Ordinary) ---
     println!("--- Testing Mode: In-Memory (Ordinary) ---");
     let ciphertext1 =
-        ordinary::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string(), None, None, None, None)?;
+        ordinary::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string(), None, None, None)?;
 
     let (header1, body1) = Header::decode_from_prefixed_slice(&ciphertext1)?;
     let found_kek_id1 = header1.payload.kek_id().unwrap();
@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
     // --- Mode 2: In-Memory Parallel ---
     println!("\n--- Testing Mode: In-Memory Parallel ---");
     let ciphertext2 =
-        parallel::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string(), None, None, None, None)?;
+        parallel::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string(), None, None, None)?;
 
     let (header2, body2) = Header::decode_from_prefixed_slice(&ciphertext2)?;
     let found_kek_id2 = header2.payload.kek_id().unwrap();
@@ -57,7 +57,6 @@ async fn main() -> Result<()> {
         &mut ciphertext3,
         &pk,
         KEK_ID.to_string(),
-        None,
         None,
         None,
         None,
@@ -83,7 +82,6 @@ async fn main() -> Result<()> {
         &mut ciphertext4,
         pk.clone(),
         KEK_ID.to_string(),
-        None,
         None,
         None,
         None,
@@ -117,7 +115,6 @@ async fn main() -> Result<()> {
         None,
         None,
         None,
-        None,
     )?;
 
     let mut decrypted5 = Vec::new();
@@ -143,7 +140,6 @@ async fn main() -> Result<()> {
         KEK_ID.to_string(),
         None,
         Some(aad),
-        None,
         None,
     )?;
 
@@ -186,7 +182,7 @@ async fn main() -> Result<()> {
     // 通过指定密钥参数进行加密（这里我们直接使用派生的 DEK）
     // 注意：这仅用于演示目的，真实场景下混合加密应使用随机生成的 DEK
     let ciphertext7 =
-        ordinary::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string(), None, None, None, None)?;
+        ordinary::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string(), None, None, None)?;
 
     // 解密
     let (header7, body7) = Header::decode_from_prefixed_slice(&ciphertext7)?;
