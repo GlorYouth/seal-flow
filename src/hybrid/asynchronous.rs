@@ -318,7 +318,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_wrong_private_key_fails_async() {
-        let (pk, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (pk, _sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let (_pk2, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
         let plaintext = b"some data";
 
         let mut encrypted_data = Vec::new();
@@ -344,18 +345,10 @@ mod tests {
             .into_decryptor::<Rsa2048<Sha256>, Aes256Gcm>(sk2, None)
             .await;
 
-        if let Ok(mut decryptor) = decryptor_result {
-            let read_result = decryptor.read_to_end(&mut Vec::new()).await;
-            assert!(
-                read_result.is_err(),
-                "Decryption should fail with wrong private key"
-            );
-        } else {
-            assert!(
-                decryptor_result.is_err(),
-                "Decapsulation should fail with wrong private key"
-            );
-        }
+        assert!(
+            decryptor_result.is_err(),
+            "Decapsulation should fail with the wrong private key"
+        );
     }
 
     #[tokio::test]

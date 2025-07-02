@@ -278,6 +278,82 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_kdf_roundtrip_all_modes() -> crate::Result<()> {
+        // 1. Setup
+        let (pk, sk) = TestKem::generate_keypair()?;
+        let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
+        let plaintext = get_test_data();
+        let aad = b"test-aad-for-kdf-roundtrip";
+        let kek_id = "test-kdf-kek-id".to_string();
+        let salt = b"kdf-salt";
+        let info = b"kdf-info";
+        let seal = HybridSeal::new();
+        type Kdf = seal_crypto::schemes::kdf::hkdf::HkdfSha256;
+
+        // 2. Encryption with KDF
+        // We also add AAD to ensure it works together with KDF.
+        let encrypted = seal
+            .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
+            .with_aad(aad)
+            .with_kdf(
+                Kdf::default(),
+                Some(salt),
+                Some(info),
+                <TestDek as SymmetricCipher>::KEY_SIZE as u32,
+            )
+            .to_vec::<TestKem>(plaintext)?;
+
+        // 3. Decryption tests for all sync modes
+
+        // Mode 1: In-memory (`slice`)
+        let decrypted1 = seal
+            .decrypt()
+            .slice(&encrypted)?
+            .with_aad(aad)
+            .with_typed_key::<TestKem, TestDek>(&sk)?;
+        assert_eq!(
+            plaintext,
+            decrypted1.as_slice(),
+            "In-memory KDF mode failed"
+        );
+
+        // Mode 2: In-memory parallel (`slice_parallel`)
+        let decrypted2 = seal
+            .decrypt()
+            .slice_parallel(&encrypted)?
+            .with_aad(aad)
+            .with_typed_key::<TestKem, TestDek>(&sk)?;
+        assert_eq!(
+            plaintext,
+            decrypted2.as_slice(),
+            "In-memory parallel KDF mode failed"
+        );
+
+        // Mode 3: Streaming (`reader`)
+        let pending3 = seal.decrypt().reader(Cursor::new(encrypted.clone()))?;
+        let mut decryptor3 = pending3
+            .with_aad(aad)
+            .with_typed_key::<TestKem, TestDek>(&sk)?;
+        let mut decrypted3 = Vec::new();
+        decryptor3.read_to_end(&mut decrypted3)?;
+        assert_eq!(plaintext, decrypted3.as_slice(), "Streaming KDF mode failed");
+
+        // Mode 4: Parallel Streaming (`reader_parallel` to writer)
+        let mut decrypted4 = Vec::new();
+        seal.decrypt()
+            .reader_parallel(Cursor::new(&encrypted))?
+            .with_aad(aad)
+            .with_typed_key_to_writer::<TestKem, TestDek, _>(&sk, &mut decrypted4)?;
+        assert_eq!(
+            plaintext,
+            decrypted4.as_slice(),
+            "Parallel streaming KDF mode failed"
+        );
+
+        Ok(())
+    }
+
     #[cfg(feature = "async")]
     mod async_tests {
         use super::*;
@@ -312,13 +388,58 @@ mod tests {
             let kek_id = pending.kek_id().unwrap();
             let decryption_key = key_store.get(kek_id).unwrap();
             let mut decryptor = pending
-                .with_typed_key::<TestKem, TestDek>(decryption_key.clone())
+                .with_typed_key::<TestKem, TestDek>((*decryption_key).clone())
                 .await
                 .unwrap();
 
             let mut decrypted_data = Vec::new();
             decryptor.read_to_end(&mut decrypted_data).await.unwrap();
             assert_eq!(plaintext.to_vec(), decrypted_data);
+        }
+
+        #[tokio::test]
+        async fn test_kdf_async_roundtrip() -> crate::Result<()> {
+            // 1. Setup
+            let (pk, sk) = TestKem::generate_keypair()?;
+            let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
+            let plaintext = get_test_data();
+            let aad = b"test-aad-for-kdf-async-roundtrip";
+            let kek_id = "test-kdf-kek-id-async".to_string();
+            let salt = b"kdf-salt-async";
+            let info = b"kdf-info-async";
+            let seal = HybridSeal::new();
+            type Kdf = seal_crypto::schemes::kdf::hkdf::HkdfSha256;
+
+            // 2. Encryption with KDF
+            let encrypted = seal
+                .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
+                .with_aad(aad)
+                .with_kdf(
+                    Kdf::default(),
+                    Some(salt),
+                    Some(info),
+                    <TestDek as SymmetricCipher>::KEY_SIZE as u32,
+                )
+                .to_vec::<TestKem>(plaintext)?;
+
+            // 3. Async Decryption
+            let mut decryptor = seal
+                .decrypt()
+                .async_reader(Cursor::new(&encrypted))
+                .await?
+                .with_aad(aad)
+                .with_typed_key::<TestKem, TestDek>(sk.clone())
+                .await?;
+
+            let mut decrypted = Vec::new();
+            decryptor.read_to_end(&mut decrypted).await?;
+            assert_eq!(
+                plaintext,
+                decrypted.as_slice(),
+                "Async streaming KDF mode failed"
+            );
+
+            Ok(())
         }
 
         #[tokio::test]
