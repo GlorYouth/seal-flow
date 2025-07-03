@@ -58,5 +58,6 @@ pub struct SignerSet {
 
 pub struct DerivationSet<'a> {
     pub(crate) derivation_info: header::DerivationInfo,
-    pub(crate) deriver_fn: Box<dyn Fn(&[u8]) -> crate::Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>,
+    pub(crate) deriver_fn:
+        Box<dyn Fn(&[u8]) -> crate::Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>,
 }

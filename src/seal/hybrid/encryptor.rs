@@ -1,4 +1,6 @@
-use crate::algorithms::traits::{AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm};
+use crate::algorithms::traits::{
+    AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm,
+};
 use crate::common::header::{DerivationInfo, KdfInfo, XofInfo};
 use crate::common::{DerivationSet, SignerSet};
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
@@ -88,8 +90,11 @@ where
         };
 
         let deriver_fn = Box::new(move |ikm: &[u8]| {
-            let mut reader =
-                deriver.reader(ikm, salt.as_ref().map(|s| s.as_ref()), info.as_ref().map(|i| i.as_ref()))?;
+            let mut reader = deriver.reader(
+                ikm,
+                salt.as_ref().map(|s| s.as_ref()),
+                info.as_ref().map(|i| i.as_ref()),
+            )?;
             let mut dek_bytes = vec![0u8; output_len as usize];
             reader.read(&mut dek_bytes);
             Ok(Zeroizing::new(dek_bytes))

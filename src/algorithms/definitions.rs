@@ -101,6 +101,5 @@ impl KdfAlgorithmDetails for HkdfSha256 {
 }
 
 impl XofAlgorithmDetails for Shake256 {
-    const ALGORITHM: common::algorithms::XofAlgorithm =
-        common::algorithms::XofAlgorithm::Shake256;
+    const ALGORITHM: common::algorithms::XofAlgorithm = common::algorithms::XofAlgorithm::Shake256;
 }

@@ -29,8 +29,7 @@ where
         .unzip();
 
     // 1. Create header, nonce, and shared secret
-    let (header, base_nonce, shared_secret) =
-        create_header::<A, S>(pk, kek_id, signer, aad, info)?;
+    let (header, base_nonce, shared_secret) = create_header::<A, S>(pk, kek_id, signer, aad, info)?;
 
     // 2. Derive key if a deriver function is specified
     let dek = if let Some(f) = deriver_fn {
@@ -133,14 +132,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::header::{DerivationInfo, KdfInfo};
+    use crate::common::DerivationSet;
+    use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::prelude::KeyGenerator;
     use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
-    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-    use crate::common::header::{DerivationInfo, KdfInfo};
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
-    use seal_crypto::prelude::KeyBasedDerivation;
-    use crate::common::DerivationSet;
+    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 
     type TestKem = Rsa2048<Sha256>;
     type TestDek = Aes256Gcm;

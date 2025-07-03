@@ -55,7 +55,6 @@ pub trait SignatureAlgorithm: SignatureAlgorithmDetails {}
 
 impl<T: SignatureAlgorithmDetails> SignatureAlgorithm for T {}
 
-
 /// Trait to provide the details for a specific extendable-output function (XOF).
 /// The implementor of this trait is the scheme itself.
 pub trait XofAlgorithmDetails: XofDerivation + 'static {

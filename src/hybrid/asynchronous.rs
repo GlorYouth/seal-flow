@@ -3,7 +3,7 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{ Header, HeaderPayload};
+use crate::common::header::{Header, HeaderPayload};
 use crate::common::DerivationSet;
 use crate::common::SignerSet;
 use crate::error::{Error, Result};
@@ -133,21 +133,21 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
         S: SymmetricAlgorithm + 'static,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
     {
-        let (encapsulated_key, chunk_size, base_nonce, derivation_info) =
-            match &self.header.payload {
-                HeaderPayload::Hybrid {
-                    encrypted_dek,
-                    stream_info: Some(info),
-                    derivation_info,
-                    ..
-                } => (
-                    encrypted_dek.clone().into(),
-                    info.chunk_size,
-                    info.base_nonce,
-                    derivation_info.clone(),
-                ),
-                _ => return Err(Error::InvalidHeader),
-            };
+        let (encapsulated_key, chunk_size, base_nonce, derivation_info) = match &self.header.payload
+        {
+            HeaderPayload::Hybrid {
+                encrypted_dek,
+                stream_info: Some(info),
+                derivation_info,
+                ..
+            } => (
+                encrypted_dek.clone().into(),
+                info.chunk_size,
+                info.base_nonce,
+                derivation_info.clone(),
+            ),
+            _ => return Err(Error::InvalidHeader),
+        };
 
         let dek = tokio::task::spawn_blocking(move || -> Result<_> {
             let shared_secret = A::decapsulate(&sk.into(), &encapsulated_key)?;
@@ -206,13 +206,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::header::DerivationInfo;
     use crate::common::DEFAULT_CHUNK_SIZE;
     use seal_crypto::prelude::{KeyBasedDerivation, KeyGenerator};
     use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-    use crate::common::header::DerivationInfo;
     use std::io::Cursor;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

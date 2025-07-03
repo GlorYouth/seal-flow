@@ -1,6 +1,6 @@
-use seal_flow::prelude::*;
 use seal_crypto::prelude::SymmetricKeyGenerator;
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+use seal_flow::prelude::*;
 use std::collections::HashMap;
 
 fn main() -> Result<()> {
@@ -59,14 +59,16 @@ fn main() -> Result<()> {
 
     // b. Get the key ID from the header. This is a cheap and safe operation.
     // b. 从头部获取密钥 ID。这是一个低成本且安全的操作。
-    let found_key_id = pending_decryptor.key_id().expect("Header must contain a key ID.");
+    let found_key_id = pending_decryptor
+        .key_id()
+        .expect("Header must contain a key ID.");
     println!("Found key ID: '{}'. Now retrieving the key.", found_key_id);
 
     // c. Use the ID to fetch the correct key from your key store.
     // c. 使用该 ID 从您的密钥存储中获取正确的密钥。
     let decryption_key_bytes = key_store.get(found_key_id).unwrap();
     let decryption_key_wrapped = SymmetricKey::new(decryption_key_bytes.clone());
-    
+
     // d. Provide the key and AAD to complete decryption.
     //    The `with_key` method automatically infers the algorithm from the header.
     // d. 提供密钥和 AAD 以完成解密。
@@ -78,4 +80,4 @@ fn main() -> Result<()> {
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully decrypted data!");
     Ok(())
-} 
+}

@@ -1,6 +1,6 @@
-use seal_flow::prelude::*;
 use seal_crypto::prelude::SymmetricKeyGenerator;
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+use seal_flow::prelude::*;
 
 fn main() -> Result<()> {
     // --- Setup ---
@@ -9,7 +9,7 @@ fn main() -> Result<()> {
     let key_wrapped = SymmetricKey::new(key);
     let key_id = "my-aad-key".to_string();
     let plaintext = b"This data is secret and needs integrity protection.";
-    
+
     // Associated Data (AAD) is data that is authenticated but not encrypted.
     // It's useful for binding ciphertext to its context, such as user IDs,
     // version numbers, or other metadata. If the AAD changes, decryption will fail.
@@ -24,7 +24,10 @@ fn main() -> Result<()> {
 
     // --- Encrypt with AAD ---
     // --- 使用 AAD 加密 ---
-    println!("Encrypting data with AAD: '{}'", String::from_utf8_lossy(aad));
+    println!(
+        "Encrypting data with AAD: '{}'",
+        String::from_utf8_lossy(aad)
+    );
     let ciphertext = seal
         .encrypt(key_wrapped.clone(), key_id)
         .with_aad(aad)
@@ -41,7 +44,7 @@ fn main() -> Result<()> {
     let decrypted_text = pending_decryptor
         .with_aad(aad)
         .with_key(key_wrapped.clone())?;
-    
+
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully decrypted with correct AAD!");
 
@@ -54,10 +57,15 @@ fn main() -> Result<()> {
     // 1. 尝试使用错误的 AAD 进行解密将会失败。
     //    这可以防止攻击者将一个有效的密文用于不同的上下文（例如，用于另一个用户）。
     let wrong_aad = b"user-id:456,request-id:abc-123";
-    println!("\nAttempting decryption with WRONG AAD: '{}'", String::from_utf8_lossy(wrong_aad));
+    println!(
+        "\nAttempting decryption with WRONG AAD: '{}'",
+        String::from_utf8_lossy(wrong_aad)
+    );
     let pending_fail = seal.decrypt().slice(&ciphertext)?;
-    let result_fail = pending_fail.with_aad(wrong_aad).with_key(key_wrapped.clone());
-    
+    let result_fail = pending_fail
+        .with_aad(wrong_aad)
+        .with_key(key_wrapped.clone());
+
     assert!(result_fail.is_err());
     if let Err(e) = result_fail {
         println!("Correctly failed with error: {}", e);
@@ -69,11 +77,11 @@ fn main() -> Result<()> {
     println!("\nAttempting decryption with MISSING AAD...");
     let pending_fail2 = seal.decrypt().slice(&ciphertext)?;
     let result_fail2 = pending_fail2.with_key(key_wrapped);
-    
+
     assert!(result_fail2.is_err());
     if let Err(e) = result_fail2 {
         println!("Correctly failed with error: {}", e);
     }
 
     Ok(())
-} 
+}

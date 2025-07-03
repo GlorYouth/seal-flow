@@ -339,7 +339,11 @@ mod tests {
             .with_typed_key::<TestKem, TestDek>(&sk)?;
         let mut decrypted3 = Vec::new();
         decryptor3.read_to_end(&mut decrypted3)?;
-        assert_eq!(plaintext, decrypted3.as_slice(), "Streaming KDF mode failed");
+        assert_eq!(
+            plaintext,
+            decrypted3.as_slice(),
+            "Streaming KDF mode failed"
+        );
 
         // Mode 4: Parallel Streaming (`reader_parallel` to writer)
         let mut decrypted4 = Vec::new();
@@ -414,7 +418,11 @@ mod tests {
             .with_typed_key::<TestKem, TestDek>(&sk)?;
         let mut decrypted3 = Vec::new();
         decryptor3.read_to_end(&mut decrypted3)?;
-        assert_eq!(plaintext, decrypted3.as_slice(), "Streaming XOF mode failed");
+        assert_eq!(
+            plaintext,
+            decrypted3.as_slice(),
+            "Streaming XOF mode failed"
+        );
 
         // Mode 4: Parallel Streaming (`reader_parallel` to writer)
         let mut decrypted4 = Vec::new();
@@ -596,8 +604,7 @@ mod tests {
                 .async_reader(Cursor::new(&encrypted))
                 .await?
                 .with_aad(aad)
-                .with_verification_key(verification_key.clone())
-                .await?
+                .with_verification_key(verification_key.clone())?
                 .with_typed_key::<TestKem, TestDek>(enc_sk.clone())
                 .await?;
             let mut decrypted_ok = Vec::new();
@@ -610,8 +617,7 @@ mod tests {
                 .async_reader(Cursor::new(&encrypted))
                 .await?
                 .with_aad(b"wrong-aad")
-                .with_verification_key(verification_key)
-                .await?
+                .with_verification_key(verification_key)?
                 .with_typed_key::<TestKem, TestDek>(enc_sk.clone())
                 .await;
             assert!(res.is_err());

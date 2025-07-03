@@ -172,9 +172,7 @@ async fn main() -> Result<()> {
     let pending_decryptor6 = HybridSeal.decrypt().slice(&ciphertext6)?;
     let kek_id = pending_decryptor6.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
-    let decrypted6 = pending_decryptor6
-        .with_aad(aad)
-        .with_key(sk_wrapped)?;
+    let decrypted6 = pending_decryptor6.with_aad(aad).with_key(sk_wrapped)?;
     assert_eq!(plaintext, &decrypted6[..]);
     println!("In-Memory with AAD roundtrip successful!");
 
@@ -182,9 +180,7 @@ async fn main() -> Result<()> {
     let pending_fail = HybridSeal.decrypt().slice(&ciphertext6)?;
     let kek_id = pending_fail.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
-    let result_fail = pending_fail
-        .with_aad(b"wrong aad")
-        .with_key(sk_wrapped);
+    let result_fail = pending_fail.with_aad(b"wrong aad").with_key(sk_wrapped);
     assert!(result_fail.is_err());
     println!("In-Memory with wrong AAD correctly failed!");
 

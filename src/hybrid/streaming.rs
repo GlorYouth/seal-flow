@@ -116,21 +116,21 @@ impl<R: Read> PendingDecryptor<R> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        let (encapsulated_key, chunk_size, base_nonce, derivation_info) =
-            match self.header.payload {
-                HeaderPayload::Hybrid {
-                    encrypted_dek,
-                    stream_info: Some(info),
-                    derivation_info,
-                    ..
-                } => (
-                    encrypted_dek.into(),
-                    info.chunk_size,
-                    info.base_nonce,
-                    derivation_info,
-                ),
-                _ => return Err(Error::InvalidHeader),
-            };
+        let (encapsulated_key, chunk_size, base_nonce, derivation_info) = match self.header.payload
+        {
+            HeaderPayload::Hybrid {
+                encrypted_dek,
+                stream_info: Some(info),
+                derivation_info,
+                ..
+            } => (
+                encrypted_dek.into(),
+                info.chunk_size,
+                info.base_nonce,
+                derivation_info,
+            ),
+            _ => return Err(Error::InvalidHeader),
+        };
 
         let shared_secret = A::decapsulate(sk, &encapsulated_key)?;
 

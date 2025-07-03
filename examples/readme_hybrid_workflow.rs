@@ -1,8 +1,8 @@
-use seal_flow::prelude::*;
 use seal_crypto::{
     prelude::*,
     schemes::{asymmetric::traditional::rsa::Rsa2048, hash::Sha256, symmetric::aes_gcm::Aes256Gcm},
 };
+use seal_flow::prelude::*;
 use std::collections::HashMap;
 
 // --- Algorithm Configuration ---
@@ -87,4 +87,4 @@ fn main() -> Result<()> {
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully performed hybrid encryption and decryption!");
     Ok(())
-} 
+}

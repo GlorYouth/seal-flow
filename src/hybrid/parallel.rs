@@ -28,8 +28,7 @@ where
         .unzip();
 
     // 1. Create header, nonce, and shared secret
-    let (header, base_nonce, shared_secret) =
-        create_header::<A, S>(pk, kek_id, signer, aad, info)?;
+    let (header, base_nonce, shared_secret) = create_header::<A, S>(pk, kek_id, signer, aad, info)?;
 
     // 2. Derive key if a deriver function is specified
     let dek = if let Some(f) = deriver_fn {

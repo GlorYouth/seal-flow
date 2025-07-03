@@ -32,8 +32,7 @@ where
         .map(|d| (d.derivation_info, d.deriver_fn))
         .unzip();
 
-    let (header, base_nonce, shared_secret) =
-        create_header::<A, S>(pk, kek_id, signer, aad, info)?;
+    let (header, base_nonce, shared_secret) = create_header::<A, S>(pk, kek_id, signer, aad, info)?;
 
     let dek = if let Some(f) = deriver_fn {
         f(&shared_secret)?

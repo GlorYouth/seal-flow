@@ -1,4 +1,3 @@
-use seal_flow::prelude::*;
 use seal_crypto::{
     // Import traits required for XOF reader functionality.
     // 导入 XOF reader 功能所需的 trait。
@@ -8,6 +7,7 @@ use seal_crypto::{
         xof::shake::Shake256,
     },
 };
+use seal_flow::prelude::*;
 
 fn main() -> Result<()> {
     println!("--- Use Case 1: Key Rotation with HKDF ---");
@@ -47,8 +47,7 @@ fn main() -> Result<()> {
     // This is the input keying material (IKM) for the XOF.
     // 首先，使用 PBKDF2 将密码"拉伸"成一个更长的、高熵的密钥。
     // 这将作为 XOF 的输入密钥材料（IKM）。
-    let master_secret =
-        SymmetricKey::derive_from_password(password, &pbkdf2, b"app-salt", 64)?;
+    let master_secret = SymmetricKey::derive_from_password(password, &pbkdf2, b"app-salt", 64)?;
 
     // Now, create an XOF reader initialized with the master secret.
     // The XOF acts like a cryptographically secure stream of bytes derived from the secret.
@@ -69,11 +68,11 @@ fn main() -> Result<()> {
     xof_reader.read(&mut iv_key_bytes);
     let iv_key = SymmetricKey::new(iv_key_bytes.to_vec());
     println!("Derived 16-byte IV key using XOF.");
-    
+
     // The keys are different because the XOF stream is being consumed sequentially.
     // 这两个密钥是不同的，因为 XOF 流是按顺序消耗的。
     assert_ne!(encryption_key.as_bytes()[..16], iv_key.as_bytes()[..]);
     println!("Confirmed: The two derived keys are different.");
 
     Ok(())
-} 
+}

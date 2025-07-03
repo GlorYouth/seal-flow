@@ -134,14 +134,8 @@ async fn main() -> Result<()> {
     // --- Mode 6: In-Memory with AAD ---
     println!("\n--- Testing Mode: In-Memory with AAD ---");
     let aad = b"this is authenticated data for the mid-level hybrid api";
-    let ciphertext6 = ordinary::encrypt::<Kem, Dek>(
-        &pk,
-        plaintext,
-        KEK_ID.to_string(),
-        None,
-        Some(aad),
-        None,
-    )?;
+    let ciphertext6 =
+        ordinary::encrypt::<Kem, Dek>(&pk, plaintext, KEK_ID.to_string(), None, Some(aad), None)?;
 
     let pending_decryptor6 = ordinary::PendingDecryptor::from_ciphertext(&ciphertext6)?;
     let found_kek_id6 = pending_decryptor6.header().payload.kek_id().unwrap();

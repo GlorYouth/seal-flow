@@ -1,13 +1,11 @@
-use seal_flow::prelude::*;
 use seal_crypto::{
     prelude::*,
     schemes::{
-        asymmetric::traditional::rsa::Rsa2048,
-        asymmetric::traditional::ecc::Ed25519,
-        hash::Sha256,
+        asymmetric::traditional::ecc::Ed25519, asymmetric::traditional::rsa::Rsa2048, hash::Sha256,
         symmetric::aes_gcm::Aes256Gcm,
     },
 };
+use seal_flow::prelude::*;
 
 // Define the asymmetric algorithm for Key Encapsulation (KEM).
 // 定义用于密钥封装 (KEM) 的非对称算法。
@@ -66,4 +64,4 @@ fn main() -> Result<()> {
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully signed, encrypted, decrypted, and verified data!");
     Ok(())
-} 
+}
