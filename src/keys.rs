@@ -105,6 +105,7 @@ impl AsymmetricPrivateKey {
     }
 }
 
+
 /// A byte wrapper for an asymmetric public key.
 #[derive(Debug, Clone)]
 pub struct AsymmetricPublicKey(pub zeroize::Zeroizing<Vec<u8>>);
@@ -146,7 +147,6 @@ impl SignaturePublicKey {
         self.0
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

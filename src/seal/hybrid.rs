@@ -181,7 +181,7 @@ mod tests {
 
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
-        let decrypted = pending.with_key::<TestDek>(sk_wrapped)?;
+        let decrypted = pending.with_key(sk_wrapped)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())

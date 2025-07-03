@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
     let pending_decryptor1 = HybridSeal.decrypt().slice(&ciphertext1)?;
     let kek_id = pending_decryptor1.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
-    let decrypted1 = pending_decryptor1.with_key::<Dek>(sk_wrapped)?;
+    let decrypted1 = pending_decryptor1.with_key(sk_wrapped)?;
     assert_eq!(plaintext, &decrypted1[..]);
     println!("In-Memory (Ordinary) roundtrip successful!");
 
@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
     let pending_decryptor2 = HybridSeal.decrypt().slice_parallel(&ciphertext2)?;
     let kek_id = pending_decryptor2.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
-    let decrypted2 = pending_decryptor2.with_key::<Dek>(sk_wrapped)?;
+    let decrypted2 = pending_decryptor2.with_key(sk_wrapped)?;
     assert_eq!(plaintext, &decrypted2[..]);
     println!("In-Memory Parallel roundtrip successful!");
 
@@ -103,7 +103,7 @@ async fn main() -> Result<()> {
     );
     let kek_id = pending_decryptor3.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
-    let mut decryptor3 = pending_decryptor3.with_key::<Dek>(sk_wrapped)?;
+    let mut decryptor3 = pending_decryptor3.with_key(sk_wrapped)?;
 
     let mut decrypted3 = Vec::new();
     decryptor3.read_to_end(&mut decrypted3)?;
@@ -130,7 +130,7 @@ async fn main() -> Result<()> {
     );
     let kek_id = pending_decryptor4.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
-    let mut decryptor4 = pending_decryptor4.with_key::<Dek>(sk_wrapped).await?;
+    let mut decryptor4 = pending_decryptor4.with_key(sk_wrapped).await?;
 
     let mut decrypted4 = Vec::new();
     decryptor4.read_to_end(&mut decrypted4).await?;
@@ -154,7 +154,7 @@ async fn main() -> Result<()> {
     );
     let kek_id = pending_decryptor5.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
-    pending_decryptor5.with_key_to_writer::<Dek, _>(sk_wrapped, &mut decrypted5)?;
+    pending_decryptor5.with_key_to_writer(sk_wrapped, &mut decrypted5)?;
     assert_eq!(plaintext, &decrypted5[..]);
     println!("Parallel Streaming roundtrip successful!");
 
@@ -174,7 +174,7 @@ async fn main() -> Result<()> {
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
     let decrypted6 = pending_decryptor6
         .with_aad(aad)
-        .with_key::<Dek>(sk_wrapped)?;
+        .with_key(sk_wrapped)?;
     assert_eq!(plaintext, &decrypted6[..]);
     println!("In-Memory with AAD roundtrip successful!");
 
@@ -184,7 +184,7 @@ async fn main() -> Result<()> {
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
     let result_fail = pending_fail
         .with_aad(b"wrong aad")
-        .with_key::<Dek>(sk_wrapped);
+        .with_key(sk_wrapped);
     assert!(result_fail.is_err());
     println!("In-Memory with wrong AAD correctly failed!");
 
@@ -192,7 +192,7 @@ async fn main() -> Result<()> {
     let pending_fail2 = HybridSeal.decrypt().slice(&ciphertext6)?;
     let kek_id = pending_fail2.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
-    let result_fail2 = pending_fail2.with_key::<Dek>(sk_wrapped);
+    let result_fail2 = pending_fail2.with_key(sk_wrapped);
     assert!(result_fail2.is_err());
     println!("In-Memory with no AAD correctly failed!");
 
@@ -215,7 +215,7 @@ async fn main() -> Result<()> {
     let decrypted7 = pending_decryptor7
         .with_aad(aad)
         .with_verification_key(verification_key)?
-        .with_key::<Dek>(sk_wrapped)?;
+        .with_key(sk_wrapped)?;
 
     assert_eq!(plaintext, &decrypted7[..]);
     println!("Signed encryption with AAD roundtrip successful!");
@@ -304,7 +304,7 @@ async fn main() -> Result<()> {
     let sk_wrapped = key_store.get_private_key(found_key_id).unwrap();
     let decrypted9 = pending_decryptor9
         .with_aad(b"Protected with derived keys")
-        .with_key::<Dek>(sk_wrapped)?;
+        .with_key(sk_wrapped)?;
 
     assert_eq!(sensitive_data, &decrypted9[..]);
     println!("在混合加密场景中使用派生密钥成功！");
@@ -383,7 +383,7 @@ async fn main() -> Result<()> {
     assert_eq!(found_kdf_key_id, kdf_key_id);
 
     let kdf_sk_wrapped = key_store.get_private_key(found_kdf_key_id).unwrap();
-    let kdf_decrypted = pending_decryptor_kdf.with_key::<DemKdf>(kdf_sk_wrapped)?;
+    let kdf_decrypted = pending_decryptor_kdf.with_key(kdf_sk_wrapped)?;
 
     // 4. Verify
     assert_eq!(kdf_plaintext.as_ref(), kdf_decrypted.as_slice());

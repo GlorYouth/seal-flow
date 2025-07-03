@@ -1,5 +1,7 @@
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::algorithms::AsymmetricAlgorithm as AsymmetricAlgorithmEnum;
+use crate::common::algorithms::{
+    AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
+};
 use crate::common::header::Header;
 use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
 use crate::Error;
@@ -8,9 +10,24 @@ use seal_crypto::schemes::asymmetric::{
     post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
     traditional::rsa::{Rsa2048, Rsa4096},
 };
+use seal_crypto::schemes::symmetric::{
+    aes_gcm::{Aes128Gcm, Aes256Gcm},
+    chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305},
+};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 use tokio::io::AsyncRead;
+
+macro_rules! dispatch_symmetric_algorithm {
+    ($algorithm:expr, $callback:ident, $($extra_args:tt)*) => {
+        match $algorithm {
+            SymmetricAlgorithmEnum::Aes128Gcm => $callback!(Aes128Gcm, $($extra_args)*),
+            SymmetricAlgorithmEnum::Aes256Gcm => $callback!(Aes256Gcm, $($extra_args)*),
+            SymmetricAlgorithmEnum::XChaCha20Poly1305 => $callback!(XChaCha20Poly1305, $($extra_args)*),
+            SymmetricAlgorithmEnum::ChaCha20Poly1305 => $callback!(ChaCha20Poly1305, $($extra_args)*),
+        }
+    };
+}
 
 /// 创建一个宏来处理从原始字节转换为特定非对称算法密钥的过程
 /// 这个宏替代了旧的枚举类型调度方式，直接从字节转换到密钥
@@ -158,30 +175,35 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     }
 
     /// Supplies a private key directly from its wrapper for decryption
-    pub fn with_key<S: SymmetricAlgorithm>(
-        self,
-        key: AsymmetricPrivateKey,
-    ) -> crate::Result<Vec<u8>>
-    where
-        S::Key: From<Zeroizing<Vec<u8>>>,
-    {
+    pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
 
-        let algorithm = self
+        let asymmetric_algorithm = self
             .header()
             .payload
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
-        // 使用新的宏来替换重复的match语句
+        let symmetric_algorithm = self.header().payload.symmetric_algorithm();
+
         macro_rules! do_decrypt {
-            ($sk:ident, $A:ty, ()) => {
-                self.with_typed_key::<$A, S>(&$sk)
+            ($S:ty, $sk:ident, $A:ty) => {
+                self.with_typed_key::<$A, $S>(&$sk)
             };
         }
 
-        dispatch_asymmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt,)
+        macro_rules! do_dispatch_symmetric {
+            ($sk:ident, $A:ty, ()) => {
+                dispatch_symmetric_algorithm!(symmetric_algorithm, do_decrypt, $sk, $A)
+            };
+        }
+
+        dispatch_asymmetric_key_bytes!(
+            asymmetric_algorithm,
+            key.as_bytes(),
+            do_dispatch_symmetric,
+        )
     }
 
     /// Supplies the typed private key and returns the decrypted plaintext.
@@ -238,30 +260,35 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     }
 
     /// Supplies a private key directly from its wrapper for decryption
-    pub fn with_key<S: SymmetricAlgorithm>(
-        self,
-        key: AsymmetricPrivateKey,
-    ) -> crate::Result<Vec<u8>>
-    where
-        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
-    {
+    pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
 
-        let algorithm = self
+        let asymmetric_algorithm = self
             .header()
             .payload
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
-        // 使用新的宏来替换重复的match语句
+        let symmetric_algorithm = self.header().payload.symmetric_algorithm();
+
         macro_rules! do_decrypt {
-            ($sk:ident, $A:ty, ()) => {
-                self.with_typed_key::<$A, S>(&$sk)
+            ($S:ty, $sk:ident, $A:ty) => {
+                self.with_typed_key::<$A, $S>(&$sk)
             };
         }
 
-        dispatch_asymmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt,)
+        macro_rules! do_dispatch_symmetric {
+            ($sk:ident, $A:ty, ()) => {
+                dispatch_symmetric_algorithm!(symmetric_algorithm, do_decrypt, $sk, $A)
+            };
+        }
+
+        dispatch_asymmetric_key_bytes!(
+            asymmetric_algorithm,
+            key.as_bytes(),
+            do_dispatch_symmetric,
+        )
     }
 
     /// Supplies the typed private key and returns the decrypted plaintext.
@@ -319,31 +346,36 @@ impl<R: Read + 'static> PendingStreamingDecryptor<R> {
     }
 
     /// Supplies a private key directly from its wrapper for decryption
-    pub fn with_key<S: SymmetricAlgorithm>(
-        self,
-        key: AsymmetricPrivateKey,
-    ) -> crate::Result<Box<dyn Read + 'static>>
-    where
-        S::Key: From<Zeroizing<Vec<u8>>>,
-    {
+    pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Box<dyn Read + 'static>> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
 
-        let algorithm = self
+        let asymmetric_algorithm = self
             .header()
             .payload
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
-        // 使用新的宏来替换重复的match语句
+        let symmetric_algorithm = self.header().payload.symmetric_algorithm();
+
         macro_rules! do_decrypt {
-            ($sk:ident, $A:ty, ()) => {
-                self.with_typed_key::<$A, S>(&$sk)
+            ($S:ty, $sk:ident, $A:ty) => {
+                self.with_typed_key::<$A, $S>(&$sk)
                     .map(|d| Box::new(d) as Box<dyn Read>)
             };
         }
 
-        dispatch_asymmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt,)
+        macro_rules! do_dispatch_symmetric {
+            ($sk:ident, $A:ty, ()) => {
+                dispatch_symmetric_algorithm!(symmetric_algorithm, do_decrypt, $sk, $A)
+            };
+        }
+
+        dispatch_asymmetric_key_bytes!(
+            asymmetric_algorithm,
+            key.as_bytes(),
+            do_dispatch_symmetric,
+        )
     }
 
     /// Supplies the typed private key and returns a fully initialized `Decryptor`.
@@ -410,31 +442,40 @@ where
     }
 
     /// Supplies a private key from its wrapper and decrypts to the provided writer
-    pub fn with_key_to_writer<S: SymmetricAlgorithm, W: Write>(
+    pub fn with_key_to_writer<W: Write>(
         self,
         key: AsymmetricPrivateKey,
         writer: W,
-    ) -> crate::Result<()>
-    where
-        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
-    {
+    ) -> crate::Result<()> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
 
-        let algorithm = self
+        let asymmetric_algorithm = self
             .header()
             .payload
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
-        // 使用新的宏来替换重复的match语句
+        let symmetric_algorithm = self.header().payload.symmetric_algorithm();
+
         macro_rules! do_decrypt {
-            ($sk:ident, $A:ty, ($writer:ident)) => {
-                self.with_typed_key_to_writer::<$A, S, W>(&$sk, $writer)
+            ($S:ty, $sk:ident, $A:ty, $writer:ident) => {
+                self.with_typed_key_to_writer::<$A, $S, W>(&$sk, $writer)
             };
         }
 
-        dispatch_asymmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt, writer)
+        macro_rules! do_dispatch_symmetric {
+            ($sk:ident, $A:ty, ($writer:ident)) => {
+                dispatch_symmetric_algorithm!(symmetric_algorithm, do_decrypt, $sk, $A, $writer)
+            };
+        }
+
+        dispatch_asymmetric_key_bytes!(
+            asymmetric_algorithm,
+            key.as_bytes(),
+            do_dispatch_symmetric,
+            writer
+        )
     }
 
     /// Supplies the typed private key and decrypts the stream, writing to the provided writer.
@@ -499,33 +540,43 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
     }
 
     /// Supplies a private key directly from its wrapper for decryption
-    pub async fn with_key<'s, S: SymmetricAlgorithm>(
+    pub async fn with_key<'s>(
         self,
         key: AsymmetricPrivateKey,
     ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 's>>
     where
-        S::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
         R: Send + 's,
     {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
 
-        let algorithm = self
+        let asymmetric_algorithm = self
             .header()
             .payload
             .asymmetric_algorithm()
             .ok_or(Error::InvalidHeader)?;
 
-        // 使用新的宏来替换重复的match语句
+        let symmetric_algorithm = self.header().payload.symmetric_algorithm();
+
         macro_rules! do_decrypt {
-            ($sk:ident, $A:ty, ()) => {
-                self.with_typed_key::<$A, S>($sk)
+            ($S:ty, $sk:ident, $A:ty) => {
+                self.with_typed_key::<$A, $S>($sk)
                     .await
                     .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>)
             };
         }
 
-        dispatch_asymmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt,)
+        macro_rules! do_dispatch_symmetric {
+            ($sk:ident, $A:ty, ()) => {
+                dispatch_symmetric_algorithm!(symmetric_algorithm, do_decrypt, $sk, $A)
+            };
+        }
+
+        dispatch_asymmetric_key_bytes!(
+            asymmetric_algorithm,
+            key.as_bytes(),
+            do_dispatch_symmetric,
+        )
     }
 
     /// Supplies the typed private key and returns a fully initialized `Decryptor`.
@@ -547,3 +598,5 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
             .await
     }
 }
+
+

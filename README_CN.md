@@ -37,110 +37,35 @@ seal-flow = "0.1.0" # 请替换为最新版本
 
 本示例演示了一个完整的加密和解密周期，包括元数据（AAD）和安全的密钥查找模式。
 
-```rust
-use seal_flow::prelude::*;
-use seal_crypto::prelude::SymmetricKeyGenerator;
-use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-use std::collections::HashMap;
-
-fn main() -> Result<()> {
-    // --- 准备工作 ---
-    // 在实际应用中，你会在KMS或安全存储中管理密钥。
-    let mut key_store = HashMap::new();
-    let key = Aes256Gcm::generate_key()?;
-    let key_id = "my-encryption-key-v1".to_string();
-    key_store.insert(key_id.clone(), key.clone());
-
-    let plaintext = b"这是需要被保护的数据。";
-    let aad = b"上下文元数据，例如请求ID或版本号。";
-
-    // 高层API工厂是无状态且可重用的。
-    let seal = SymmetricSeal::new();
-
-    // --- 1. 加密 ---
-    // 密钥被封装以确保类型安全。
-    let key_wrapped = SymmetricKey::new(key.to_bytes());
-    let ciphertext = seal
-        .encrypt(key_wrapped, key_id)
-        .with_aad(aad) // 将密文与上下文绑定
-        .to_vec::<Aes256Gcm>(plaintext)?; // 执行加密
-
-    println!("加密成功！");
-
-    // --- 2. 解密（安全的密钥查找工作流）---
-
-    // a. 创建一个"待定解密器"以在不解密的情况下检查元数据。
-    let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
-
-    // b. 从头部获取密钥ID。这是一个廉价且安全的操作。
-    let found_key_id = pending_decryptor.key_id().expect("头部必须包含密钥ID。");
-    println!("找到密钥ID：'{}'。现在检索密钥。", found_key_id);
-
-    // c. 使用ID从你的密钥存储中获取正确的密钥。
-    let decryption_key_bytes = key_store.get(found_key_id).unwrap().to_bytes();
-    let decryption_key_wrapped = SymmetricKey::new(decryption_key_bytes);
-    
-    // d. 提供密钥和AAD以完成解密。
-    // `with_key` 方法会自动从头部推断算法。
-    let decrypted_text = pending_decryptor
-        .with_aad(aad) // 必须提供相同的AAD
-        .with_key(decryption_key_wrapped)?;
-
-    assert_eq!(plaintext, &decrypted_text[..]);
-    println!("成功解密数据！");
-    Ok(())
-}
-```
+本示例的完整代码可以在 [`examples/readme_symmetric_workflow.rs`](./examples/readme_symmetric_workflow.rs) 中找到。
 
 ## 使用方法：混合加密工作流
 
 混合加密遵循同样流畅的模式。你使用公钥加密，并用相应的私钥解密。
 
-```rust
-use seal_flow::prelude::*;
-use seal_crypto::{
-    prelude::*,
-    schemes::{asymmetric::traditional::rsa::Rsa2048, hash::Sha256, symmetric::aes_gcm::Aes256Gcm},
-};
-use std::collections::HashMap;
+本示例的完整代码可以在 [`examples/readme_hybrid_workflow.rs`](./examples/readme_hybrid_workflow.rs) 中找到。
 
-type Kem = Rsa2048<Sha256>; // 密钥封装机制
-type Dek = Aes256Gcm;       // 数据封装密钥
+## 主要特性与高级用法
 
-fn main() -> Result<()> {
-    // --- 准备工作 ---
-    let (pk, sk) = Kem::generate_keypair()?;
-    let mut private_key_store = HashMap::new();
-    let kek_id = "rsa-key-pair-001".to_string(); // 密钥加密密钥ID
-    private_key_store.insert(kek_id.clone(), sk.to_bytes());
+### 简化且安全的密钥管理
 
-    let plaintext = b"这是一条用于混合加密的机密消息。";
-    let seal = HybridSeal::new();
+`seal-flow` 通过使用强类型的密钥封装（`SymmetricKey`, `AsymmetricPublicKey`, `AsymmetricPrivateKey`）而不是原始字节来提升安全性。
 
-    // --- 1. 加密 ---
-    // 使用公钥进行加密。
-    let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
-    let ciphertext = seal
-        .encrypt::<Dek>(pk_wrapped, kek_id) // 指定对称加密算法 (DEK)
-        .to_vec::<Kem>(plaintext)?;          // 指定非对称加密算法 (KEM)
+对于解密，推荐使用 `with_key(key_wrapper)` 方法。它会自动且安全地从密文头部推断出正确的加密算法，减少了出错的风险。
 
-    // --- 2. 解密 ---
-    // 检查头部以确定使用哪个私钥。
-    let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
-    let found_kek_id = pending_decryptor.kek_id().unwrap();
+对于高级场景（例如，与旧系统集成），你可以使用 `with_typed_key::<Algorithm>(concrete_key)` 来显式指定算法，从而覆盖头部中的信息。
 
-    // 获取并封装私钥字节。
-    let sk_bytes = private_key_store.get(found_kek_id).unwrap();
-    let sk_wrapped = AsymmetricPrivateKey::new(sk_bytes.clone());
+### 密钥派生 (KDF & PBKDF)
 
-    // 提供密钥以进行解密。
-    let decrypted_text = pending_decryptor.with_key(sk_wrapped)?;
+从主密钥或密码中派生出新密钥，用于密钥轮换或基于密码的加密等场景。
 
-    assert_eq!(plaintext, &decrypted_text[..]);
-    println!("成功执行混合加密和解密！");
-    Ok(())
-}
-```
+本示例的完整代码可以在 [`examples/readme_key_derivation.rs`](./examples/readme_key_derivation.rs) 中找到。
+
+### 数字签名
+
+在混合加密中，你还可以对数据进行签名以证明其来源和完整性。
+
+本示例的完整代码可以在 [`examples/readme_digital_signatures.rs`](./examples/readme_digital_signatures.rs) 中找到。
 
 ## 主要特性与高级用法
 
@@ -247,30 +172,4 @@ fn main() -> Result<()> {
 
 ## 互操作性
 
-`seal-flow` 的一个关键特性是其处理模式之间的完美互操作性。使用任何一种模式（例如 `streaming`）加密的数据，都可以被任何其他模式（例如 `in_memory_parallel`）解密，只要底层的算法（如 `Aes256Gcm`）和密钥保持一致。
-
-这一特性由统一的数据格式保证，并由我们全面的 `interoperability_matrix` 集成测试进行验证。这使你能够根据具体需求，灵活地、独立地为加密和解密选择最高效的模式。例如，一个内存受限的服务器可以流式加密一个大文件，而一台性能强大的客户端机器则可以并行解密它以获得最佳性能。
-
-## API分层详解
-
-本库暴露了三个明确的API层级：
-
--   **高层API (`seal` 模块):** 这是推荐给绝大多数用户的入口点。它提供了一个流畅的构建者模式（`SymmetricSeal`, `HybridSeal`），抽象了所有实现的复杂性。你只需简单地链式调用方法来定义操作、选择模式并执行。
--   **中层API (`flows` 模块):** 专为需要更细粒度控制的高级用户设计。该层允许你直接访问和使用特定的执行流（例如 `streaming`, `parallel`, `asynchronous`），而无需通过构建者模式的抽象。
--   **底层API (`crypto` 模块):** 提供对底层 `seal-crypto` crate 中密码学原语的直接、无过滤的访问。这适用于需要在核心算法之上构建自定义逻辑的专家。
-
-## 运行示例
-
-你可以使用 `cargo` 来运行我们提供的示例：
-
-```bash
-# 运行高层对称加密示例
-cargo run --example high_level_symmetric --features=async
-
-# 运行中层混合加密示例
-cargo run --example mid_level_hybrid --features=async
-```
-
-## 许可证 (License)
-
-本项目采用 Mozilla Public License 2.0 许可证。详情请参阅 [LICENSE](LICENSE) 文件。 
+`seal-flow`
