@@ -3,25 +3,26 @@
 [![Crates.io](https://img.shields.io/crates/v/seal-flow.svg)](https://crates.io/crates/seal-flow)
 [![Docs.rs](https://docs.rs/seal-flow/badge.svg)](https://docs.rs/seal-flow)
 
-`seal-flow` 是一个构建在 `seal-crypto` 之上的无状态、高级别的密码学工作流（workflow）库。它为混合加密和对称加密等常见的密码学操作提供了统一且易于使用的接口，并支持多种处理模式，包括一次性（内存）、并行、流式和异步模式。
+`seal-flow` 是一个构建在 `seal-crypto` 之上的无状态、高级别的密码学工作流（workflow）库。它为混合加密和对称加密等常见的密码学操作提供了统一、流畅且安全的接口。
 
-## 核心设计
+## 核心设计：流畅的 "Seal" API
 
-`seal-flow` 设计了分层的API，以满足从初学者到专家的不同开发者的需求。
+`seal-flow` 旨在使复杂的密码学工作流变得简单而安全。库的核心是高层 `seal` API，它采用了**流畅的构建者模式（fluent builder pattern）**。
 
-### 1. 分层API
+所有操作都遵循一个简单的两阶段模型：**配置-然后-执行（Configure-then-Execute）**。
 
-本库暴露了三个明确的API层级：
+1.  **配置（Configure）**: 你从一个 `SymmetricSeal` 或 `HybridSeal` 工厂开始，创建一个加密器或解密器，然后通过链式调用 `.with_aad()` 或 `.with_signer()` 等方法来配置操作。
+2.  **执行（Execute）**: 配置完成后，你调用一个最终方法，如 `.to_vec()` (用于内存数据) 或 `.stream()` (用于I/O流)，来执行实际的密码学工作。
 
--   **高层API (`seal` 模块):** 这是推荐给绝大多数用户的入口点。它提供了一个流畅的构建者模式（`SymmetricSeal`, `HybridSeal`），抽象了所有实现的复杂性。你只需简单地链式调用方法来定义操作、选择模式并执行。
--   **中层API (`flows` 模块):** 专为需要更细粒度控制的高级用户设计。该层允许你直接访问和使用特定的执行流（例如 `streaming`, `parallel`, `asynchronous`），而无需通过构建者模式的抽象。
--   **底层API (`crypto` 模块):** 提供对底层 `seal-crypto` crate 中密码学原语的直接、无过滤的访问。这适用于需要在核心算法之上构建自定义逻辑的专家。
+这种设计使你的代码可读性强、灵活，且不易出错。
 
-### 2. 互操作性
-
-`seal-flow` 的一个关键特性是其处理模式之间的完美互操作性。使用任何一种模式（例如 `streaming`）加密的数据，都可以被任何其他模式（例如 `in_memory_parallel`）解密，只要底层的算法（如 `Aes256Gcm`）和密钥保持一致。
-
-这一特性由统一的数据格式保证，并由我们全面的 `interoperability_matrix` 集成测试进行验证。这使你能够根据具体需求，灵活地、独立地为加密和解密选择最高效的模式。例如，一个内存受限的服务器可以流式加密一个大文件，而一台性能强大的客户端机器则可以并行解密它以获得最佳性能。
+```mermaid
+graph TD
+    A["开始: <br/>SymmetricSeal 或 <br/>HybridSeal"] --> B["创建加密/解密器 <br/> .encrypt() 或 .decrypt()"];
+    B --> C["配置 (可选) <br/> .with_aad() <br/> .with_signer() <br/> ..."];
+    C --> D["执行 <br/> .to_vec(plaintext) <br/> .with_key(key) <br/> ..."];
+    D --> E["结果: <br/>密文或明文"];
+```
 
 ## 安装
 
@@ -32,404 +33,231 @@
 seal-flow = "0.1.0" # 请替换为最新版本
 ```
 
-## 使用方法
+## 使用方法：一个完整的对称加密工作流
 
-### 快速上手：高层API
-
-这是一个使用高层API进行对称加密/解密往返操作的简单示例。
-
-```rust
-use seal_flow::prelude::*;
-use seal_crypto::prelude::SymmetricKeyGenerator;
-use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-
-fn main() -> Result<()> {
-    let key = Aes256Gcm::generate_key()?;
-    let key_id = "my-secret-key-id".to_string();
-    let plaintext = b"这是需要被保护的数据。";
-
-    // 高层API工厂是无状态且易于使用的
-    let seal = SymmetricSeal::new();
-
-    // 加密内存中的数据
-    let key_wrapped = SymmetricKey::new(key.to_bytes());
-    let ciphertext = seal
-        .encrypt(key_wrapped, key_id)
-        .to_vec::<Aes256Gcm>(plaintext)?;
-
-    // 解密内存中的数据
-    // API 推荐一个更安全的两步解密流程。
-    // 首先，创建一个待定解密器，在不解密的情况下检查元数据。
-    let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
-
-    // 现在你可以从头部检查密钥ID，以找到正确的密钥。
-    // 在此示例中，我们将使用已有的密钥。
-    let decrypted_text = pending_decryptor.with_typed_key::<Aes256Gcm>(key)?;
-
-    assert_eq!(plaintext, &decrypted_text[..]);
-    println!("成功加密和解密数据！");
-    Ok(())
-}
-```
-
-### 解密工作流：查找并使用正确的密钥
-
-在解密之前，你通常需要知道该使用哪个密钥。`seal-flow` 提供了一个安全且符合人体工程学的 `PendingDecryptor` 模式来解决这个问题。你可以在提供密钥和处理密文*之前*，检查加密流的元数据以获取密钥ID。
-
-这个工作流可以防止出错并简化密钥管理。
+本示例演示了一个完整的加密和解密周期，包括元数据（AAD）和安全的密钥查找模式。
 
 ```rust
 use seal_flow::prelude::*;
 use seal_crypto::prelude::SymmetricKeyGenerator;
 use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 use std::collections::HashMap;
-use std::io::Cursor;
 
 fn main() -> Result<()> {
-    // 1. 设置一个密钥存储并创建一个密钥
+    // --- 准备工作 ---
+    // 在实际应用中，你会在KMS或安全存储中管理密钥。
     let mut key_store = HashMap::new();
     let key = Aes256Gcm::generate_key()?;
-    let key_id = "key-id-1".to_string();
+    let key_id = "my-encryption-key-v1".to_string();
     key_store.insert(key_id.clone(), key.clone());
-    
-    let plaintext = b"一些机密数据";
+
+    let plaintext = b"这是需要被保护的数据。";
+    let aad = b"上下文元数据，例如请求ID或版本号。";
+
+    // 高层API工厂是无状态且可重用的。
     let seal = SymmetricSeal::new();
 
-    // 2. 使用特定的密钥ID加密数据
+    // --- 1. 加密 ---
+    // 密钥被封装以确保类型安全。
     let key_wrapped = SymmetricKey::new(key.to_bytes());
     let ciphertext = seal
         .encrypt(key_wrapped, key_id)
-        .to_vec::<Aes256Gcm>(plaintext)?;
+        .with_aad(aad) // 将密文与上下文绑定
+        .to_vec::<Aes256Gcm>(plaintext)?; // 执行加密
 
-    // --- 解密工作流 ---
+    println!("加密成功！");
 
-    // 3. 通过从读取器创建一个待定解密器来开始解密过程
-    let pending_decryptor = seal.decrypt().reader(Cursor::new(&ciphertext))?;
+    // --- 2. 解密（安全的密钥查找工作流）---
 
-    // 4. 从加密头部获取密钥ID。这是一个廉价的操作。
-    let found_key_id = pending_decryptor.key_id().expect("在头部未找到密钥ID！");
-    println!("找到密钥ID: {}", found_key_id);
-    
-    // 5. 从你的密钥存储中检索正确的密钥。
-    let decryption_key = key_store.get(found_key_id).expect("在存储中未找到密钥！");
-
-    // 6. 提供密钥以获得一个功能完备的解密器。
-    let mut decryptor = pending_decryptor.with_typed_key::<Aes256Gcm>(decryption_key.clone())?;
-    
-    // 7. 解密数据。
-    let mut decrypted_text = Vec::new();
-    decryptor.read_to_end(&mut decrypted_text)?;
-
-    assert_eq!(plaintext, &decrypted_text[..]);
-    println!("成功识别密钥ID并解密数据！");
-
-    Ok(())
-}
-```
-
-### 密钥派生功能
-
-`seal-flow` 支持强大的密钥派生功能，允许您：
-
-1. 从主密钥派生子密钥（用于密钥轮换或特定用途的密钥）
-2. 从密码派生加密密钥（用于基于密码的加密）
-
-这些功能通过 `SymmetricKey` 类型提供：
-
-```rust
-use seal_flow::prelude::*;
-use seal_crypto::schemes::kdf::{hkdf::HkdfSha256, pbkdf2::Pbkdf2Sha256};
-use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-
-fn main() -> Result<()> {
-    // --- 从主密钥派生子密钥 ---
-    let master_key = SymmetricKey::new(vec![0u8; 32]); // 主密钥
-    let deriver = HkdfSha256::default();
-    
-    // 使用不同的上下文信息派生不同用途的子密钥
-    let salt = b"key-rotation-salt";
-    let encryption_info = b"data-encryption-key";
-    let signing_info = b"hmac-signing-key";
-    
-    // 派生加密密钥
-    let encryption_key = master_key.derive_key(
-        &deriver,
-        Some(salt),
-        Some(encryption_info),
-        32
-    )?;
-    
-    // 派生签名密钥
-    let signing_key = master_key.derive_key(
-        &deriver,
-        Some(salt),
-        Some(signing_info),
-        32
-    )?;
-    
-    // --- 从密码派生密钥 ---
-    let password = b"user-secure-password";
-    let salt = b"random-salt-value";
-    
-    // 在实际应用中应使用更高的迭代次数（至少100,000）
-    let pbkdf2_deriver = Pbkdf2Sha256::new(100_000);
-    
-    // 从密码派生加密密钥
-    let password_derived_key = SymmetricKey::derive_from_password(
-        password,
-        &pbkdf2_deriver,
-        salt,
-        32
-    )?;
-    
-    // 使用派生的密钥进行加密
-    let seal = SymmetricSeal::new();
-    let plaintext = b"要加密的数据";
-    
-    let ciphertext = seal
-        .encrypt(encryption_key, "derived-key-id".to_string())
-        .to_vec::<Aes256Gcm>(plaintext)?;
-    
-    println!("使用派生密钥成功加密数据！");
-    
-    Ok(())
-}
-```
-
-### 密钥派生的常见用例
-
-#### 1. 密钥轮换
-
-使用密钥派生轻松实现密钥轮换而无需更改主密钥：
-
-```rust
-let master_key = SymmetricKey::new(/* 主密钥字节 */);
-let deriver = HkdfSha256::default();
-
-// 版本1密钥
-let key_v1 = master_key.derive_key(
-    &deriver,
-    Some(b"rotation-salt"),
-    Some(b"key-version-1"),
-    32
-)?;
-
-// 版本2密钥（通过更改上下文信息）
-let key_v2 = master_key.derive_key(
-    &deriver,
-    Some(b"rotation-salt"),
-    Some(b"key-version-2"),
-    32
-)?;
-```
-
-#### 2. 多层密钥派生
-
-创建密钥层次结构，用于不同的加密任务：
-
-```rust
-// 从密码派生主密钥材料
-let master_key_material = SymmetricKey::derive_from_password(
-    password,
-    &pbkdf2_deriver,
-    salt,
-    64 // 更大的密钥用于进一步派生
-)?;
-
-// 然后派生特定用途的子密钥
-let db_key = master_key_material.derive_key(
-    &HkdfSha256::default(),
-    Some(b"app-salt"),
-    Some(b"database-encryption"),
-    32
-)?;
-
-let file_key = master_key_material.derive_key(
-    &HkdfSha256::default(),
-    Some(b"app-salt"),
-    Some(b"file-encryption"),
-    32
-)?;
-```
-
-#### 3. 混合加密中的密钥派生
-
-在混合加密场景中使用密钥派生来保护密钥加密密钥（KEK）：
-
-```rust
-// 从用户密码派生KEK保护密钥
-let kek_protection_key = SymmetricKey::derive_from_password(
-    user_password,
-    &pbkdf2_deriver,
-    user_salt,
-    32
-)?;
-
-// 派生特定用途的子密钥
-let wrapping_key = kek_protection_key.derive_key(
-    &HkdfSha256::default(),
-    Some(b"kek-wrapping"),
-    Some(b"encryption-context"),
-    32
-)?;
-
-// 在实际应用中，可以使用这个密钥来加密KEK
-```
-
-### 使用密钥封装简化密钥管理
-
-`seal-flow` 使用强类型的密钥封装（如 `SymmetricKey` 和 `AsymmetricPrivateKey`）来提高安全性并防止密钥误用。开发者需要传递这些封装类型而不是原始字节。
-
-对于解密，主要有两种提供密钥的方法：
-
-1.  `with_key(key: K)`: 这是最简单的方法。`K` 是一个密钥封装结构体（例如 `SymmetricKey`）。此方法会从密文头部推断加密算法，提供了一个流线型且安全的默认选项。它会自动解析头部，选择正确的算法，然后尝试解密。这是大多数用例的推荐方法。
-
-2.  `with_typed_key<A>(key: A::Key)`: 此方法适用于高级场景，当您希望显式指定要使用的加密算法 `A`，并覆盖头部中的信息时。`A::Key` 是来自 `seal-crypto` 的具体密钥类型（例如 `aes_gcm::Key`）。这对于那些头部信息可能不可信或不可用的旧系统或自定义协议非常有用。
-
-以下是推荐的 `with_key` 方法示例：
-
-```rust
-use seal_flow::prelude::*;
-use seal_crypto::prelude::SymmetricKeyGenerator;
-use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-use std::collections::HashMap;
-
-fn main() -> Result<()> {
-    // 设置：创建并存储一个密钥。
-    let key = Aes256Gcm::generate_key()?;
-    let key_id = "my-kms-key".to_string();
-    let plaintext = b"一些机密数据";
-
-    // 在实际应用中，您会存储和检索原始密钥字节。
-    let key_bytes = key.to_bytes();
-    
-    let seal = SymmetricSeal::new();
-
-    // 使用封装后的密钥进行加密。
-    let key_wrapped = SymmetricKey::new(key.to_bytes());
-    let ciphertext = seal
-        .encrypt(key_wrapped, key_id)
-        .to_vec::<Aes256Gcm>(plaintext)?;
-
-    // 解密：
-    // 1. 在实际场景中，您会从KMS或数据库中获取密钥字节。
-    let retrieved_key_bytes = key_bytes; // 模拟获取
-
-    // 2. 将原始字节封装在 `SymmetricKey` 类型中。
-    let decryption_key = SymmetricKey::new(retrieved_key_bytes);
-
-    // 3. 使用 `with_key` 进行解密。
-    // `seal-flow` 会自动从头部推断算法 (Aes256Gcm)。
+    // a. 创建一个"待定解密器"以在不解密的情况下检查元数据。
     let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
-    let decrypted_text = pending_decryptor.with_key(decryption_key)?;
 
-    assert_eq!(plaintext, &decrypted_text[..]);
-    println!("成功使用密钥提供程序解密！");
+    // b. 从头部获取密钥ID。这是一个廉价且安全的操作。
+    let found_key_id = pending_decryptor.key_id().expect("头部必须包含密钥ID。");
+    println!("找到密钥ID：'{}'。现在检索密钥。", found_key_id);
 
-    Ok(())
-}
-```
-
-### 使用关联数据 (AAD)
-
-`seal-flow` 支持关联数据（Associated Data, AAD），这部分数据会被认证但不会被加密。这对于将密文与其上下文（例如版本号、文件名或其他元数据）绑定非常有用，而无需加密这些元数据本身。
-
-`with_aad()` 方法可以在加密和解密流程中链式调用。为了解密成功，加密和解密过程中使用的 AAD 必须完全相同。
-
-```rust
-use seal_flow::prelude::*;
-use seal_crypto::prelude::SymmetricKeyGenerator;
-use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-
-fn main() -> Result<()> {
-    let key = Aes256Gcm::generate_key()?;
-    let key_id = "my-aad-key".to_string();
-    let plaintext = b"这是机密数据。";
-    let aad = b"这是我的上下文元数据。";
-
-    let seal = SymmetricSeal::new();
-
-    // 使用 AAD 加密
-    let key_wrapped = SymmetricKey::new(key.to_bytes());
-    let ciphertext = seal
-        .encrypt(key_wrapped, key_id)
-        .with_aad(aad)
-        .to_vec::<Aes256Gcm>(plaintext)?;
-
-    // 解密时，你必须提供相同的 AAD。
-    let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
+    // c. 使用ID从你的密钥存储中获取正确的密钥。
+    let decryption_key_bytes = key_store.get(found_key_id).unwrap().to_bytes();
+    let decryption_key_wrapped = SymmetricKey::new(decryption_key_bytes);
+    
+    // d. 提供密钥和AAD以完成解密。
+    // `with_key` 方法会自动从头部推断算法。
     let decrypted_text = pending_decryptor
-        .with_aad(aad) // 提供相同的 AAD
-        .with_typed_key::<Aes256Gcm>(key.clone())?;
+        .with_aad(aad) // 必须提供相同的AAD
+        .with_key(decryption_key_wrapped)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
-    println!("成功使用AAD解密！");
-
-    // 尝试使用错误或缺失的 AAD 进行解密将会失败。
-    let pending_fail = seal.decrypt().slice(&ciphertext)?;
-    assert!(pending_fail.with_aad(b"错误的 aad").with_typed_key::<Aes256Gcm>(key.clone()).is_err());
-    
-    let pending_fail2 = seal.decrypt().slice(&ciphertext)?;
-    assert!(pending_fail2.with_typed_key::<Aes256Gcm>(key).is_err());
-    
-    println!("使用错误/缺失的AAD解密已按预期失败。");
-
+    println!("成功解密数据！");
     Ok(())
 }
 ```
 
-### 混合加密示例
+## 使用方法：混合加密工作流
 
-这是一个使用高层API进行混合加密的示例。它演示了如何使用公钥加密，并从密钥库中以字节形式检索相应的私钥进行解密。
+混合加密遵循同样流畅的模式。你使用公钥加密，并用相应的私钥解密。
 
 ```rust
 use seal_flow::prelude::*;
 use seal_crypto::{
     prelude::*,
-    schemes::asymmetric::traditional::rsa::Rsa2048,
-    schemes::hash::Sha256,
-    schemes::symmetric::aes_gcm::Aes256Gcm,
+    schemes::{asymmetric::traditional::rsa::Rsa2048, hash::Sha256, symmetric::aes_gcm::Aes256Gcm},
 };
 use std::collections::HashMap;
 
-type Kem = Rsa2048<Sha256>;
-type Dek = Aes256Gcm;
+type Kem = Rsa2048<Sha256>; // 密钥封装机制
+type Dek = Aes256Gcm;       // 数据封装密钥
 
 fn main() -> Result<()> {
-    // 1. 设置：生成密钥对并存储私钥。
+    // --- 准备工作 ---
     let (pk, sk) = Kem::generate_keypair()?;
-
     let mut private_key_store = HashMap::new();
-    let kek_id = "my-hybrid-key".to_string();
-    private_key_store.insert(kek_id.clone(), sk.clone());
+    let kek_id = "rsa-key-pair-001".to_string(); // 密钥加密密钥ID
+    private_key_store.insert(kek_id.clone(), sk.to_bytes());
 
     let plaintext = b"这是一条用于混合加密的机密消息。";
     let seal = HybridSeal::new();
 
-    // 2. 使用公钥进行加密。
+    // --- 1. 加密 ---
+    // 使用公钥进行加密。
     let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
     let ciphertext = seal
-        .encrypt::<Dek>(pk_wrapped, kek_id)
-        .to_vec::<Kem>(plaintext)?;
+        .encrypt::<Dek>(pk_wrapped, kek_id) // 指定对称加密算法 (DEK)
+        .to_vec::<Kem>(plaintext)?;          // 指定非对称加密算法 (KEM)
 
-    // 3. 解密：首先，创建一个待定解密器以检查头部。
+    // --- 2. 解密 ---
+    // 检查头部以确定使用哪个私钥。
     let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
-    
-    // 4. 找到密钥ID并从存储中检索私钥。
     let found_kek_id = pending_decryptor.kek_id().unwrap();
-    let private_key = private_key_store.get(found_kek_id).unwrap();
 
-    // 5. 使用私钥解密数据。
-    let decrypted_text = pending_decryptor.with_typed_key::<Kem, Dek>(private_key)?;
+    // 获取并封装私钥字节。
+    let sk_bytes = private_key_store.get(found_kek_id).unwrap();
+    let sk_wrapped = AsymmetricPrivateKey::new(sk_bytes.clone());
+
+    // 提供密钥以进行解密。
+    let decrypted_text = pending_decryptor.with_key(sk_wrapped)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("成功执行混合加密和解密！");
+    Ok(())
+}
+```
+
+## 主要特性与高级用法
+
+### 简化且安全的密钥管理
+
+`seal-flow` 通过使用强类型的密钥封装（`SymmetricKey`, `AsymmetricPublicKey`, `AsymmetricPrivateKey`）而不是原始字节来提升安全性。
+
+对于解密，推荐使用 `with_key(key_wrapper)` 方法。它会自动且安全地从密文头部推断出正确的加密算法，减少了出错的风险。
+
+对于高级场景（例如，与旧系统集成），你可以使用 `with_typed_key::<Algorithm>(concrete_key)` 来显式指定算法，从而覆盖头部中的信息。
+
+### 密钥派生 (KDF & PBKDF)
+
+从主密钥或密码中派生出新密钥，用于密钥轮换或基于密码的加密等场景。
+
+```rust
+use seal_flow::prelude::*;
+use seal_crypto::schemes::kdf::{hkdf::HkdfSha256, pbkdf2::Pbkdf2Sha256};
+
+fn main() -> Result<()> {
+    // 从主密钥派生子密钥
+    let master_key = SymmetricKey::new(vec![0u8; 32]);
+    let deriver = HkdfSha256::default();
+    let encryption_key = master_key.derive_key(
+        &deriver,
+        Some(b"salt"),
+        Some(b"context-for-encryption"),
+        32,
+    )?;
+
+    // 从密码派生密钥
+    let password = b"user-secure-password";
+    let pbkdf2 = Pbkdf2Sha256::new(100_000); // 使用高的迭代次数
+    let password_derived_key = SymmetricKey::derive_from_password(
+        password,
+        &pbkdf2,
+        b"random-salt",
+        32,
+    )?;
 
     Ok(())
 }
 ```
 
-关于涵盖所有模式和API层级的更详细示例，请参阅 `examples/` 目录。
+### 数字签名
+
+在混合加密中，你还可以对数据进行签名以证明其来源和完整性。
+
+```rust
+use seal_flow::prelude::*;
+use seal_crypto::{
+    prelude::*,
+    schemes::{
+        asymmetric::traditional::rsa::Rsa2048,
+        hash::Sha256,
+        signature::ed25519::Ed25519,
+        symmetric::aes_gcm::Aes256Gcm,
+    },
+};
+
+type Kem = Rsa2048<Sha256>;
+type Dek = Aes256Gcm;
+
+fn main() -> Result<()> {
+    let seal = HybridSeal::new();
+
+    // 1. 生成加密（KEM）和签名用的密钥。
+    let (pk_kem, sk_kem) = Kem::generate_keypair()?;
+    let (pk_sig, sk_sig) = Ed25519::generate_keypair()?;
+
+    let plaintext = b"这份数据将被签名和加密";
+
+    // 2. 加密并签名数据。
+    let pk_kem_wrapped = AsymmetricPublicKey::new(pk_kem.to_bytes());
+    let ciphertext = seal
+        .encrypt::<Dek>(pk_kem_wrapped, "kem-key-id".to_string())
+        .with_signer::<Ed25519>(sk_sig, "sig-key-id".to_string())
+        .to_vec::<Kem>(plaintext)?;
+
+    // 3. 解密并验证签名。
+    let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
+
+    let sk_kem_wrapped = AsymmetricPrivateKey::new(sk_kem.to_bytes());
+    let verifier = Verifier::Ed25519(pk_sig);
+
+    let decrypted_text = pending_decryptor
+        .with_verification_key(verifier)?
+        .with_key(sk_kem_wrapped)?;
+
+    assert_eq!(plaintext, &decrypted_text[..]);
+    Ok(())
+}
+```
+
+### 多种处理模式
+
+虽然 `.to_vec()` 非常适合处理内存中的数据，但 `seal-flow` 还支持其他模式以满足不同需求：
+
+-   **流式处理 (Streaming):** 使用 `into_writer()` 来加密/解密I/O流 (`Read`/`Write`)，无需将所有内容加载到内存中。
+-   **并行处理 (Parallel):** 使用 `par_to_vec()` 在多核系统上进行高吞吐量的内存处理。
+-   **异步处理 (Asynchronous):** 使用 `into_async_writer()` 在 `async` 应用程序中进行非阻塞I/O。
+
+得益于统一的数据格式，用一种模式加密的数据可以用任何其他模式解密。请参阅 `examples/` 目录查看详细用法。
+
+## 互操作性
+
+`seal-flow` 的一个关键特性是其处理模式之间的完美互操作性。使用任何一种模式（例如 `streaming`）加密的数据，都可以被任何其他模式（例如 `in_memory_parallel`）解密，只要底层的算法（如 `Aes256Gcm`）和密钥保持一致。
+
+这一特性由统一的数据格式保证，并由我们全面的 `interoperability_matrix` 集成测试进行验证。这使你能够根据具体需求，灵活地、独立地为加密和解密选择最高效的模式。例如，一个内存受限的服务器可以流式加密一个大文件，而一台性能强大的客户端机器则可以并行解密它以获得最佳性能。
+
+## API分层详解
+
+本库暴露了三个明确的API层级：
+
+-   **高层API (`seal` 模块):** 这是推荐给绝大多数用户的入口点。它提供了一个流畅的构建者模式（`SymmetricSeal`, `HybridSeal`），抽象了所有实现的复杂性。你只需简单地链式调用方法来定义操作、选择模式并执行。
+-   **中层API (`flows` 模块):** 专为需要更细粒度控制的高级用户设计。该层允许你直接访问和使用特定的执行流（例如 `streaming`, `parallel`, `asynchronous`），而无需通过构建者模式的抽象。
+-   **底层API (`crypto` 模块):** 提供对底层 `seal-crypto` crate 中密码学原语的直接、无过滤的访问。这适用于需要在核心算法之上构建自定义逻辑的专家。
 
 ## 运行示例
 
@@ -445,26 +273,4 @@ cargo run --example mid_level_hybrid --features=async
 
 ## 许可证 (License)
 
-本项目采用 Mozilla Public License 2.0 许可证。详情请参阅 [LICENSE](LICENSE) 文件。
-
-## API分层详解
-
-### 高层API (`seal` module)
-
-使用无状态工厂以实现最大程度的简洁性和灵活性。所有操作都从 `encrypt` 或 `decrypt` 开始。
-
--   **对称加密:** `SymmetricSeal::new().encrypt(&key, ...).to_vec(plaintext)?`
--   **混合加密:** `HybridSeal::new().encrypt(&pk, ...).to_vec(plaintext)?`
-
-### 中层API (`flows` module)
-
-提供对每个流程的函数和结构体的直接访问。
-
--   **对称加密:** `seal_flow::flows::symmetric::ordinary::encrypt(...)`
--   **混合加密:** `seal_flow::flows::hybrid::streaming::Encryptor::new(...)`
-
-### 底层API (`crypto` module)
-
-直接访问 `seal-crypto`。
-
--   `seal_flow::crypto::schemes::symmetric::aes_gcm::Aes256Gcm::encrypt(...)` 
+本项目采用 Mozilla Public License 2.0 许可证。详情请参阅 [LICENSE](LICENSE) 文件。 
