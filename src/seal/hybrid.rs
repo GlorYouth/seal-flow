@@ -53,6 +53,8 @@ mod tests {
     use crate::Error;
     use seal_crypto::prelude::*;
     use seal_crypto::schemes::asymmetric::post_quantum::dilithium::Dilithium2;
+    use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
+    use seal_crypto::schemes::xof::shake::Shake256;
     use seal_crypto::schemes::{
         asymmetric::traditional::rsa::Rsa2048, hash::Sha256, symmetric::aes_gcm::Aes256Gcm,
     };
@@ -289,7 +291,7 @@ mod tests {
         let salt = b"kdf-salt";
         let info = b"kdf-info";
         let seal = HybridSeal::new();
-        type Kdf = seal_crypto::schemes::kdf::hkdf::HkdfSha256;
+        type Kdf = HkdfSha256;
 
         // 2. Encryption with KDF
         // We also add AAD to ensure it works together with KDF.
@@ -354,6 +356,81 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_xof_roundtrip_all_modes() -> crate::Result<()> {
+        // 1. Setup
+        let (pk, sk) = TestKem::generate_keypair()?;
+        let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
+        let plaintext = get_test_data();
+        let aad = b"test-aad-for-xof-roundtrip";
+        let kek_id = "test-xof-kek-id".to_string();
+        let salt = b"xof-salt";
+        let info = b"xof-info";
+        let seal = HybridSeal::new();
+        type Xof = Shake256;
+
+        // 2. Encryption with XOF
+        let encrypted = seal
+            .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
+            .with_aad(aad)
+            .with_xof(
+                Xof::default(),
+                Some(salt),
+                Some(info),
+                <TestDek as SymmetricCipher>::KEY_SIZE as u32,
+            )
+            .to_vec::<TestKem>(plaintext)?;
+
+        // 3. Decryption tests for all sync modes
+
+        // Mode 1: In-memory (`slice`)
+        let decrypted1 = seal
+            .decrypt()
+            .slice(&encrypted)?
+            .with_aad(aad)
+            .with_typed_key::<TestKem, TestDek>(&sk)?;
+        assert_eq!(
+            plaintext,
+            decrypted1.as_slice(),
+            "In-memory XOF mode failed"
+        );
+
+        // Mode 2: In-memory parallel (`slice_parallel`)
+        let decrypted2 = seal
+            .decrypt()
+            .slice_parallel(&encrypted)?
+            .with_aad(aad)
+            .with_typed_key::<TestKem, TestDek>(&sk)?;
+        assert_eq!(
+            plaintext,
+            decrypted2.as_slice(),
+            "In-memory parallel XOF mode failed"
+        );
+
+        // Mode 3: Streaming (`reader`)
+        let pending3 = seal.decrypt().reader(Cursor::new(encrypted.clone()))?;
+        let mut decryptor3 = pending3
+            .with_aad(aad)
+            .with_typed_key::<TestKem, TestDek>(&sk)?;
+        let mut decrypted3 = Vec::new();
+        decryptor3.read_to_end(&mut decrypted3)?;
+        assert_eq!(plaintext, decrypted3.as_slice(), "Streaming XOF mode failed");
+
+        // Mode 4: Parallel Streaming (`reader_parallel` to writer)
+        let mut decrypted4 = Vec::new();
+        seal.decrypt()
+            .reader_parallel(Cursor::new(&encrypted))?
+            .with_aad(aad)
+            .with_typed_key_to_writer::<TestKem, TestDek, _>(&sk, &mut decrypted4)?;
+        assert_eq!(
+            plaintext,
+            decrypted4.as_slice(),
+            "Parallel streaming XOF mode failed"
+        );
+
+        Ok(())
+    }
+
     #[cfg(feature = "async")]
     mod async_tests {
         use super::*;
@@ -408,7 +485,7 @@ mod tests {
             let salt = b"kdf-salt-async";
             let info = b"kdf-info-async";
             let seal = HybridSeal::new();
-            type Kdf = seal_crypto::schemes::kdf::hkdf::HkdfSha256;
+            type Kdf = HkdfSha256;
 
             // 2. Encryption with KDF
             let encrypted = seal
@@ -437,6 +514,51 @@ mod tests {
                 plaintext,
                 decrypted.as_slice(),
                 "Async streaming KDF mode failed"
+            );
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn test_xof_async_roundtrip() -> crate::Result<()> {
+            // 1. Setup
+            let (pk, sk) = TestKem::generate_keypair()?;
+            let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
+            let plaintext = get_test_data();
+            let aad = b"test-aad-for-xof-async-roundtrip";
+            let kek_id = "test-xof-kek-id-async".to_string();
+            let salt = b"xof-salt-async";
+            let info = b"xof-info-async";
+            let seal = HybridSeal::new();
+            type Xof = Shake256;
+
+            // 2. Encryption with XOF
+            let encrypted = seal
+                .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
+                .with_aad(aad)
+                .with_xof(
+                    Xof::default(),
+                    Some(salt),
+                    Some(info),
+                    <TestDek as SymmetricCipher>::KEY_SIZE as u32,
+                )
+                .to_vec::<TestKem>(plaintext)?;
+
+            // 3. Async Decryption
+            let mut decryptor = seal
+                .decrypt()
+                .async_reader(Cursor::new(&encrypted))
+                .await?
+                .with_aad(aad)
+                .with_typed_key::<TestKem, TestDek>(sk.clone())
+                .await?;
+
+            let mut decrypted = Vec::new();
+            decryptor.read_to_end(&mut decrypted).await?;
+            assert_eq!(
+                plaintext,
+                decrypted.as_slice(),
+                "Async streaming XOF mode failed"
             );
 
             Ok(())
