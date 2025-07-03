@@ -1,6 +1,6 @@
 //! Implements a parallel streaming hybrid encryption/decryption scheme.
 
-use super::common::create_header;
+use super::common::{create_header, PendingImpl};
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::DerivationSet;
@@ -71,11 +71,6 @@ where
         Ok(Self { reader, header })
     }
 
-    /// Returns a reference to the header.
-    pub fn header(&self) -> &Header {
-        &self.header
-    }
-
     /// Consumes the pending decryptor, decrypts the stream with the provided private key,
     /// and writes the plaintext to the writer.
     pub fn decrypt_to_writer<A, S, W>(
@@ -93,6 +88,15 @@ where
         W: Write,
     {
         decrypt_body_stream::<A, S, _, W>(sk, &self.header, self.reader, writer, aad)
+    }
+}
+
+impl<R> PendingImpl for PendingDecryptor<R>
+where
+    R: Read + Send,
+{
+    fn header(&self) -> &Header {
+        &self.header
     }
 }
 

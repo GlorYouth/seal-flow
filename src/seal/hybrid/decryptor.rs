@@ -17,42 +17,7 @@ use seal_crypto::schemes::symmetric::{
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 use tokio::io::AsyncRead;
-
-// A private trait to abstract access to the header from the inner implementation.
-pub trait PendingImpl {
-    fn header(&self) -> &Header;
-}
-
-impl<'a> PendingImpl for crate::hybrid::ordinary::PendingDecryptor<'a> {
-    fn header(&self) -> &Header {
-        self.header()
-    }
-}
-
-impl<'a> PendingImpl for crate::hybrid::parallel::PendingDecryptor<'a> {
-    fn header(&self) -> &Header {
-        self.header()
-    }
-}
-
-impl<R: Read + 'static> PendingImpl for crate::hybrid::streaming::PendingDecryptor<R> {
-    fn header(&self) -> &Header {
-        self.header()
-    }
-}
-
-impl<R: Read + Send> PendingImpl for crate::hybrid::parallel_streaming::PendingDecryptor<R> {
-    fn header(&self) -> &Header {
-        self.header()
-    }
-}
-
-#[cfg(feature = "async")]
-impl<R: AsyncRead + Unpin> PendingImpl for crate::hybrid::asynchronous::PendingDecryptor<R> {
-    fn header(&self) -> &Header {
-        self.header()
-    }
-}
+use crate::hybrid::common::PendingImpl;
 
 macro_rules! dispatch_symmetric_algorithm {
     ($algorithm:expr, $callback:ident, $($extra_args:tt)*) => {

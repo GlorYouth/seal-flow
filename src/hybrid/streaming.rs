@@ -1,5 +1,5 @@
 //! Synchronous, streaming hybrid encryption and decryption implementation.
-use super::common::create_header;
+use super::common::{create_header, PendingImpl};
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::DerivationSet;
@@ -98,11 +98,6 @@ impl<R: Read> PendingDecryptor<R> {
         Ok(Self { reader, header })
     }
 
-    /// Returns a reference to the header.
-    pub fn header(&self) -> &Header {
-        &self.header
-    }
-
     /// Consumes the pending decryptor and returns a full `Decryptor` by providing the private key.
     pub fn into_decryptor<A, S>(
         self,
@@ -174,6 +169,12 @@ where
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.inner.read(buf)
+    }
+}
+
+impl<R: Read> PendingImpl for PendingDecryptor<R> {
+    fn header(&self) -> &Header {
+        &self.header
     }
 }
 

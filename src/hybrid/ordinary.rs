@@ -1,6 +1,6 @@
 //! Ordinary (single-threaded, in-memory) hybrid encryption and decryption.
 
-use super::common::create_header;
+use super::common::{create_header, PendingImpl};
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::DerivationSet;
@@ -66,11 +66,6 @@ impl<'a> PendingDecryptor<'a> {
         })
     }
 
-    /// Returns a reference to the header.
-    pub fn header(&self) -> &Header {
-        &self.header
-    }
-
     /// Consumes the `PendingDecryptor` and returns the decrypted plaintext.
     pub fn into_plaintext<A, S>(self, sk: &A::PrivateKey, aad: Option<&[u8]>) -> Result<Vec<u8>>
     where
@@ -80,6 +75,12 @@ impl<'a> PendingDecryptor<'a> {
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
         decrypt_body::<A, S>(sk, &self.header, self.ciphertext_body, aad)
+    }
+}
+
+impl<'a> PendingImpl for PendingDecryptor<'a> {
+    fn header(&self) -> &Header {
+        &self.header
     }
 }
 

@@ -1,7 +1,7 @@
 //! Asynchronous, streaming hybrid encryption and decryption implementation.
 #![cfg(feature = "async")]
 
-use super::common::create_header;
+use super::common::{create_header, PendingImpl};
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::DerivationSet;
@@ -115,11 +115,6 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
         Ok(Self { reader, header })
     }
 
-    /// Returns a reference to the header.
-    pub fn header(&self) -> &Header {
-        &self.header
-    }
-
     /// Consumes the `PendingDecryptor` and returns a full `Decryptor`.
     pub async fn into_decryptor<A, S>(
         self,
@@ -200,6 +195,12 @@ where
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         self.project().inner.poll_read(cx, buf)
+    }
+}
+
+impl<R: AsyncRead + Unpin> PendingImpl for PendingDecryptor<R> {
+    fn header(&self) -> &Header {
+        &self.header
     }
 }
 

@@ -14,6 +14,7 @@ pub mod prelude {
         AsymmetricPrivateKey, AsymmetricPublicKey, SignaturePublicKey, SymmetricKey,
     };
     pub use crate::seal::{HybridSeal, SymmetricSeal};
+    pub use crate::hybrid::common::PendingImpl;
 }
 
 pub mod error;
