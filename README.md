@@ -59,9 +59,22 @@ For advanced scenarios (e.g., integrating with legacy systems), you can use `wit
 
 ### Key Derivation (KDF & PBKDF)
 
-Derive keys from a master key or a password for use cases like key rotation or password-based encryption.
+Derive keys from a master key or a password for use cases like key rotation or password-based encryption. This is also useful for creating key hierarchies, for example, using a password to derive a master secret, and then using an Extendable-Output Function (XOF) like SHAKE256 to generate multiple keys of different lengths from it.
 
-The full code for this example can be found in [`examples/readme_key_derivation.rs`](./examples/readme_key_derivation.rs).
+The full code for this example can be found in [`examples/readme_advanced_key_derivation.rs`](./examples/readme_advanced_key_derivation.rs).
+
+### Authenticated Associated Data (AAD)
+
+`seal-flow` supports Associated Data (AAD), which is data that is authenticated but not encrypted. This is a critical security feature for preventing replay attacks or context-confusion attacks, where a valid ciphertext is maliciously used in a different context.
+
+The AAD is mixed into the cryptographic calculations, meaning the ciphertext is cryptographically bound to the AAD. If the AAD provided during decryption does not exactly match the AAD from encryption, the decryption will fail.
+
+Common use cases for AAD include:
+-   User IDs, session IDs, or request IDs.
+-   Version numbers or file paths.
+-   Any metadata that defines the context of the encrypted data.
+
+The full code for this example can be found in [`examples/readme_aad.rs`](./examples/readme_aad.rs).
 
 ### Digital Signatures
 

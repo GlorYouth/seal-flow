@@ -57,13 +57,26 @@ seal-flow = "0.1.0" # 请替换为最新版本
 
 ### 密钥派生 (KDF & PBKDF)
 
-从主密钥或密码中派生出新密钥，用于密钥轮换或基于密码的加密等场景。
+从主密钥或密码派生密钥，用于密钥轮换或基于密码的加密等场景。这对于创建密钥层次结构也很有用，例如，使用密码派生主密钥，然后使用可扩展输出函数（XOF），如 SHAKE256，从中生成多个不同长度的密钥。
 
-本示例的完整代码可以在 [`examples/readme_key_derivation.rs`](./examples/readme_key_derivation.rs) 中找到。
+该示例的完整代码可以在 [`examples/readme_advanced_key_derivation.rs`](./examples/readme_advanced_key_derivation.rs) 中找到。
+
+### 认证附加数据 (AAD)
+
+`seal-flow` 支持认证附加数据（AAD），这是一种只被认证但不被加密的数据。这是一项关键的安全特性，用于防止重放攻击或上下文混淆攻击，即有效的密文被恶意地用于不同的上下文中。
+
+AAD 会被混合到密码学计算中，这意味着密文与 AAD 是密码学绑定的。如果在解密期间提供的 AAD 与加密时的 AAD 不完全匹配，解密将会失败。
+
+AAD 的常见用例包括：
+-   用户 ID、会话 ID 或请求 ID。
+-   版本号或文件路径。
+-   任何定义加密数据上下文的元数据。
+
+该示例的完整代码可以在 [`examples/readme_aad.rs`](./examples/readme_aad.rs) 中找到。
 
 ### 数字签名
 
-在混合加密中，你还可以对数据进行签名以证明其来源和完整性。
+在混合加密中，你还可以对数据进行签名，以证明其来源和完整性。
 
 本示例的完整代码可以在 [`examples/readme_digital_signatures.rs`](./examples/readme_digital_signatures.rs) 中找到。
 
