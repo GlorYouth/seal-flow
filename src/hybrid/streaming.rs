@@ -2,12 +2,11 @@
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::KdfSet;
+use crate::common::DerivationSet;
 use crate::common::SignerSet;
 use crate::error::{Error, Result};
 use crate::impls::streaming::{DecryptorImpl, EncryptorImpl};
-use seal_crypto::prelude::*;
-use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
+use seal_crypto::prelude::{Kem, SymmetricKeySet};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{self, Read, Write};
 
@@ -36,16 +35,18 @@ where
         kek_id: String,
         signer: Option<SignerSet>,
         aad: Option<&[u8]>,
-        kdf: Option<KdfSet>,
+        derivation_config: Option<DerivationSet>,
     ) -> Result<Self> {
-        let (info, kdf_fn) = kdf.map(|kdf| (kdf.kdf_info, kdf.kdf)).unzip();
+        let (info, deriver_fn) = derivation_config
+            .map(|d| (d.derivation_info, d.deriver_fn))
+            .unzip();
 
         // 1. Create header, nonce, and shared secret
         let (header, base_nonce, shared_secret) =
             create_header::<A, S>(pk, kek_id, signer, aad, info)?;
 
-        // 2. Derive key if KDF is specified
-        let dek = if let Some(f) = kdf_fn {
+        // 2. Derive key if a deriver is specified
+        let dek = if let Some(f) = deriver_fn {
             f(&shared_secret)?
         } else {
             shared_secret
@@ -115,34 +116,26 @@ impl<R: Read> PendingDecryptor<R> {
         A::EncapsulatedKey: From<Vec<u8>> + Send,
         S::Key: From<Zeroizing<Vec<u8>>>,
     {
-        let (encapsulated_key, chunk_size, base_nonce, kdf_info) = match self.header.payload {
-            HeaderPayload::Hybrid {
-                encrypted_dek,
-                stream_info: Some(info),
-                kdf_info,
-                ..
-            } => (
-                encrypted_dek.into(),
-                info.chunk_size,
-                info.base_nonce,
-                kdf_info,
-            ),
-            _ => return Err(Error::InvalidHeader),
-        };
+        let (encapsulated_key, chunk_size, base_nonce, derivation_info) =
+            match self.header.payload {
+                HeaderPayload::Hybrid {
+                    encrypted_dek,
+                    stream_info: Some(info),
+                    derivation_info,
+                    ..
+                } => (
+                    encrypted_dek.into(),
+                    info.chunk_size,
+                    info.base_nonce,
+                    derivation_info,
+                ),
+                _ => return Err(Error::InvalidHeader),
+            };
 
         let shared_secret = A::decapsulate(sk, &encapsulated_key)?;
 
-        let dek = if let Some(info) = kdf_info {
-            let derived = match info.kdf_algorithm {
-                crate::common::algorithms::KdfAlgorithm::HkdfSha256 => HkdfSha256::default()
-                    .derive(
-                        &shared_secret,
-                        info.salt.as_deref(),
-                        info.info.as_deref(),
-                        info.output_len as usize,
-                    ),
-            }?;
-            Zeroizing::new(derived.as_bytes().to_vec())
+        let dek = if let Some(info) = derivation_info {
+            info.derive_key(&shared_secret)?
         } else {
             shared_secret
         };
@@ -187,7 +180,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use seal_crypto::prelude::KeyGenerator;
+    use crate::common::header::{DerivationInfo, KdfInfo};
+    use crate::common::DerivationSet;
+    use seal_crypto::prelude::{KeyBasedDerivation, KeyGenerator};
     use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
@@ -204,18 +199,20 @@ mod tests {
         let mut kdf_info = None;
         let mut kdf_fn: Option<Box<dyn Fn(&[u8]) -> Result<Zeroizing<Vec<u8>>> + Send + Sync>> =
             None;
+        let mut derivation_config = None;
 
         if use_kdf {
             let salt = b"salt-stream";
             let info = b"info-stream";
             let output_len = 32;
 
-            kdf_info = Some(crate::common::header::KdfInfo {
+            let kdf = KdfInfo {
                 kdf_algorithm: crate::common::algorithms::KdfAlgorithm::HkdfSha256,
                 salt: Some(salt.to_vec()),
                 info: Some(info.to_vec()),
                 output_len,
-            });
+            };
+            kdf_info = Some(kdf.clone());
 
             let deriver = HkdfSha256::default();
             kdf_fn = Some(Box::new(move |ikm: &[u8]| {
@@ -224,21 +221,22 @@ mod tests {
                     .map(|dk| Zeroizing::new(dk.as_bytes().to_vec()))
                     .map_err(|e| e.into())
             }));
+
+            derivation_config = Some(DerivationSet {
+                derivation_info: DerivationInfo::Kdf(kdf_info.unwrap()),
+                deriver_fn: kdf_fn.unwrap(),
+            });
         }
 
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let kdf = kdf_info.map(|info| KdfSet {
-            kdf_info: info,
-            kdf: kdf_fn.unwrap(),
-        });
         let mut encryptor = Encryptor::<_, TestKem, TestDek>::new(
             &mut encrypted_data,
             &pk,
             kek_id.clone(),
             None,
             aad,
-            kdf,
+            derivation_config,
         )
         .unwrap();
         encryptor.write_all(plaintext).unwrap();

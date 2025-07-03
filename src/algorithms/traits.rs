@@ -54,3 +54,17 @@ pub trait SignatureAlgorithmDetails: SignatureScheme + 'static {
 pub trait SignatureAlgorithm: SignatureAlgorithmDetails {}
 
 impl<T: SignatureAlgorithmDetails> SignatureAlgorithm for T {}
+
+
+/// Trait to provide the details for a specific extendable-output function (XOF).
+/// The implementor of this trait is the scheme itself.
+pub trait XofAlgorithmDetails: XofDerivation + 'static {
+    /// The corresponding algorithm enum.
+    const ALGORITHM: common::algorithms::XofAlgorithm;
+}
+
+/// Represents a concrete extendable-output function (XOF).
+/// This is a marker trait that bundles `XofAlgorithmDetails`.
+pub trait XofAlgorithm: XofAlgorithmDetails {}
+
+impl<T: XofAlgorithmDetails> XofAlgorithm for T {}

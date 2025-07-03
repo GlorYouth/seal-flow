@@ -3,14 +3,12 @@
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{Header, HeaderPayload};
-use crate::common::KdfSet;
+use crate::common::header::{ Header, HeaderPayload};
+use crate::common::DerivationSet;
 use crate::common::SignerSet;
 use crate::error::{Error, Result};
 use crate::impls::asynchronous::{DecryptorImpl, EncryptorImpl};
 use pin_project_lite::pin_project;
-use seal_crypto::prelude::*;
-use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
 use seal_crypto::zeroize::Zeroizing;
 use std::io;
 use std::pin::Pin;
@@ -43,9 +41,11 @@ where
         kek_id: String,
         signer: Option<SignerSet>,
         aad: Option<&'a [u8]>,
-        kdf: Option<KdfSet<'a>>,
+        derivation_config: Option<DerivationSet<'a>>,
     ) -> Result<Self> {
-        let (info, kdf_fn) = kdf.map(|kdf| (kdf.kdf_info, kdf.kdf)).unzip();
+        let (info, deriver_fn) = derivation_config
+            .map(|d| (d.derivation_info, d.deriver_fn))
+            .unzip();
         let aad_vec = aad.map(|a| a.to_vec());
         let (header, base_nonce, shared_secret) = tokio::task::spawn_blocking(move || {
             let aad = aad_vec.as_deref();
@@ -53,7 +53,7 @@ where
         })
         .await??;
 
-        let dek = if let Some(f) = kdf_fn {
+        let dek = if let Some(f) = deriver_fn {
             f(&shared_secret)?
         } else {
             shared_secret
@@ -133,34 +133,26 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
         S: SymmetricAlgorithm + 'static,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
     {
-        let (encapsulated_key, chunk_size, base_nonce, kdf_info) = match &self.header.payload {
-            HeaderPayload::Hybrid {
-                encrypted_dek,
-                stream_info: Some(info),
-                kdf_info,
-                ..
-            } => (
-                encrypted_dek.clone().into(),
-                info.chunk_size,
-                info.base_nonce,
-                kdf_info.clone(),
-            ),
-            _ => return Err(Error::InvalidHeader),
-        };
+        let (encapsulated_key, chunk_size, base_nonce, derivation_info) =
+            match &self.header.payload {
+                HeaderPayload::Hybrid {
+                    encrypted_dek,
+                    stream_info: Some(info),
+                    derivation_info,
+                    ..
+                } => (
+                    encrypted_dek.clone().into(),
+                    info.chunk_size,
+                    info.base_nonce,
+                    derivation_info.clone(),
+                ),
+                _ => return Err(Error::InvalidHeader),
+            };
 
         let dek = tokio::task::spawn_blocking(move || -> Result<_> {
             let shared_secret = A::decapsulate(&sk.into(), &encapsulated_key)?;
-            if let Some(info) = kdf_info {
-                let derived = match info.kdf_algorithm {
-                    crate::common::algorithms::KdfAlgorithm::HkdfSha256 => HkdfSha256::default()
-                        .derive(
-                            &shared_secret,
-                            info.salt.as_deref(),
-                            info.info.as_deref(),
-                            info.output_len as usize,
-                        ),
-                }?;
-                Ok(Zeroizing::new(derived.as_bytes().to_vec()))
+            if let Some(info) = derivation_info {
+                info.derive_key(&shared_secret)
             } else {
                 Ok(shared_secret)
             }
@@ -215,10 +207,12 @@ where
 mod tests {
     use super::*;
     use crate::common::DEFAULT_CHUNK_SIZE;
-    use seal_crypto::prelude::KeyGenerator;
+    use seal_crypto::prelude::{KeyBasedDerivation, KeyGenerator};
     use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
     use seal_crypto::schemes::hash::Sha256;
+    use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+    use crate::common::header::DerivationInfo;
     use std::io::Cursor;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -427,9 +421,9 @@ mod tests {
             kek_id.clone(),
             None,
             None,
-            Some(KdfSet {
-                kdf_info,
-                kdf: kdf_fn,
+            Some(DerivationSet {
+                derivation_info: DerivationInfo::Kdf(kdf_info),
+                deriver_fn: kdf_fn,
             }),
         )
         .await

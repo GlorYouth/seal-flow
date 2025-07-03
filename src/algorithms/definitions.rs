@@ -2,7 +2,7 @@
 
 use super::traits::{
     AsymmetricAlgorithmDetails, KdfAlgorithmDetails, SignatureAlgorithmDetails,
-    SymmetricAlgorithmDetails,
+    SymmetricAlgorithmDetails, XofAlgorithmDetails,
 };
 use crate::common;
 use seal_crypto::prelude::Hasher;
@@ -18,6 +18,7 @@ use seal_crypto::schemes::asymmetric::traditional::{
 use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
 use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};
 use seal_crypto::schemes::symmetric::chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305};
+use seal_crypto::schemes::xof::shake::Shake256;
 
 // --- Symmetric Algorithms ---
 impl SymmetricAlgorithmDetails for Aes128Gcm {
@@ -97,4 +98,9 @@ impl SignatureAlgorithmDetails for EcdsaP256 {
 impl KdfAlgorithmDetails for HkdfSha256 {
     const ALGORITHM: common::algorithms::KdfAlgorithm =
         common::algorithms::KdfAlgorithm::HkdfSha256;
+}
+
+impl XofAlgorithmDetails for Shake256 {
+    const ALGORITHM: common::algorithms::XofAlgorithm =
+        common::algorithms::XofAlgorithm::Shake256;
 }

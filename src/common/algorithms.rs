@@ -33,4 +33,11 @@ pub enum SignatureAlgorithm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
 pub enum KdfAlgorithm {
     HkdfSha256,
+    HkdfSha512,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
+pub enum XofAlgorithm {
+    Shake128,
+    Shake256,
 }

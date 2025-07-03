@@ -1,7 +1,7 @@
 use bincode::{Decode, Encode};
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享
 use crate::common::algorithms::{
-    AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm,
+    AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm,
 };
 use crate::error::{Error, Result};
 use std::io::Read;
@@ -30,20 +30,100 @@ pub struct SingerInfo {
     pub signature: Vec<u8>,
 }
 
-/// 密钥派生函数 (KDF) 的配置信息
+/// KDF (Key-based Derivation Function) configuration information.
 #[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
 pub struct KdfInfo {
-    /// KDF 算法
+    /// The KDF algorithm.
     pub kdf_algorithm: KdfAlgorithm,
-    /// 用于 KDF 的盐
+    /// The salt for the KDF.
     pub salt: Option<Vec<u8>>,
-    /// 用于 KDF 的上下文信息
+    /// Context and application-specific information for the KDF.
     pub info: Option<Vec<u8>>,
-    /// 派生密钥的期望长度
+    /// The desired length of the derived key.
     pub output_len: u32,
 }
 
-/// HeaderPayload 包含了特定于加密模式的元数据
+/// XOF (Extendable-Output Function) configuration information.
+#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
+pub struct XofInfo {
+    /// The XOF algorithm.
+    pub xof_algorithm: XofAlgorithm,
+    /// The salt for the XOF.
+    pub salt: Option<Vec<u8>>,
+    /// Context and application-specific information for the XOF.
+    pub info: Option<Vec<u8>>,
+    /// The desired length of the derived output.
+    pub output_len: u32,
+}
+
+/// Information about the key derivation method used.
+#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
+pub enum DerivationInfo {
+    /// Uses a standard Key-based Derivation Function (KDF).
+    Kdf(KdfInfo),
+    /// Uses an Extendable-Output Function (XOF).
+    Xof(XofInfo),
+}
+
+impl DerivationInfo {
+    /// Derives a key from the shared secret using the specified method.
+    pub fn derive_key(
+        &self,
+        shared_secret: &[u8],
+    ) -> Result<seal_crypto::zeroize::Zeroizing<Vec<u8>>> {
+        use seal_crypto::prelude::{DigestXofReader, KeyBasedDerivation, XofDerivation};
+        use seal_crypto::schemes::{
+            kdf::hkdf::{HkdfSha256, HkdfSha512},
+            xof::shake::{Shake128, Shake256},
+        };
+        use seal_crypto::zeroize::Zeroizing;
+
+        match self {
+            DerivationInfo::Kdf(kdf_info) => {
+                let derived = match kdf_info.kdf_algorithm {
+                    crate::common::algorithms::KdfAlgorithm::HkdfSha256 => {
+                        HkdfSha256::default().derive(
+                            shared_secret,
+                            kdf_info.salt.as_deref(),
+                            kdf_info.info.as_deref(),
+                            kdf_info.output_len as usize,
+                        )?
+                    }
+                    crate::common::algorithms::KdfAlgorithm::HkdfSha512 => {
+                        HkdfSha512::default().derive(
+                            shared_secret,
+                            kdf_info.salt.as_deref(),
+                            kdf_info.info.as_deref(),
+                            kdf_info.output_len as usize,
+                        )?
+                    }
+                };
+                Ok(Zeroizing::new(derived.as_bytes().to_vec()))
+            }
+            DerivationInfo::Xof(xof_info) => {
+                let mut reader = match xof_info.xof_algorithm {
+                    crate::common::algorithms::XofAlgorithm::Shake256 => Shake256::default()
+                        .reader(
+                            shared_secret,
+                            xof_info.salt.as_deref(),
+                            xof_info.info.as_deref(),
+                        )?,
+                    crate::common::algorithms::XofAlgorithm::Shake128 => Shake128::default()
+                        .reader(
+                            shared_secret,
+                            xof_info.salt.as_deref(),
+                            xof_info.info.as_deref(),
+                        )?,
+                };
+                let mut dek_bytes = vec![0u8; xof_info.output_len as usize];
+                reader.read(&mut dek_bytes);
+                Ok(Zeroizing::new(dek_bytes))
+            }
+        }
+    }
+}
+
+/// HeaderPayload contains metadata specific to the encryption mode.
 #[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
 pub enum HeaderPayload {
     Symmetric {
@@ -58,7 +138,7 @@ pub enum HeaderPayload {
         encrypted_dek: Vec<u8>,
         stream_info: Option<StreamInfo>, // 混合模式理论上也可以流式处理
         signature: Option<SingerInfo>,
-        kdf_info: Option<KdfInfo>,
+        derivation_info: Option<DerivationInfo>,
     },
 }
 
@@ -147,7 +227,7 @@ impl HeaderPayload {
     }
 }
 
-/// 所有加密数据流的元数据信封
+/// The metadata envelope for all encrypted data streams.
 #[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
 pub struct Header {
     pub version: u16,

@@ -1,8 +1,6 @@
-use crate::algorithms::traits::{
-    AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm,
-};
-use crate::common::header::KdfInfo;
-use crate::common::{KdfSet, SignerSet};
+use crate::algorithms::traits::{AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm};
+use crate::common::header::{DerivationInfo, KdfInfo, XofInfo};
+use crate::common::{DerivationSet, SignerSet};
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
 use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
@@ -19,7 +17,7 @@ where
     pub(crate) kek_id: String,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) signer: Option<SignerSet>,
-    pub(crate) kdf_config: Option<KdfSet<'a>>,
+    pub(crate) derivation_config: Option<DerivationSet<'a>>,
     pub(crate) _phantom: PhantomData<S>,
 }
 
@@ -64,9 +62,42 @@ where
                 .map_err(|e| e.into())
         });
 
-        self.kdf_config = Some(KdfSet {
-            kdf_info,
-            kdf: deriver_fn,
+        self.derivation_config = Some(DerivationSet {
+            derivation_info: DerivationInfo::Kdf(kdf_info),
+            deriver_fn,
+        });
+        self
+    }
+
+    /// Use an Extendable-Output Function (XOF) to derive the Data Encryption Key (DEK).
+    pub fn with_xof<Xof>(
+        mut self,
+        deriver: Xof,
+        salt: Option<&'a [u8]>,
+        info: Option<&'a [u8]>,
+        output_len: u32,
+    ) -> Self
+    where
+        Xof: XofAlgorithm + Send + Sync + 'a,
+    {
+        let xof_info = XofInfo {
+            xof_algorithm: Xof::ALGORITHM,
+            salt: salt.as_ref().map(|s| s.as_ref().to_vec()),
+            info: info.as_ref().map(|i| i.as_ref().to_vec()),
+            output_len,
+        };
+
+        let deriver_fn = Box::new(move |ikm: &[u8]| {
+            let mut reader =
+                deriver.reader(ikm, salt.as_ref().map(|s| s.as_ref()), info.as_ref().map(|i| i.as_ref()))?;
+            let mut dek_bytes = vec![0u8; output_len as usize];
+            reader.read(&mut dek_bytes);
+            Ok(Zeroizing::new(dek_bytes))
+        });
+
+        self.derivation_config = Some(DerivationSet {
+            derivation_info: DerivationInfo::Xof(xof_info),
+            deriver_fn,
         });
         self
     }
@@ -112,7 +143,7 @@ where
             self.kek_id,
             self.signer,
             self.aad.as_deref(),
-            self.kdf_config,
+            self.derivation_config,
         )
     }
 
@@ -130,7 +161,7 @@ where
             self.kek_id,
             self.signer,
             self.aad.as_deref(),
-            self.kdf_config,
+            self.derivation_config,
         )
     }
 
@@ -151,7 +182,7 @@ where
             self.kek_id,
             self.signer,
             self.aad.as_deref(),
-            self.kdf_config,
+            self.derivation_config,
         )
     }
 
@@ -172,7 +203,7 @@ where
             self.kek_id,
             self.signer,
             self.aad.as_deref(),
-            self.kdf_config,
+            self.derivation_config,
         )
     }
 
@@ -197,7 +228,7 @@ where
             self.kek_id,
             self.signer,
             self.aad.as_deref(),
-            self.kdf_config,
+            self.derivation_config,
         )
         .await
     }
