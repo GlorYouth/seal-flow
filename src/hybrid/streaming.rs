@@ -196,37 +196,33 @@ mod tests {
         let (pk, sk) = TestKem::generate_keypair().unwrap();
         let kek_id = "test_kek_id".to_string();
 
-        let mut kdf_info = None;
-        let mut kdf_fn: Option<Box<dyn Fn(&[u8]) -> Result<Zeroizing<Vec<u8>>> + Send + Sync>> =
-            None;
-        let mut derivation_config = None;
-
-        if use_kdf {
+        let derivation_config = if use_kdf {
             let salt = b"salt-stream";
             let info = b"info-stream";
             let output_len = 32;
 
-            let kdf = KdfInfo {
+            let kdf_info = KdfInfo {
                 kdf_algorithm: crate::common::algorithms::KdfAlgorithm::HkdfSha256,
                 salt: Some(salt.to_vec()),
                 info: Some(info.to_vec()),
                 output_len,
             };
-            kdf_info = Some(kdf.clone());
 
             let deriver = HkdfSha256::default();
-            kdf_fn = Some(Box::new(move |ikm: &[u8]| {
+            let deriver_fn = Box::new(move |ikm: &[u8]| {
                 deriver
                     .derive(ikm, Some(salt), Some(info), output_len as usize)
                     .map(|dk| Zeroizing::new(dk.as_bytes().to_vec()))
                     .map_err(|e| e.into())
-            }));
-
-            derivation_config = Some(DerivationSet {
-                derivation_info: DerivationInfo::Kdf(kdf_info.unwrap()),
-                deriver_fn: kdf_fn.unwrap(),
             });
-        }
+
+            Some(DerivationSet {
+                derivation_info: DerivationInfo::Kdf(kdf_info),
+                deriver_fn,
+            })
+        } else {
+            None
+        };
 
         // Encrypt
         let mut encrypted_data = Vec::new();
