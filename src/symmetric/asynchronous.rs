@@ -7,6 +7,7 @@
 use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload};
+use crate::common::PendingImpl;
 use crate::error::{Error, Result};
 use crate::impls::asynchronous::{DecryptorImpl, EncryptorImpl};
 use pin_project_lite::pin_project;
@@ -92,11 +93,6 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
         Ok(Self { reader, header })
     }
 
-    /// Returns a reference to the header that was read from the stream.
-    pub fn header(&self) -> &Header {
-        &self.header
-    }
-
     /// Consumes the `PendingDecryptor` and returns a full `Decryptor` instance,
     /// ready to decrypt the stream.
     pub fn into_decryptor<S: SymmetricAlgorithm>(
@@ -150,6 +146,12 @@ where
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         self.project().inner.poll_read(cx, buf)
+    }
+}
+
+impl<R: AsyncRead + Unpin> PendingImpl for PendingDecryptor<R> {
+    fn header(&self) -> &Header {
+        &self.header
     }
 }
 

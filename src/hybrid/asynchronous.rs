@@ -1,11 +1,10 @@
 //! Asynchronous, streaming hybrid encryption and decryption implementation.
 #![cfg(feature = "async")]
 
-use super::common::{create_header, PendingImpl};
+use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::DerivationSet;
-use crate::common::SignerSet;
+use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, Result};
 use crate::impls::asynchronous::{DecryptorImpl, EncryptorImpl};
 use pin_project_lite::pin_project;

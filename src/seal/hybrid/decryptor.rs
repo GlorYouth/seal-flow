@@ -3,6 +3,7 @@ use crate::common::algorithms::{
     AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
 use crate::common::header::Header;
+use crate::common::PendingImpl;
 use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
 use crate::Error;
 use seal_crypto::prelude::*;
@@ -17,7 +18,6 @@ use seal_crypto::schemes::symmetric::{
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 use tokio::io::AsyncRead;
-use crate::hybrid::common::PendingImpl;
 
 macro_rules! dispatch_symmetric_algorithm {
     ($algorithm:expr, $callback:ident, $($extra_args:tt)*) => {

@@ -70,8 +70,3 @@ where
 
     Ok((header, base_nonce, shared_secret))
 }
-
-// A private trait to abstract access to the header from the inner implementation.
-pub trait PendingImpl {
-    fn header(&self) -> &Header;
-}

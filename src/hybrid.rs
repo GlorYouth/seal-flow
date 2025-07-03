@@ -1,4 +1,4 @@
-pub mod common;
+mod common;
 pub mod ordinary;
 pub mod parallel;
 pub mod parallel_streaming;

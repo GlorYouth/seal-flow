@@ -5,6 +5,7 @@
 use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload};
+use crate::common::PendingImpl;
 use crate::error::{Error, Result};
 use crate::impls::parallel_streaming::{decrypt_pipeline, encrypt_pipeline};
 use std::io::{Read, Write};
@@ -75,11 +76,6 @@ impl<R: Read + Send> PendingDecryptor<R> {
         Ok(Self { reader, header })
     }
 
-    /// Returns a reference to the header.
-    pub fn header(&self) -> &Header {
-        &self.header
-    }
-
     /// Consumes the `PendingDecryptor` and decrypts the rest of the stream,
     /// writing the plaintext to the provided writer.
     pub fn decrypt_to_writer<S: SymmetricAlgorithm, W: Write>(
@@ -92,6 +88,12 @@ impl<R: Read + Send> PendingDecryptor<R> {
         S::Key: Sync + Send,
     {
         decrypt_body_stream::<S, R, W>(key, &self.header, self.reader, writer, aad)
+    }
+}
+
+impl<R: Read + Send> PendingImpl for PendingDecryptor<R> {
+    fn header(&self) -> &Header {
+        &self.header
     }
 }
 

@@ -61,3 +61,8 @@ pub struct DerivationSet<'a> {
     pub(crate) deriver_fn:
         Box<dyn Fn(&[u8]) -> crate::Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>,
 }
+
+// A private trait to abstract access to the header from the inner implementation.
+pub trait PendingImpl {
+    fn header(&self) -> &header::Header;
+}

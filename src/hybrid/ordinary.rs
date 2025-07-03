@@ -1,10 +1,9 @@
 //! Ordinary (single-threaded, in-memory) hybrid encryption and decryption.
 
-use super::common::{create_header, PendingImpl};
+use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::DerivationSet;
-use crate::common::SignerSet;
+use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, Result};
 use crate::impls::ordinary::{decrypt_in_memory, encrypt_in_memory};
 use seal_crypto::zeroize::Zeroizing;

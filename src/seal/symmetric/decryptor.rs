@@ -1,6 +1,7 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::algorithms::SymmetricAlgorithm as SymmetricAlgorithmEnum;
 use crate::common::header::Header;
+use crate::common::PendingImpl;
 use crate::keys::SymmetricKey;
 use std::io::{Read, Write};
 use tokio::io::AsyncRead;
@@ -39,6 +40,54 @@ macro_rules! dispatch_symmetric_key_bytes {
     };
 }
 
+/// A generic pending symmetric decryptor, waiting for configuration and key.
+/// This struct unifies the logic for various decryption modes (in-memory, streaming, etc.).
+pub struct PendingDecryptor<T> {
+    inner: T,
+    aad: Option<Vec<u8>>,
+}
+
+impl<T: PendingImpl> PendingDecryptor<T> {
+    /// Creates a new `PendingDecryptor` with the given inner implementation.
+    fn new(inner: T) -> Self {
+        Self { inner, aad: None }
+    }
+
+    /// Returns a reference to the header.
+    pub fn header(&self) -> &Header {
+        self.inner.header()
+    }
+
+    /// Returns the key ID from the header.
+    pub fn key_id(&self) -> Option<&str> {
+        self.header().payload.key_id()
+    }
+
+    /// Sets the Associated Data (AAD) for this decryption operation.
+    /// The AAD must match the value provided during encryption.
+    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
+        self.aad = Some(aad.into());
+        self
+    }
+}
+
+/// A type alias for a pending in-memory symmetric decryptor.
+pub type PendingInMemoryDecryptor<'a> =
+    PendingDecryptor<crate::symmetric::ordinary::PendingDecryptor<'a>>;
+/// A type alias for a pending parallel in-memory symmetric decryptor.
+pub type PendingInMemoryParallelDecryptor<'a> =
+    PendingDecryptor<crate::symmetric::parallel::PendingDecryptor<'a>>;
+/// A type alias for a pending synchronous streaming symmetric decryptor.
+pub type PendingStreamingDecryptor<R> =
+    PendingDecryptor<crate::symmetric::streaming::PendingDecryptor<R>>;
+/// A type alias for a pending parallel streaming symmetric decryptor.
+pub type PendingParallelStreamingDecryptor<R> =
+    PendingDecryptor<crate::symmetric::parallel_streaming::PendingDecryptor<R>>;
+/// A type alias for a pending asynchronous streaming symmetric decryptor.
+#[cfg(feature = "async")]
+pub type PendingAsyncStreamingDecryptor<R> =
+    PendingDecryptor<crate::symmetric::asynchronous::PendingDecryptor<R>>;
+
 /// A builder for symmetric decryption operations.
 #[derive(Default)]
 pub struct SymmetricDecryptorBuilder;
@@ -56,10 +105,7 @@ impl SymmetricDecryptorBuilder {
     pub fn slice(self, ciphertext: &[u8]) -> crate::Result<PendingInMemoryDecryptor> {
         let mid_level_pending =
             crate::symmetric::ordinary::PendingDecryptor::from_ciphertext(ciphertext)?;
-        Ok(PendingInMemoryDecryptor {
-            inner: mid_level_pending,
-            aad: None,
-        })
+        Ok(PendingDecryptor::new(mid_level_pending))
     }
 
     /// Configures parallel decryption from an in-memory byte slice.
@@ -69,19 +115,13 @@ impl SymmetricDecryptorBuilder {
     ) -> crate::Result<PendingInMemoryParallelDecryptor> {
         let mid_level_pending =
             crate::symmetric::parallel::PendingDecryptor::from_ciphertext(ciphertext)?;
-        Ok(PendingInMemoryParallelDecryptor {
-            inner: mid_level_pending,
-            aad: None,
-        })
+        Ok(PendingDecryptor::new(mid_level_pending))
     }
 
     /// Configures decryption from a synchronous `Read` stream.
     pub fn reader<R: Read>(self, reader: R) -> crate::Result<PendingStreamingDecryptor<R>> {
         let mid_level_pending = crate::symmetric::streaming::PendingDecryptor::from_reader(reader)?;
-        Ok(PendingStreamingDecryptor {
-            inner: mid_level_pending,
-            aad: None,
-        })
+        Ok(PendingDecryptor::new(mid_level_pending))
     }
 
     /// Configures parallel decryption from a synchronous `Read` stream.
@@ -91,10 +131,7 @@ impl SymmetricDecryptorBuilder {
     ) -> crate::Result<PendingParallelStreamingDecryptor<R>> {
         let mid_level_pending =
             crate::symmetric::parallel_streaming::PendingDecryptor::from_reader(reader)?;
-        Ok(PendingParallelStreamingDecryptor {
-            inner: mid_level_pending,
-            aad: None,
-        })
+        Ok(PendingDecryptor::new(mid_level_pending))
     }
 
     /// Begins an asynchronous streaming decryption operation.
@@ -105,37 +142,11 @@ impl SymmetricDecryptorBuilder {
     ) -> crate::Result<PendingAsyncStreamingDecryptor<R>> {
         let mid_level_pending =
             crate::symmetric::asynchronous::PendingDecryptor::from_reader(reader).await?;
-        Ok(PendingAsyncStreamingDecryptor {
-            inner: mid_level_pending,
-            aad: None,
-        })
+        Ok(PendingDecryptor::new(mid_level_pending))
     }
-}
-
-/// A pending in-memory decryptor, waiting for a key.
-pub struct PendingInMemoryDecryptor<'a> {
-    inner: crate::symmetric::ordinary::PendingDecryptor<'a>,
-    aad: Option<Vec<u8>>,
 }
 
 impl<'a> PendingInMemoryDecryptor<'a> {
-    /// Returns a reference to the header.
-    pub fn header(&self) -> &Header {
-        self.inner.header()
-    }
-
-    /// Returns the key ID from the header.
-    pub fn key_id(&self) -> Option<&str> {
-        self.header().payload.key_id()
-    }
-
-    /// Sets the Associated Data (AAD) for this decryption operation.
-    /// The AAD must match the value provided during encryption.
-    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
-        self.aad = Some(aad.into());
-        self
-    }
-
     /// Supplies a key from its raw bytes for decryption.
     pub fn with_key(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
@@ -158,32 +169,9 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         self.inner
             .into_plaintext::<S>(key.clone(), self.aad.as_deref())
     }
-}
-
-/// A pending parallel in-memory decryptor, waiting for a key.
-pub struct PendingInMemoryParallelDecryptor<'a> {
-    inner: crate::symmetric::parallel::PendingDecryptor<'a>,
-    aad: Option<Vec<u8>>,
 }
 
 impl<'a> PendingInMemoryParallelDecryptor<'a> {
-    /// Returns a reference to the header.
-    pub fn header(&self) -> &Header {
-        self.inner.header()
-    }
-
-    /// Returns the key ID from the header.
-    pub fn key_id(&self) -> Option<&str> {
-        self.header().payload.key_id()
-    }
-
-    /// Sets the Associated Data (AAD) for this decryption operation.
-    /// The AAD must match the value provided during encryption.
-    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
-        self.aad = Some(aad.into());
-        self
-    }
-
     /// Supplies a key from its raw bytes for decryption.
     pub fn with_key(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
@@ -208,30 +196,7 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     }
 }
 
-/// A pending synchronous streaming decryptor, waiting for a key.
-pub struct PendingStreamingDecryptor<R: Read> {
-    inner: crate::symmetric::streaming::PendingDecryptor<R>,
-    aad: Option<Vec<u8>>,
-}
-
 impl<R: Read> PendingStreamingDecryptor<R> {
-    /// Returns a reference to the stream's header.
-    pub fn header(&self) -> &Header {
-        self.inner.header()
-    }
-
-    /// Returns the key ID from the stream's header.
-    pub fn key_id(&self) -> Option<&str> {
-        self.header().payload.key_id()
-    }
-
-    /// Sets the Associated Data (AAD) for this decryption operation.
-    /// The AAD must match the value provided during encryption.
-    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
-        self.aad = Some(aad.into());
-        self
-    }
-
     /// Supplies a key from its raw bytes for decryption.
     pub fn with_key<'s>(self, key: SymmetricKey) -> crate::Result<Box<dyn Read + 's>>
     where
@@ -263,36 +228,10 @@ impl<R: Read> PendingStreamingDecryptor<R> {
     }
 }
 
-/// A pending parallel streaming decryptor, waiting for a key.
-pub struct PendingParallelStreamingDecryptor<R>
-where
-    R: Read + Send,
-{
-    inner: crate::symmetric::parallel_streaming::PendingDecryptor<R>,
-    aad: Option<Vec<u8>>,
-}
-
 impl<R> PendingParallelStreamingDecryptor<R>
 where
     R: Read + Send,
 {
-    /// Returns a reference to the stream's header.
-    pub fn header(&self) -> &Header {
-        self.inner.header()
-    }
-
-    /// Returns the key ID from the stream's header.
-    pub fn key_id(&self) -> Option<&str> {
-        self.header().payload.key_id()
-    }
-
-    /// Sets the Associated Data (AAD) for this decryption operation.
-    /// The AAD must match the value provided during encryption.
-    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
-        self.aad = Some(aad.into());
-        self
-    }
-
     /// Supplies a key from its raw bytes and decrypts to the provided writer.
     pub fn with_key_to_writer<W: Write>(self, key: SymmetricKey, writer: W) -> crate::Result<()> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
@@ -322,32 +261,8 @@ where
     }
 }
 
-/// A pending asynchronous streaming decryptor, waiting for a key.
-#[cfg(feature = "async")]
-pub struct PendingAsyncStreamingDecryptor<R: AsyncRead + Unpin> {
-    inner: crate::symmetric::asynchronous::PendingDecryptor<R>,
-    aad: Option<Vec<u8>>,
-}
-
 #[cfg(feature = "async")]
 impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
-    /// Returns a reference to the stream's header.
-    pub fn header(&self) -> &Header {
-        self.inner.header()
-    }
-
-    /// Returns the key ID from the stream's header.
-    pub fn key_id(&self) -> Option<&str> {
-        self.header().payload.key_id()
-    }
-
-    /// Sets the Associated Data (AAD) for this decryption operation.
-    /// The AAD must match the value provided during encryption.
-    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
-        self.aad = Some(aad.into());
-        self
-    }
-
     /// Supplies a key from its raw bytes for decryption.
     pub fn with_key<'s>(self, key: SymmetricKey) -> crate::Result<Box<dyn AsyncRead + Unpin + 's>>
     where

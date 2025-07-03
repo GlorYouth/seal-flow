@@ -3,6 +3,7 @@
 use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload};
+use crate::common::PendingImpl;
 use crate::error::{Error, Result};
 use crate::impls::streaming::{DecryptorImpl, EncryptorImpl};
 use std::io::{self, Read, Write};
@@ -61,11 +62,6 @@ impl<R: Read> PendingDecryptor<R> {
         Ok(Self { reader, header })
     }
 
-    /// Returns a reference to the header that was read from the stream.
-    pub fn header(&self) -> &Header {
-        &self.header
-    }
-
     /// Consumes the `PendingDecryptor` and returns a full `Decryptor` instance,
     /// ready to decrypt the stream.
     pub fn into_decryptor<S: SymmetricAlgorithm>(
@@ -97,6 +93,12 @@ pub struct Decryptor<R: Read, S: SymmetricAlgorithm> {
 impl<R: Read, S: SymmetricAlgorithm> Read for Decryptor<R, S> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.inner.read(buf)
+    }
+}
+
+impl<R: Read> PendingImpl for PendingDecryptor<R> {
+    fn header(&self) -> &Header {
+        &self.header
     }
 }
 

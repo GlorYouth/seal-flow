@@ -3,6 +3,7 @@
 use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload};
+use crate::common::PendingImpl;
 use crate::error::{Error, Result};
 use crate::impls::ordinary::{decrypt_in_memory, encrypt_in_memory};
 
@@ -42,11 +43,6 @@ impl<'a> PendingDecryptor<'a> {
         })
     }
 
-    /// Returns a reference to the header.
-    pub fn header(&self) -> &Header {
-        &self.header
-    }
-
     /// Consumes the `PendingDecryptor` and returns the decrypted plaintext.
     pub fn into_plaintext<S: SymmetricAlgorithm>(
         self,
@@ -81,6 +77,12 @@ where
     };
 
     decrypt_in_memory::<S>(key, base_nonce, chunk_size, ciphertext_body, aad)
+}
+
+impl<'a> PendingImpl for PendingDecryptor<'a> {
+    fn header(&self) -> &Header {
+        &self.header
+    }
 }
 
 #[cfg(test)]

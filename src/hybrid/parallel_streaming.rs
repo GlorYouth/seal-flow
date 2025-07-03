@@ -1,10 +1,9 @@
 //! Implements a parallel streaming hybrid encryption/decryption scheme.
 
-use super::common::{create_header, PendingImpl};
+use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::DerivationSet;
-use crate::common::SignerSet;
+use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, Result};
 use crate::impls::parallel_streaming::{decrypt_pipeline, encrypt_pipeline};
 use seal_crypto::zeroize::Zeroizing;
