@@ -1,6 +1,8 @@
 use bincode::{Decode, Encode};
 
-/// 对称加密算法枚举
+/// Symmetric encryption algorithm enum.
+///
+/// 对称加密算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
 pub enum SymmetricAlgorithm {
     Aes128Gcm,
@@ -9,7 +11,9 @@ pub enum SymmetricAlgorithm {
     XChaCha20Poly1305,
 }
 
-/// 非对称加密算法枚举
+/// Asymmetric encryption algorithm enum.
+///
+/// 非对称加密算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
 pub enum AsymmetricAlgorithm {
     Rsa2048,
@@ -19,7 +23,9 @@ pub enum AsymmetricAlgorithm {
     Kyber1024,
 }
 
-/// 数字签名算法枚举
+/// Digital signature algorithm enum.
+///
+/// 数字签名算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
 pub enum SignatureAlgorithm {
     Dilithium2,
@@ -29,13 +35,18 @@ pub enum SignatureAlgorithm {
     EcdsaP256,
 }
 
-/// 密钥派生函数 (KDF) 算法枚举
+/// Key Derivation Function (KDF) algorithm enum.
+///
+/// 密钥派生函数 (KDF) 算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
 pub enum KdfAlgorithm {
     HkdfSha256,
     HkdfSha512,
 }
 
+/// Extendable-Output Function (XOF) algorithm enum.
+///
+/// 可扩展输出函数 (XOF) 算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
 pub enum XofAlgorithm {
     Shake128,

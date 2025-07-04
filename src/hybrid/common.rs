@@ -1,6 +1,6 @@
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{
-    DerivationInfo, Header, HeaderPayload, SealMode, SingerInfo, StreamInfo,
+    DerivationInfo, Header, HeaderPayload, SealMode, SignerInfo, StreamInfo,
 };
 use crate::common::SignerSet;
 use crate::common::DEFAULT_CHUNK_SIZE;
@@ -54,7 +54,7 @@ where
             ref mut signature, ..
         } = payload
         {
-            *signature = Some(SingerInfo {
+            *signature = Some(SignerInfo {
                 signer_key_id: s.signer_key_id,
                 signer_algorithm: s.signer_algorithm,
                 signature: signature_bytes,
