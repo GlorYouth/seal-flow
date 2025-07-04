@@ -5,37 +5,9 @@ use seal_crypto::{
     prelude::SymmetricKeySet, schemes::{asymmetric::post_quantum::kyber::Kyber768, symmetric::aes_gcm::Aes256Gcm}, zeroize::Zeroizing
 };
 
-use crate::{
-    algorithms::traits::SignatureAlgorithm,
-    keys::{AsymmetricPrivateKey, AsymmetricPublicKey},
-};
+use crate::keys::AsymmetricPublicKey;
 use super::encryptor::HybridEncryptor;
-
-/// Options for configuring PQC encryption.
-#[derive(Default)]
-pub struct PqcEncryptionOptions {
-    pub(crate) aad: Option<Vec<u8>>,
-    pub(crate) signer: Option<(AsymmetricPrivateKey, String)>,
-}
-
-impl PqcEncryptionOptions {
-    /// Creates a new set of default encryption options.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Sets the Associated Data (AAD) for the encryption operation.
-    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
-        self.aad = Some(aad.into());
-        self
-    }
-
-    /// Configures the operation to sign the encryption metadata.
-    pub fn with_signer(mut self, signing_key: AsymmetricPrivateKey, signer_key_id: String) -> Self {
-        self.signer = Some((signing_key, signer_key_id));
-        self
-    }
-}
+use super::HybridEncryptionOptions;
 
 /// The recommended Key Encapsulation Mechanism for the Post-Quantum Cryptography (PQC) suite.
 pub type PqcKem = Kyber768;
@@ -67,16 +39,8 @@ impl PqcEncryptor {
     }
 
     /// Applies a set of pre-configured options to the encryptor.
-    pub fn with_options<SignerAlgo>(mut self, options: PqcEncryptionOptions) -> Self
-    where
-        SignerAlgo: SignatureAlgorithm + 'static,
-    {
-        if let Some(aad) = options.aad {
-            self.inner = self.inner.with_aad(aad);
-        }
-        if let Some((key, key_id)) = options.signer {
-            self.inner = self.inner.with_signer::<SignerAlgo>(key, key_id);
-        }
+    pub fn with_options(mut self, options: HybridEncryptionOptions) -> Self {
+        self.inner = self.inner.with_options(options);
         self
     }
 
@@ -86,16 +50,33 @@ impl PqcEncryptor {
         self
     }
 
-    /// Signs the encryption metadata (header) with the given private key.
-    pub fn with_signer<SignerAlgo>(
+    /// Use a Key Derivation Function (KDF) to derive the Data Encryption Key (DEK).
+    pub fn with_kdf<Kdf>(
         mut self,
-        signing_key: AsymmetricPrivateKey,
-        signer_key_id: String,
+        deriver: Kdf,
+        salt: Option<impl Into<Vec<u8>>>,
+        info: Option<impl Into<Vec<u8>>>,
+        output_len: u32,
     ) -> Self
     where
-        SignerAlgo: SignatureAlgorithm + 'static,
+        Kdf: crate::algorithms::traits::KdfAlgorithm + Send + Sync + 'static,
     {
-        self.inner = self.inner.with_signer::<SignerAlgo>(signing_key, signer_key_id);
+        self.inner = self.inner.with_kdf(deriver, salt, info, output_len);
+        self
+    }
+
+    /// Use an Extendable-Output Function (XOF) to derive the Data Encryption Key (DEK).
+    pub fn with_xof<Xof>(
+        mut self,
+        deriver: Xof,
+        salt: Option<impl Into<Vec<u8>>>,
+        info: Option<impl Into<Vec<u8>>>,
+        output_len: u32,
+    ) -> Self
+    where
+        Xof: crate::algorithms::traits::XofAlgorithm + Send + Sync + 'static,
+    {
+        self.inner = self.inner.with_xof(deriver, salt, info, output_len);
         self
     }
 

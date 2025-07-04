@@ -295,14 +295,18 @@ mod tests {
         let signer_key_id = "test-pqc-options-signer-id".to_string();
         let seal = HybridSeal::new();
 
-        let options = suites::PqcEncryptionOptions::new()
+        let options = HybridEncryptionOptions::new()
             .with_aad(aad)
-            .with_signer(sig_sk_wrapped, signer_key_id.clone());
+            .with_signer(
+                sig_sk_wrapped,
+                signer_key_id.clone(),
+                crate::common::algorithms::SignatureAlgorithm::Dilithium2,
+            );
 
         // 3. Encrypt using the PQC suite with options
         let encrypted = seal
             .encrypt_pqc_suite(enc_pk_wrapped, kek_id.clone())
-            .with_options::<TestSigner>(options)
+            .with_options(options)
             .to_vec(plaintext)?;
 
         // 4. Decrypt and verify
@@ -717,6 +721,40 @@ mod tests {
             "Parallel streaming XOF mode failed"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_pqc_suite_with_kdf_roundtrip() -> crate::Result<()> {
+        // 1. Setup keys
+        let (enc_pk, enc_sk) = suites::PqcKem::generate_keypair()?;
+        let enc_pk_wrapped = AsymmetricPublicKey::new(enc_pk.to_bytes());
+
+        // 2. Setup data
+        let plaintext = get_test_data();
+        let salt = b"pqc-kdf-salt";
+        let info = b"pqc-kdf-info";
+        let kek_id = "test-pqc-kdf-kek-id".to_string();
+        let seal = HybridSeal::new();
+
+        // 3. Encrypt using PQC suite with KDF
+        let encrypted = seal
+            .encrypt_pqc_suite(enc_pk_wrapped, kek_id.clone())
+            .with_kdf(
+                seal_crypto::schemes::kdf::hkdf::HkdfSha256::default(),
+                Some(salt.to_vec()),
+                Some(info.to_vec()),
+                32,
+            )
+            .to_vec(plaintext)?;
+
+        // 4. Decrypt and verify
+        let pending = seal.decrypt().slice(&encrypted)?;
+        assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
+
+        let decrypted = pending.with_typed_key::<suites::PqcKem, suites::PqcDek>(&enc_sk)?;
+
+        assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
     }
 
