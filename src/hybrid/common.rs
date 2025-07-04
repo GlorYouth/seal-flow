@@ -1,3 +1,7 @@
+//! Common utilities for hybrid encryption modes.
+//!
+//! 混合加密模式的通用工具。
+
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{
     DerivationInfo, Header, HeaderPayload, SealMode, SignerInfo, StreamInfo,
@@ -10,6 +14,8 @@ use seal_crypto::zeroize::Zeroizing;
 
 /// Creates a complete header, a new base_nonce, and the shared secret (DEK)
 /// for a hybrid encryption stream.
+///
+/// 为混合加密流创建一个完整的标头、一个新的 base_nonce 和共享密钥 (DEK)。
 pub fn create_header<A, S>(
     pk: &A::PublicKey,
     kek_id: String,
@@ -23,13 +29,16 @@ where
     S: SymmetricAlgorithm,
 {
     // 1. KEM Encapsulate
+    // 1. KEM 封装
     let (shared_secret, encapsulated_key) = A::encapsulate(pk)?;
 
     // 2. Generate base_nonce
+    // 2. 生成 base_nonce
     let mut base_nonce = [0u8; 12];
     OsRng.try_fill_bytes(&mut base_nonce)?;
 
     // 3. Construct Header payload, starting without a signature
+    // 3. 构造标头有效载荷，初始不带签名
     let mut payload = HeaderPayload::Hybrid {
         kek_id,
         kek_algorithm: A::ALGORITHM,
@@ -44,12 +53,15 @@ where
     };
 
     // 4. Sign the payload and mutate it if a signer is provided
+    // 4. 如果提供了签名者，则对有效载荷进行签名并修改
     if let Some(s) = signer {
         // The payload already has signature: None, so we can serialize it directly.
+        // 有效载荷的签名字段为 None，所以我们可以直接序列化它。
         let payload_bytes = bincode::encode_to_vec(&payload, bincode::config::standard())?;
         let signature_bytes = (s.signer)(&payload_bytes, aad)?;
 
         // Now, set the signature on the actual payload by mutating it.
+        // 现在，通过修改可变载荷来设置签名。
         if let HeaderPayload::Hybrid {
             ref mut signature, ..
         } = payload

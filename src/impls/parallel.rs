@@ -1,10 +1,17 @@
 //! Implements the common logic for parallel, in-memory encryption and decryption.
+//! This is the backend for both symmetric and hybrid parallel modes.
+//!
+//! 实现并行、内存中加密和解密的通用逻辑。
+//! 这是对称和混合并行模式的后端。
+
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::error::{Error, FormatError, Result};
 use rayon::prelude::*;
 
 /// Encrypts in-memory data in parallel.
+///
+/// 并行加密内存中的数据。
 pub fn encrypt_parallel<S>(
     key: S::Key,
     base_nonce: [u8; 12],
@@ -21,6 +28,7 @@ where
     let tag_size = S::TAG_SIZE;
 
     // Pre-allocate output buffer
+    // 预分配输出缓冲区
     let num_chunks = (plaintext.len() + chunk_size - 1) / chunk_size;
     let last_chunk_len = if plaintext.len() % chunk_size == 0 {
         if plaintext.is_empty() {
@@ -41,12 +49,14 @@ where
     final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
     final_output.extend_from_slice(&header_bytes);
     // The rest of the buffer is for the body, which we will fill in parallel
+    // 缓冲区的其余部分用于存放将要并行填充的主体
     let body_len = total_body_size;
     final_output.resize(4 + header_bytes.len() + body_len, 0);
 
     let (_header_part, body_part) = final_output.split_at_mut(4 + header_bytes.len());
 
     // Process chunks in parallel using Rayon, writing directly to the output buffer
+    // 使用 Rayon 并行处理数据块，直接写入输出缓冲区
     if !plaintext.is_empty() {
         body_part
             .par_chunks_mut(chunk_size + tag_size)
@@ -67,6 +77,8 @@ where
 }
 
 /// Decrypts a ciphertext body in parallel.
+///
+/// 并行解密密文体。
 pub fn decrypt_parallel<S>(
     key: S::Key,
     base_nonce: [u8; 12],
@@ -84,6 +96,7 @@ where
     let key_material = key.into();
 
     // Pre-allocate plaintext buffer
+    // 预分配明文缓冲区
     let num_chunks = (ciphertext_body.len() + encrypted_chunk_size - 1) / encrypted_chunk_size;
     let last_chunk_len = if ciphertext_body.len() % encrypted_chunk_size == 0 {
         if ciphertext_body.is_empty() {
@@ -108,6 +121,7 @@ where
     let mut plaintext = vec![0u8; total_size];
 
     // Decrypt in parallel, writing directly to the plaintext buffer
+    // 并行解密，直接写入明文缓冲区
     let decrypted_chunk_lengths: Vec<usize> = plaintext
         .par_chunks_mut(chunk_size)
         .zip(ciphertext_body.par_chunks(encrypted_chunk_size))
@@ -116,12 +130,14 @@ where
             let nonce = derive_nonce(&base_nonce, i as u64);
 
             // Decrypt the chunk
+            // 解密数据块
             S::decrypt_to_buffer(&key_material, &nonce, encrypted_chunk, plaintext_chunk, aad)
                 .map_err(Error::from)
         })
         .collect::<Result<Vec<usize>>>()?;
 
     // Truncate the plaintext to the actual decrypted size
+    // 将明文截断为实际解密后的大小
     let actual_size = decrypted_chunk_lengths.iter().sum();
     plaintext.truncate(actual_size);
 

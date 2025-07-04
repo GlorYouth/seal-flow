@@ -1,6 +1,10 @@
 //! Contains the common implementation for asynchronous streaming encryption and decryption.
 //! This module provides the core pipeline logic, which is then wrapped by the
 //! symmetric and hybrid encryption modules to provide a complete solution.
+//!
+//! 包含异步流式加密和解密的通用实现。
+//! 该模块提供了核心的管道逻辑，然后由对称和混合加密模块进行包装，
+//! 以提供完整的解决方案。
 
 #![cfg(feature = "async")]
 
@@ -21,16 +25,40 @@ use tokio::task::JoinHandle;
 
 // --- Helper Structs for Encryption ---
 
+/// A handle to a spawned encryption task.
+///
+/// 生成的加密任务的句柄。
 pub(crate) type EncryptTask = JoinHandle<Result<(u64, BytesMut)>>;
 
+/// The state of the writer in the encryption pipeline.
+///
+/// 加密管道中写入器的状态。
 pub(crate) enum WritingState {
+    /// Idle, waiting for a chunk to write.
+    ///
+    /// 空闲，等待要写入的块。
     Idle,
-    Writing { chunk: BytesMut, pos: usize },
+    /// Currently writing a chunk.
+    ///
+    /// 正在写入一个块。
+    Writing {
+        /// The chunk being written.
+        ///
+        /// 正在写入的块。
+        chunk: BytesMut,
+        /// The current position within the chunk.
+        ///
+        /// 块内的当前位置。
+        pos: usize,
+    },
 }
 
 // --- Encryptor Implementation ---
 
 pin_project! {
+    /// The implementation of an asynchronous, streaming encryptor.
+    ///
+    /// 异步、流式加密器的实现。
     pub struct EncryptorImpl<W: AsyncWrite, S: SymmetricAlgorithm> {
         #[pin]
         pub(crate) writer: W,
@@ -55,6 +83,9 @@ where
     S: SymmetricAlgorithm + 'static,
     S::Key: Send + Sync + 'static,
 {
+    /// Creates a new `EncryptorImpl`.
+    ///
+    /// 创建一个新的 `EncryptorImpl`。
     pub(crate) fn new(writer: W, key: S::Key, base_nonce: [u8; 12], aad: Option<&[u8]>) -> Self {
         let chunk_size = DEFAULT_CHUNK_SIZE as usize;
         let out_pool = Arc::new(BufferPool::new(chunk_size + S::TAG_SIZE));
@@ -77,6 +108,9 @@ where
         }
     }
 
+    /// Polls the encryption pipeline to make progress.
+    ///
+    /// 轮询加密管道以推进进度。
     pub(crate) fn poll_pipeline_progress(
         &mut self,
         cx: &mut Context<'_>,
@@ -84,6 +118,7 @@ where
         let state_before = self.state_tuple();
 
         // Stage 1: Spawn encryption tasks
+        // 阶段 1: 生成加密任务
         while self.encrypt_tasks.len() < CHANNEL_BOUND {
             if self.buffer.len() < self.chunk_size && !self.is_shutdown {
                 break;
@@ -125,6 +160,7 @@ where
         }
 
         // Stage 2: Poll completed encryption tasks
+        // 阶段 2: 轮询已完成的加密任务
         while let Poll::Ready(Some(result)) = self.encrypt_tasks.poll_next_unpin(cx) {
             match result {
                 Ok(Ok((index, data))) => {
@@ -139,6 +175,7 @@ where
         }
 
         // Stage 3: Write completed chunks in order
+        // 阶段 3: 按顺序写入已完成的块
         loop {
             if let WritingState::Idle = self.writing_state {
                 if let Some(chunk) = self.pending_chunks.peek() {
@@ -286,9 +323,15 @@ where
 
 // --- Decryptor Implementation ---
 
+/// A handle to a spawned decryption task.
+///
+/// 生成的解密任务的句柄。
 pub(crate) type DecryptTask = JoinHandle<(u64, Result<BytesMut>)>;
 
 pin_project! {
+    /// The implementation of an asynchronous, streaming decryptor.
+    ///
+    /// 异步、流式解密器的实现。
     pub struct DecryptorImpl<R: AsyncRead, S: SymmetricAlgorithm> {
         #[pin]
         pub(crate) reader: R,
@@ -314,6 +357,9 @@ where
     S: SymmetricAlgorithm + 'static,
     S::Key: Send + Sync + 'static,
 {
+    /// Creates a new `DecryptorImpl`.
+    ///
+    /// 创建一个新的 `DecryptorImpl`。
     pub(crate) fn new(
         reader: R,
         key: S::Key,
@@ -342,6 +388,9 @@ where
         }
     }
 
+    /// Polls the decryption pipeline to make progress.
+    ///
+    /// 轮询解密管道以推进进度。
     pub(crate) fn poll_pipeline_progress(
         &mut self,
         cx: &mut Context<'_>,
@@ -349,6 +398,7 @@ where
         let mut made_progress = false;
 
         // Stage 1: Read from source and spawn decrypt tasks
+        // 阶段 1: 从源读取并生成解密任务
         if !self.reader_done {
             let mut temp_buf = [0u8; 8 * 1024];
             let mut read_buf = ReadBuf::new(&mut temp_buf);
@@ -414,6 +464,7 @@ where
         }
 
         // Stage 2: Poll completed tasks
+        // 阶段 2: 轮询已完成的任务
         let initial_pending = self.pending_chunks.len();
         while let Poll::Ready(Some(result)) = self.decrypt_tasks.poll_next_unpin(cx) {
             match result {
@@ -428,6 +479,7 @@ where
         }
 
         // Stage 3: Check for overall completion
+        // 阶段 3: 检查整体是否完成
         if self.reader_done
             && self.read_buffer.is_empty()
             && self.decrypt_tasks.is_empty()

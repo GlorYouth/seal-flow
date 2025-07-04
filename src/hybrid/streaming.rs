@@ -1,4 +1,6 @@
 //! Synchronous, streaming hybrid encryption and decryption implementation.
+//!
+//! 同步、流式混合加密和解密实现。
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
@@ -10,6 +12,8 @@ use seal_crypto::zeroize::Zeroizing;
 use std::io::{self, Read, Write};
 
 /// An `std::io::Write` adapter for streaming hybrid encryption.
+///
+/// 用于流式混合加密的 `std::io::Write` 适配器。
 pub struct Encryptor<W: Write, A, S: SymmetricAlgorithm> {
     inner: EncryptorImpl<W, S>,
     _phantom: std::marker::PhantomData<(A, S)>,
@@ -28,6 +32,11 @@ where
     ///
     /// This will perform the KEM encapsulate operation immediately to generate the DEK,
     /// and write the complete header to the underlying writer.
+    ///
+    /// 创建一个新的流式加密器。
+    ///
+    /// 这将立即执行 KEM 封装操作以生成 DEK，
+    /// 并将完整的标头写入底层的 writer。
     pub fn new(
         mut writer: W,
         pk: &A::PublicKey,
@@ -41,10 +50,12 @@ where
             .unzip();
 
         // 1. Create header, nonce, and shared secret
+        // 1. 创建标头、nonce 和共享密钥
         let (header, base_nonce, shared_secret) =
             create_header::<A, S>(pk, kek_id, signer, aad, info)?;
 
         // 2. Derive key if a deriver is specified
+        // 2. 如果指定了派生器，则派生密钥
         let dek = if let Some(f) = deriver_fn {
             f(&shared_secret)?
         } else {
@@ -52,6 +63,7 @@ where
         };
 
         // 3. Write header length and header to the writer
+        // 3. 将标头长度和标头写入 writer
         let header_bytes = header.encode_to_vec()?;
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
@@ -68,6 +80,11 @@ where
     ///
     /// This method must be called to ensure that the last partial chunk of data is
     /// encrypted and the authentication tag is written to the underlying writer.
+    ///
+    /// 完成加密流。
+    ///
+    /// 必须调用此方法以确保最后的数据块被加密，
+    /// 并且认证标签被写入底层的 writer。
     pub fn finish(self) -> Result<()> {
         self.inner.finish()
     }
@@ -84,6 +101,8 @@ impl<W: Write, A, S: SymmetricAlgorithm> Write for Encryptor<W, A, S> {
 }
 
 /// A pending hybrid decryptor that has read the header and is waiting for the private key.
+///
+/// 一个已读取标头并等待私钥的待定混合解密器。
 pub struct PendingDecryptor<R: Read> {
     reader: R,
     header: Header,
@@ -91,6 +110,8 @@ pub struct PendingDecryptor<R: Read> {
 
 impl<R: Read> PendingDecryptor<R> {
     /// Creates a new `PendingDecryptor` by reading the header from the stream.
+    ///
+    /// 通过从流中读取标头来创建一个新的 `PendingDecryptor`。
     pub fn from_reader(mut reader: R) -> Result<Self> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
 
@@ -98,6 +119,8 @@ impl<R: Read> PendingDecryptor<R> {
     }
 
     /// Consumes the pending decryptor and returns a full `Decryptor` by providing the private key.
+    ///
+    /// 通过提供私钥来消费待定解密器并返回一个完整的 `Decryptor`。
     pub fn into_decryptor<A, S>(
         self,
         sk: &A::PrivateKey,
@@ -154,6 +177,8 @@ impl<R: Read> PendingDecryptor<R> {
 }
 
 /// Implements `std::io::Read` for synchronous, streaming hybrid decryption.
+///
+/// 为同步、流式混合解密实现 `std::io::Read`。
 pub struct Decryptor<R: Read, A: AsymmetricAlgorithm, S: SymmetricAlgorithm> {
     inner: DecryptorImpl<R, S>,
     _phantom: std::marker::PhantomData<(A, S)>,

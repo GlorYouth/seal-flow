@@ -1,10 +1,16 @@
 //! Implements the common logic for ordinary (single-threaded, in-memory) encryption and decryption.
+//! This is the backend for both symmetric and hybrid ordinary modes.
+//!
+//! 实现普通（单线程、内存中）加密和解密的通用逻辑。
+//! 这是对称和混合普通模式的后端。
 
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::error::Result;
 
 /// Encrypts in-memory data sequentially.
+///
+/// 顺序加密内存中的数据。
 pub fn encrypt_in_memory<S: SymmetricAlgorithm>(
     key: S::Key,
     base_nonce: [u8; 12],
@@ -36,6 +42,8 @@ pub fn encrypt_in_memory<S: SymmetricAlgorithm>(
 }
 
 /// Decrypts a ciphertext body sequentially.
+///
+/// 顺序解密密文体。
 pub fn decrypt_in_memory<S: SymmetricAlgorithm>(
     key: S::Key,
     base_nonce: [u8; 12],

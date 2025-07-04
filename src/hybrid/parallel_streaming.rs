@@ -1,4 +1,6 @@
 //! Implements a parallel streaming hybrid encryption/decryption scheme.
+//!
+//! 实现并行流式混合加解密方案。
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
@@ -10,6 +12,8 @@ use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 
 /// Encrypts data from a reader and writes to a writer using a parallel streaming approach.
+///
+/// 使用并行流式方法从 reader 加密数据并写入 writer。
 pub fn encrypt<'a, A, S, R, W>(
     pk: &'a A::PublicKey,
     reader: R,
@@ -52,6 +56,10 @@ where
 /// This state is entered after the header has been successfully read from the
 /// stream, allowing the user to inspect the header (e.g., to find the `kek_id`)
 /// before supplying the appropriate private key to proceed with decryption.
+///
+/// 一个用于并行混合流的待定解密器，等待私钥。
+///
+/// 从流中成功读取标头后，进入此状态，允许用户在提供适当的私钥以继续解密之前检查标头（例如，查找 `kek_id`）。
 pub struct PendingDecryptor<R>
 where
     R: Read + Send,
@@ -65,6 +73,8 @@ where
     R: Read + Send,
 {
     /// Creates a new `PendingDecryptor` by reading the header from the stream.
+    ///
+    /// 通过从流中读取标头来创建一个新的 `PendingDecryptor`。
     pub fn from_reader(mut reader: R) -> Result<Self> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
         Ok(Self { reader, header })
@@ -72,6 +82,9 @@ where
 
     /// Consumes the pending decryptor, decrypts the stream with the provided private key,
     /// and writes the plaintext to the writer.
+    ///
+    /// 消费待定解密器，使用提供的私钥解密流，
+    /// 并将明文写入 writer。
     pub fn decrypt_to_writer<A, S, W>(
         self,
         sk: &A::PrivateKey,
@@ -100,6 +113,8 @@ where
 }
 
 /// Decrypts a data stream body and writes to a writer using a parallel streaming approach.
+///
+/// 使用并行流式方法解密数据流体并写入 writer。
 pub fn decrypt_body_stream<A, S, R, W>(
     sk: &A::PrivateKey,
     header: &Header,
@@ -134,6 +149,7 @@ where
     let shared_secret = A::decapsulate(&sk.clone().into(), &encapsulated_key)?;
 
     // Derive key if a deriver function is specified
+    // 如果指定了派生器，则派生密钥
     let dek = if let Some(info) = derivation_info {
         info.derive_key(&shared_secret)?
     } else {

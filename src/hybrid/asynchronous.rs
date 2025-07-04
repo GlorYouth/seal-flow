@@ -1,4 +1,6 @@
 //! Asynchronous, streaming hybrid encryption and decryption implementation.
+//!
+//! 异步、流式混合加密和解密实现。
 #![cfg(feature = "async")]
 
 use super::common::create_header;
@@ -18,6 +20,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 pin_project! {
     /// An asynchronous, streaming hybrid encryptor.
+    ///
+    /// 一个异步的、流式的混合加密器。
     pub struct Encryptor<W: AsyncWrite, A, S: SymmetricAlgorithm> {
         #[pin]
         inner: EncryptorImpl<W, S>,
@@ -34,6 +38,8 @@ where
     S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
 {
     /// Creates a new `Encryptor`.
+    ///
+    /// 创建一个新的 `Encryptor`。
     pub async fn new(
         mut writer: W,
         pk: A::PublicKey,
@@ -102,6 +108,8 @@ where
 // --- Decryptor ---
 
 /// An asynchronous pending hybrid decryptor, waiting for the private key.
+///
+/// 一个异步的、等待私钥的待处理混合解密器。
 pub struct PendingDecryptor<R: AsyncRead + Unpin> {
     reader: R,
     header: Header,
@@ -109,12 +117,16 @@ pub struct PendingDecryptor<R: AsyncRead + Unpin> {
 
 impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
     /// Creates a new `PendingDecryptor` by asynchronously reading the header.
+    ///
+    /// 通过异步读取标头来创建一个新的 `PendingDecryptor`。
     pub async fn from_reader(mut reader: R) -> Result<Self> {
         let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
         Ok(Self { reader, header })
     }
 
     /// Consumes the `PendingDecryptor` and returns a full `Decryptor`.
+    ///
+    /// 消费 `PendingDecryptor` 并返回一个完整的 `Decryptor`。
     pub async fn into_decryptor<A, S>(
         self,
         sk: A::PrivateKey,
@@ -175,6 +187,8 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
 
 pin_project! {
     /// An asynchronous, streaming hybrid decryptor.
+    ///
+    /// 一个异步的、流式的混合解密器。
     pub struct Decryptor<R: AsyncRead, A, S: SymmetricAlgorithm> {
         #[pin]
         inner: DecryptorImpl<R, S>,

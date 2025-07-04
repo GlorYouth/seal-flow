@@ -1,4 +1,6 @@
 //! Ordinary (single-threaded, in-memory) hybrid encryption and decryption.
+//!
+//! 普通（单线程、内存中）混合加密和解密。
 
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
@@ -9,6 +11,8 @@ use crate::impls::ordinary::{decrypt_in_memory, encrypt_in_memory};
 use seal_crypto::zeroize::Zeroizing;
 
 /// Performs hybrid encryption on in-memory data.
+///
+/// 对内存中的数据执行混合加密。
 pub fn encrypt<'a, A, S>(
     pk: &A::PublicKey,
     plaintext: &[u8],
@@ -28,9 +32,11 @@ where
         .unzip();
 
     // 1. Create header, nonce, and shared secret
+    // 1. 创建标头、nonce 和共享密钥
     let (header, base_nonce, shared_secret) = create_header::<A, S>(pk, kek_id, signer, aad, info)?;
 
     // 2. Derive key if a deriver function is specified
+    // 2. 如果指定了派生函数，则派生密钥
     let dek = if let Some(f) = deriver_fn {
         f(&shared_secret)?
     } else {
@@ -38,6 +44,7 @@ where
     };
 
     // 3. Serialize the header.
+    // 3. 序列化标头。
     let header_bytes = header.encode_to_vec()?;
     let key_material: S::Key = dek.into();
 
@@ -50,6 +57,10 @@ where
 /// the ciphertext, allowing the user to inspect the header (e.g., to find
 /// the `kek_id`) before supplying the appropriate private key to proceed with
 /// decryption.
+///
+/// 一个用于内存中混合加密数据的待定解密器。
+///
+/// 从密文中成功解析标头后，进入此状态，允许用户在提供适当的私钥以继续解密之前检查标头（例如，查找 `kek_id`）。
 pub struct PendingDecryptor<'a> {
     header: Header,
     ciphertext_body: &'a [u8],
@@ -57,6 +68,8 @@ pub struct PendingDecryptor<'a> {
 
 impl<'a> PendingDecryptor<'a> {
     /// Creates a new `PendingDecryptor` by parsing the header from the ciphertext.
+    ///
+    /// 通过从密文中解析标头来创建一个新的 `PendingDecryptor`。
     pub fn from_ciphertext(ciphertext: &'a [u8]) -> Result<Self> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
         Ok(Self {
@@ -66,6 +79,8 @@ impl<'a> PendingDecryptor<'a> {
     }
 
     /// Consumes the `PendingDecryptor` and returns the decrypted plaintext.
+    ///
+    /// 消费 `PendingDecryptor` 并返回解密的明文。
     pub fn into_plaintext<A, S>(self, sk: &A::PrivateKey, aad: Option<&[u8]>) -> Result<Vec<u8>>
     where
         A: AsymmetricAlgorithm,
@@ -86,6 +101,10 @@ impl<'a> PendingImpl for PendingDecryptor<'a> {
 /// Performs hybrid decryption on an in-memory ciphertext body.
 ///
 /// This function assumes `decode_header` has been called and its results are provided.
+///
+/// 对内存中的密文体执行混合解密。
+///
+/// 此函数假定已经调用了 `decode_header` 并提供了其结果。
 pub fn decrypt_body<A, S>(
     sk: &A::PrivateKey,
     header: &Header,
@@ -99,6 +118,7 @@ where
     S::Key: From<Zeroizing<Vec<u8>>>,
 {
     // 1. Extract metadata and the encrypted DEK from the header.
+    // 1. 从标头中提取元数据和加密的 DEK。
     let (encapsulated_key, chunk_size, base_nonce, derivation_info) = match &header.payload {
         HeaderPayload::Hybrid {
             encrypted_dek,
@@ -115,9 +135,11 @@ where
     };
 
     // 2. KEM Decapsulate to recover the shared secret.
+    // 2. KEM 解封装以恢复共享密钥。
     let shared_secret = A::decapsulate(sk, &encapsulated_key)?;
 
     // 3. Derive key if derivation info is present.
+    // 3. 如果存在派生信息，则派生密钥。
     let dek = if let Some(info) = derivation_info {
         info.derive_key(&shared_secret)?
     } else {

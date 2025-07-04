@@ -1,10 +1,18 @@
 //! Implements the common logic for synchronous, streaming encryption and decryption.
+//! This is the backend for both symmetric and hybrid streaming modes.
+//!
+//! 实现同步、流式加密和解密的通用逻辑。
+//! 这是对称和混合流式模式的后端。
+
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::error::Result;
 use std::io::{self, Read, Write};
 // --- Encryptor ---
 
+/// The implementation of a synchronous, streaming encryptor.
+///
+/// 同步、流式加密器的实现。
 pub struct EncryptorImpl<W: Write, S: SymmetricAlgorithm> {
     writer: W,
     symmetric_key: S::Key,
@@ -18,6 +26,9 @@ pub struct EncryptorImpl<W: Write, S: SymmetricAlgorithm> {
 }
 
 impl<W: Write, S: SymmetricAlgorithm> EncryptorImpl<W, S> {
+    /// Creates a new `EncryptorImpl`.
+    ///
+    /// 创建一个新的 `EncryptorImpl`。
     pub fn new(
         writer: W,
         symmetric_key: S::Key,
@@ -37,6 +48,13 @@ impl<W: Write, S: SymmetricAlgorithm> EncryptorImpl<W, S> {
         })
     }
 
+    /// Finalizes the encryption stream.
+    /// This method must be called to ensure that the last partial chunk of data is
+    /// encrypted and the authentication tag is written to the underlying writer.
+    ///
+    /// 完成加密流。
+    /// 必须调用此方法以确保最后的数据块被加密，
+    /// 并且认证标签被写入底层的 writer。
     pub fn finish(mut self) -> Result<()> {
         if !self.buffer.is_empty() {
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
@@ -119,6 +137,9 @@ impl<W: Write, S: SymmetricAlgorithm> Write for EncryptorImpl<W, S> {
 
 // --- Decryptor ---
 
+/// The implementation of a synchronous, streaming decryptor.
+///
+/// 同步、流式解密器的实现。
 pub struct DecryptorImpl<R: Read, S: SymmetricAlgorithm> {
     reader: R,
     symmetric_key: S::Key,
@@ -133,6 +154,9 @@ pub struct DecryptorImpl<R: Read, S: SymmetricAlgorithm> {
 }
 
 impl<R: Read, S: SymmetricAlgorithm> DecryptorImpl<R, S> {
+    /// Creates a new `DecryptorImpl`.
+    ///
+    /// 创建一个新的 `DecryptorImpl`。
     pub fn new(
         reader: R,
         key: S::Key,
