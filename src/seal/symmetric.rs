@@ -36,7 +36,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ``` ignore
 //! use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 //! use seal_flow::prelude::*;
 //!

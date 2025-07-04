@@ -4,7 +4,7 @@ use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
-use crate::error::{Error, Result};
+use crate::error::{Error, FormatError, Result};
 use crate::impls::ordinary::{decrypt_in_memory, encrypt_in_memory};
 use seal_crypto::zeroize::Zeroizing;
 
@@ -111,7 +111,7 @@ where
             info.base_nonce,
             derivation_info.clone(),
         ),
-        _ => return Err(Error::InvalidHeader),
+        _ => return Err(Error::Format(FormatError::InvalidHeader)),
     };
 
     // 2. KEM Decapsulate to recover the shared secret.

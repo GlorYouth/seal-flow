@@ -4,7 +4,7 @@ use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
-use crate::error::{Error, Result};
+use crate::error::{Error, FormatError, Result};
 use crate::impls::parallel_streaming::{decrypt_pipeline, encrypt_pipeline};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
@@ -128,7 +128,7 @@ where
             encrypted_dek.clone().into(),
             derivation_info.clone(),
         ),
-        _ => return Err(Error::InvalidHeader),
+        _ => return Err(Error::Format(FormatError::InvalidHeader)),
     };
 
     let shared_secret = A::decapsulate(&sk.clone().into(), &encapsulated_key)?;

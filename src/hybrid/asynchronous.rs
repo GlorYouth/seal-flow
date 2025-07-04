@@ -5,7 +5,7 @@ use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
-use crate::error::{Error, Result};
+use crate::error::{Error, FormatError, Result};
 use crate::impls::asynchronous::{DecryptorImpl, EncryptorImpl};
 use pin_project_lite::pin_project;
 use seal_crypto::zeroize::Zeroizing;
@@ -140,7 +140,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
                 info.base_nonce,
                 derivation_info.clone(),
             ),
-            _ => return Err(Error::InvalidHeader),
+            _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
 
         let dek = tokio::task::spawn_blocking(move || -> Result<_> {

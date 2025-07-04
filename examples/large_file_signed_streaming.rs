@@ -14,6 +14,7 @@ use seal_crypto::{
     },
 };
 use seal_flow::prelude::*;
+use seal_flow::error::KeyManagementError;
 
 // --- Algorithm Configuration ---
 // KEM: A post-quantum safe algorithm for key encapsulation.
@@ -52,13 +53,13 @@ impl KeyProvider for FileKeyProvider {
         self.asymmetric_private_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| Error::KeyNotFound(key_id.to_string()))
+            .ok_or_else(|| Error::KeyManagement(KeyManagementError::KeyNotFound(key_id.to_string())))
     }
     fn get_signature_public_key(&self, key_id: &str) -> Result<SignaturePublicKey> {
         self.signature_public_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| Error::KeyNotFound(key_id.to_string()))
+            .ok_or_else(|| Error::KeyManagement(KeyManagementError::KeyNotFound(key_id.to_string())))
     }
 }
 

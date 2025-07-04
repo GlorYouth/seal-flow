@@ -4,7 +4,7 @@ use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::PendingImpl;
-use crate::error::{Error, Result};
+use crate::error::{Error, FormatError, Result};
 use crate::impls::ordinary::{decrypt_in_memory, encrypt_in_memory};
 
 /// Encrypts plaintext using a chunking mechanism.
@@ -73,7 +73,7 @@ where
             stream_info: Some(info),
             ..
         } => (info.chunk_size, info.base_nonce),
-        _ => return Err(Error::InvalidHeader),
+        _ => return Err(Error::Format(FormatError::InvalidHeader)),
     };
 
     decrypt_in_memory::<S>(key, base_nonce, chunk_size, ciphertext_body, aad)

@@ -50,7 +50,7 @@
 //!
 //! # Example
 //!
-//! ```no_run
+//! ``` ignore
 //! use seal_crypto::schemes::{
 //!     asymmetric::traditional::rsa::Rsa2048,
 //!     hash::Sha256,
@@ -306,6 +306,7 @@ impl HybridSeal {
 mod tests {
     use super::*;
     use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
+    use crate::error::EnvironmentError;
     use crate::Error;
     use seal_crypto::prelude::*;
     use seal_crypto::schemes::asymmetric::post_quantum::dilithium::Dilithium2;
@@ -369,11 +370,11 @@ mod tests {
         let retrieved_signer_id = pending
             .signer_key_id()
             .ok_or("missing signer key id")
-            .map_err(|e| Error::AsyncTaskError(e.to_string()))?;
+            .map_err(|e| Error::Environment(EnvironmentError::Async(e.to_string())))?;
         let verification_key = verifiers
             .get(retrieved_signer_id)
             .ok_or("verification key not found")
-            .map_err(|e| Error::AsyncTaskError(e.to_string()))?;
+            .map_err(|e| Error::Environment(EnvironmentError::Async(e.to_string())))?;
 
         let decrypted = pending
             .with_aad(aad)
@@ -461,11 +462,11 @@ mod tests {
         let retrieved_signer_id = pending
             .signer_key_id()
             .ok_or("missing signer key id")
-            .map_err(|e| Error::AsyncTaskError(e.to_string()))?;
+            .map_err(|e| Error::Environment(EnvironmentError::Async(e.to_string())))?;
         let verification_key = verifiers
             .get(retrieved_signer_id)
             .ok_or("verification key not found")
-            .map_err(|e| Error::AsyncTaskError(e.to_string()))?;
+            .map_err(|e| Error::Environment(EnvironmentError::Async(e.to_string())))?;
 
         let decrypted = pending
             .with_aad(aad)

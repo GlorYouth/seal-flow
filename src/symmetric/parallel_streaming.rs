@@ -6,7 +6,7 @@ use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::PendingImpl;
-use crate::error::{Error, Result};
+use crate::error::{Error, FormatError, Result};
 use crate::impls::parallel_streaming::{decrypt_pipeline, encrypt_pipeline};
 use std::io::{Read, Write};
 
@@ -53,7 +53,7 @@ where
             stream_info: Some(info),
             ..
         } => (info.chunk_size, info.base_nonce),
-        _ => return Err(Error::InvalidHeader),
+        _ => return Err(Error::Format(FormatError::InvalidHeader)),
     };
 
     decrypt_pipeline::<S, R, W>(key, base_nonce, chunk_size, reader, writer, aad)

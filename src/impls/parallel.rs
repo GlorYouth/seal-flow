@@ -1,7 +1,7 @@
 //! Implements the common logic for parallel, in-memory encryption and decryption.
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
-use crate::error::{Error, Result};
+use crate::error::{Error, FormatError, Result};
 use rayon::prelude::*;
 
 /// Encrypts in-memory data in parallel.
@@ -96,7 +96,7 @@ where
     };
 
     if last_chunk_len > 0 && last_chunk_len <= tag_len {
-        return Err(Error::InvalidCiphertextFormat);
+        return Err(Error::Format(FormatError::InvalidCiphertext));
     }
 
     let total_size = (num_chunks.saturating_sub(1)) * chunk_size

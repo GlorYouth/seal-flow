@@ -2,6 +2,7 @@ use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::algorithms::SymmetricAlgorithm as SymmetricAlgorithmEnum;
 use crate::common::header::Header;
 use crate::common::PendingImpl;
+use crate::error::{KeyManagementError};
 use crate::keys::provider::KeyProvider;
 use crate::keys::SymmetricKey;
 use std::io::{Read, Write};
@@ -186,8 +187,10 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     pub fn resolve_and_decrypt(self) -> crate::Result<Vec<u8>> {
         let provider = self
             .key_provider
-            .ok_or(crate::Error::MissingKeyProvider)?;
-        let key_id = self.key_id().ok_or(crate::Error::MissingKeyId)?;
+            .ok_or(KeyManagementError::ProviderMissing)?;
+        let key_id = self
+            .key_id()
+            .ok_or(KeyManagementError::KeyIdMissing)?;
         let key = provider.get_symmetric_key(key_id)?;
         self.with_key(key)
     }
@@ -222,8 +225,10 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     pub fn resolve_and_decrypt(self) -> crate::Result<Vec<u8>> {
         let provider = self
             .key_provider
-            .ok_or(crate::Error::MissingKeyProvider)?;
-        let key_id = self.key_id().ok_or(crate::Error::MissingKeyId)?;
+            .ok_or(KeyManagementError::ProviderMissing)?;
+        let key_id = self
+            .key_id()
+            .ok_or(KeyManagementError::KeyIdMissing)?;
         let key = provider.get_symmetric_key(key_id)?;
         self.with_key(key)
     }
@@ -261,8 +266,10 @@ impl<'a, R: Read> PendingStreamingDecryptor<'a, R> {
     {
         let provider = self
             .key_provider
-            .ok_or(crate::Error::MissingKeyProvider)?;
-        let key_id = self.key_id().ok_or(crate::Error::MissingKeyId)?;
+            .ok_or(KeyManagementError::ProviderMissing)?;
+        let key_id = self
+            .key_id()
+            .ok_or(KeyManagementError::KeyIdMissing)?;
         let key = provider.get_symmetric_key(key_id)?;
         self.with_key(key)
     }
@@ -307,8 +314,10 @@ where
     pub fn resolve_and_decrypt_to_writer<W: Write>(self, writer: W) -> crate::Result<()> {
         let provider = self
             .key_provider
-            .ok_or(crate::Error::MissingKeyProvider)?;
-        let key_id = self.key_id().ok_or(crate::Error::MissingKeyId)?;
+            .ok_or(KeyManagementError::ProviderMissing)?;
+        let key_id = self
+            .key_id()
+            .ok_or(KeyManagementError::KeyIdMissing)?;
         let key = provider.get_symmetric_key(key_id)?;
         self.with_key_to_writer(key, writer)
     }
@@ -352,8 +361,10 @@ impl<'a, R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<'a, R> {
     {
         let provider = self
             .key_provider
-            .ok_or(crate::Error::MissingKeyProvider)?;
-        let key_id = self.key_id().ok_or(crate::Error::MissingKeyId)?;
+            .ok_or(KeyManagementError::ProviderMissing)?;
+        let key_id = self
+            .key_id()
+            .ok_or(KeyManagementError::KeyIdMissing)?;
         let key = provider.get_symmetric_key(key_id)?;
         self.with_key(key)
     }

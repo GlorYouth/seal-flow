@@ -4,9 +4,9 @@ use crate::common::algorithms::{
 };
 use crate::common::header::Header;
 use crate::common::PendingImpl;
+use crate::error::{FormatError, KeyManagementError};
 use crate::keys::provider::KeyProvider;
 use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
-use crate::Error;
 use seal_crypto::prelude::*;
 use seal_crypto::schemes::asymmetric::{
     post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
@@ -220,29 +220,29 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     pub fn resolve_and_decrypt(mut self) -> crate::Result<Vec<u8>> {
         let provider = self
             .key_provider
-            .ok_or(crate::Error::MissingKeyProvider)?;
+            .ok_or(KeyManagementError::ProviderMissing)?;
 
         if let Some(signer_key_id) = self.signer_key_id() {
             let verification_key = provider.get_signature_public_key(signer_key_id)?;
             self.verification_key = Some(verification_key);
         }
 
-        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
+        let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
         let private_key = provider.get_asymmetric_private_key(kek_id)?;
 
         self.with_key(private_key)
-    }
+        }
 
-    /// Supplies a private key directly from its wrapper for decryption
-    pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
-        self.header()
+        /// Supplies a private key directly from its wrapper for decryption
+        pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
+            self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
 
         let asymmetric_algorithm = self
             .header()
             .payload
             .asymmetric_algorithm()
-            .ok_or(Error::InvalidHeader)?;
+            .ok_or(FormatError::InvalidHeader)?;
 
         let symmetric_algorithm = self.header().payload.symmetric_algorithm();
 
@@ -280,14 +280,14 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     pub fn resolve_and_decrypt(mut self) -> crate::Result<Vec<u8>> {
         let provider = self
             .key_provider
-            .ok_or(crate::Error::MissingKeyProvider)?;
+            .ok_or(KeyManagementError::ProviderMissing)?;
 
         if let Some(signer_key_id) = self.signer_key_id() {
             let verification_key = provider.get_signature_public_key(signer_key_id)?;
             self.verification_key = Some(verification_key);
         }
 
-        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
+        let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
         let private_key = provider.get_asymmetric_private_key(kek_id)?;
 
         self.with_key(private_key)
@@ -302,7 +302,7 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
             .header()
             .payload
             .asymmetric_algorithm()
-            .ok_or(Error::InvalidHeader)?;
+            .ok_or(FormatError::InvalidHeader)?;
 
         let symmetric_algorithm = self.header().payload.symmetric_algorithm();
 
@@ -337,18 +337,18 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
 }
 
 impl<'a, R: Read + 'static> PendingStreamingDecryptor<'a, R> {
-    /// Automatically resolves keys and returns a decrypting reader.
+    /// Automatically resolves keys using the attached `KeyProvider` and completes decryption.
     pub fn resolve_and_decrypt(mut self) -> crate::Result<Box<dyn Read + 'static>> {
         let provider = self
             .key_provider
-            .ok_or(crate::Error::MissingKeyProvider)?;
+            .ok_or(KeyManagementError::ProviderMissing)?;
 
         if let Some(signer_key_id) = self.signer_key_id() {
             let verification_key = provider.get_signature_public_key(signer_key_id)?;
             self.verification_key = Some(verification_key);
         }
 
-        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
+        let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
         let private_key = provider.get_asymmetric_private_key(kek_id)?;
 
         self.with_key(private_key)
@@ -363,7 +363,7 @@ impl<'a, R: Read + 'static> PendingStreamingDecryptor<'a, R> {
             .header()
             .payload
             .asymmetric_algorithm()
-            .ok_or(Error::InvalidHeader)?;
+            .ok_or(FormatError::InvalidHeader)?;
 
         let symmetric_algorithm = self.header().payload.symmetric_algorithm();
 
@@ -409,14 +409,14 @@ where
     pub fn resolve_and_decrypt_to_writer<W: Write>(mut self, writer: W) -> crate::Result<()> {
         let provider = self
             .key_provider
-            .ok_or(crate::Error::MissingKeyProvider)?;
+            .ok_or(KeyManagementError::ProviderMissing)?;
 
         if let Some(signer_key_id) = self.signer_key_id() {
             let verification_key = provider.get_signature_public_key(signer_key_id)?;
             self.verification_key = Some(verification_key);
         }
 
-        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
+        let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
         let private_key = provider.get_asymmetric_private_key(kek_id)?;
 
         self.with_key_to_writer(private_key, writer)
@@ -435,7 +435,7 @@ where
             .header()
             .payload
             .asymmetric_algorithm()
-            .ok_or(Error::InvalidHeader)?;
+            .ok_or(FormatError::InvalidHeader)?;
 
         let symmetric_algorithm = self.header().payload.symmetric_algorithm();
 
@@ -490,14 +490,14 @@ impl<'a, R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<'a, R> {
     {
         let provider = self
             .key_provider
-            .ok_or(crate::Error::MissingKeyProvider)?;
+            .ok_or(KeyManagementError::ProviderMissing)?;
 
         if let Some(signer_key_id) = self.signer_key_id() {
             let verification_key = provider.get_signature_public_key(signer_key_id)?;
             self.verification_key = Some(verification_key);
         }
 
-        let kek_id = self.kek_id().ok_or(Error::KekIdNotFound)?;
+        let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
         let private_key = provider.get_asymmetric_private_key(kek_id)?;
 
         self.with_key(private_key).await
@@ -518,7 +518,7 @@ impl<'a, R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<'a, R> {
             .header()
             .payload
             .asymmetric_algorithm()
-            .ok_or(Error::InvalidHeader)?;
+            .ok_or(FormatError::InvalidHeader)?;
 
         let symmetric_algorithm = self.header().payload.symmetric_algorithm();
 

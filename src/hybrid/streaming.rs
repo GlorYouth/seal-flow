@@ -3,7 +3,7 @@ use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
-use crate::error::{Error, Result};
+use crate::error::{Error, FormatError, Result};
 use crate::impls::streaming::{DecryptorImpl, EncryptorImpl};
 use seal_crypto::prelude::{Kem, SymmetricKeySet};
 use seal_crypto::zeroize::Zeroizing;
@@ -123,7 +123,7 @@ impl<R: Read> PendingDecryptor<R> {
                 info.base_nonce,
                 derivation_info,
             ),
-            _ => return Err(Error::InvalidHeader),
+            _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
 
         let shared_secret = A::decapsulate(sk, &encapsulated_key)?;

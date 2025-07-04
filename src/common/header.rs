@@ -3,7 +3,7 @@ use bincode::{Decode, Encode};
 use crate::common::algorithms::{
     AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm,
 };
-use crate::error::{Error, Result};
+use crate::error::{CryptoError, Error, FormatError, Result};
 use std::io::Read;
 
 #[cfg(feature = "async")]
@@ -207,7 +207,10 @@ impl HeaderPayload {
 
     pub(crate) fn get_signed_payload_and_sig(&self) -> Result<(Vec<u8>, Vec<u8>)> {
         if let HeaderPayload::Hybrid { .. } = self {
-            let signature = self.signature().ok_or(Error::SignatureMissing)?.to_vec();
+            let signature = self
+                .signature()
+                .ok_or(CryptoError::MissingSignature)?
+                .to_vec();
 
             let mut temp_payload = self.clone();
             if let HeaderPayload::Hybrid {
@@ -220,7 +223,7 @@ impl HeaderPayload {
             let payload_bytes = bincode::encode_to_vec(&temp_payload, bincode::config::standard())?;
             Ok((payload_bytes, signature))
         } else {
-            Err(Error::UnsupportedOperation)
+            Err(CryptoError::UnsupportedOperation.into())
         }
     }
 }
@@ -253,11 +256,11 @@ impl Header {
     /// A tuple containing the parsed `Header` and a slice pointing to the remaining data.
     pub fn decode_from_prefixed_slice(ciphertext: &[u8]) -> Result<(Self, &[u8])> {
         if ciphertext.len() < 4 {
-            return Err(Error::InvalidCiphertextFormat);
+            return Err(FormatError::InvalidCiphertext.into());
         }
         let header_len = u32::from_le_bytes(ciphertext[0..4].try_into().unwrap()) as usize;
         if ciphertext.len() < 4 + header_len {
-            return Err(Error::InvalidCiphertextFormat);
+            return Err(FormatError::InvalidCiphertext.into());
         }
         let header_bytes = &ciphertext[4..4 + header_len];
         let ciphertext_body = &ciphertext[4 + header_len..];
@@ -359,7 +362,7 @@ impl Header {
             Ok(())
         } else {
             // 没有签名，但提供了验证密钥
-            Err(Error::SignatureMissing)
+            Err(CryptoError::MissingSignature.into())
         }
     }
 }

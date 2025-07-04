@@ -10,6 +10,7 @@ use seal_crypto::{
         symmetric::aes_gcm::Aes256Gcm,
     },
 };
+use seal_flow::error::KeyManagementError;
 use seal_flow::prelude::*;
 use std::collections::HashMap;
 
@@ -58,7 +59,7 @@ impl KeyProvider for InMemoryKeyProvider {
         self.symmetric_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| Error::KeyNotFound(key_id.to_string()))
+            .ok_or_else(|| Error::KeyManagement(KeyManagementError::KeyNotFound(key_id.to_string())))
     }
 
     /// Looks up an asymmetric private key by its ID.
@@ -66,7 +67,7 @@ impl KeyProvider for InMemoryKeyProvider {
         self.asymmetric_private_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| Error::KeyNotFound(key_id.to_string()))
+            .ok_or_else(|| Error::KeyManagement(KeyManagementError::KeyNotFound(key_id.to_string())))
     }
 
     /// Looks up a signature verification public key by its ID.
@@ -74,7 +75,7 @@ impl KeyProvider for InMemoryKeyProvider {
         self.signature_public_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| Error::KeyNotFound(key_id.to_string()))
+            .ok_or_else(|| Error::KeyManagement(KeyManagementError::KeyNotFound(key_id.to_string())))
     }
 }
 

@@ -2,7 +2,7 @@ use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::PendingImpl;
-use crate::error::{Error, Result};
+use crate::error::{Error, FormatError, Result};
 use crate::impls::parallel::{decrypt_parallel, encrypt_parallel};
 
 /// Encrypts in-memory data using parallel processing.
@@ -41,7 +41,7 @@ where
             stream_info: Some(info),
             ..
         } => (info.chunk_size, info.base_nonce),
-        _ => return Err(Error::InvalidHeader),
+        _ => return Err(Error::Format(FormatError::InvalidHeader)),
     };
 
     decrypt_parallel::<S>(key, base_nonce, chunk_size, ciphertext_body, aad)
@@ -91,7 +91,7 @@ mod tests {
     use super::*;
     use crate::common::DEFAULT_CHUNK_SIZE;
     use crate::error::Error as FlowError;
-    use seal_crypto::errors::Error as CryptoError;
+    use crate::error::CryptoError;
     use seal_crypto::prelude::SymmetricKeyGenerator;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 
@@ -174,7 +174,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            FlowError::Crypto(CryptoError::Symmetric(_))
+            FlowError::Crypto(CryptoError::Backend(_))
         ));
     }
 
