@@ -37,58 +37,94 @@ seal-flow = "0.1.0" # 请替换为最新版本
 
 本示例演示了一个完整的加密和解密周期，包括元数据（AAD）和安全的密钥查找模式。
 
-本示例的完整代码可以在 [`examples/readme/readme_symmetric_workflow.rs`](./examples/readme/readme_symmetric_workflow.rs) 中找到。
+本示例的完整代码可以在 [`examples/readme/symmetric_workflow.rs`](./examples/readme/symmetric_workflow.rs) 中找到。
 
 ## 使用方法：混合加密工作流
 
 混合加密遵循同样流畅的模式。你使用公钥加密，并用相应的私钥解密。
 
-本示例的完整代码可以在 [`examples/readme/readme_hybrid_workflow.rs`](./examples/readme/readme_hybrid_workflow.rs) 中找到。
+本示例的完整代码可以在 [`examples/readme/hybrid_workflow.rs`](./examples/readme/hybrid_workflow.rs) 中找到。
 
-## 主要特性与高级用法
+## 主要特性详解
 
-### 简化且安全的密钥管理
+### 安全且灵活的解密工作流
 
-`seal-flow` 通过使用强类型的密钥封装（`SymmetricKey`, `AsymmetricPublicKey`, `AsymmetricPrivateKey`）而不是原始字节来提升安全性。
+本库的设计旨在防止您意外地使用错误的密钥。解密是一个两步过程，让您可以在提供密钥之前安全地检查密文的元数据。
 
-对于解密，推荐使用 `with_key(key_wrapper)` 方法。它会自动且安全地从密文头部推断出正确的加密算法，减少了出错的风险。
+**1. 手动密钥查找（默认模式）**
 
-对于高级场景（例如，与旧系统集成），你可以使用 `with_typed_key::<Algorithm>(concrete_key)` 来显式指定算法，从而覆盖头部中的信息。
+当您开始解密时，库会首先解析头部并返回一个 `PendingDecryptor`（待定解密器）。您可以检查此对象以获取用于加密的 `key_id`。这使您能从您的密钥库中获取正确的密钥。
 
-### 密钥派生 (KDF & PBKDF)
+```rust
+// 1. 开始解密并获取待定状态
+let pending = seal.decrypt().slice(&ciphertext)?;
 
-从主密钥或密码派生密钥，用于密钥轮换或基于密码的加密等场景。这对于创建密钥层次结构也很有用，例如，使用密码派生主密钥，然后使用可扩展输出函数（XOF），如 SHAKE256，从中生成多个不同长度的密钥。
+// 2. 无需解密即可安全地获取密钥ID
+let key_id = pending.key_id().unwrap(); // 例如 "my-key-v1"
 
-该示例的完整代码可以在 [`examples/readme/readme_advanced_key_derivation.rs`](./examples/readme/readme_advanced_key_derivation.rs) 中找到。
+// 3. 从您的密钥管理系统中获取正确的密钥
+let key_to_use = my_key_store.get(key_id).unwrap();
+
+// 4. 提供密钥以完成解密
+let plaintext = pending.with_key(key_to_use)?;
+```
+
+**2. 自动化密钥查找 (使用 `KeyProvider`)**
+
+为了更加方便，您可以为您的密钥库实现 `KeyProvider` trait。这允许库为您自动处理密钥查找过程。
+
+```rust
+// 你的密钥库必须实现 KeyProvider trait
+struct MyKeyStore { /* ... */ }
+impl KeyProvider for MyKeyStore { /* ... */ }
+
+let key_provider = MyKeyStore::new();
+
+// 1. 附加 provider 并调用 resolve_and_decrypt()
+let plaintext = seal.decrypt()
+    .with_key_provider(&key_provider)
+    .slice(&ciphertext)?
+    .resolve_and_decrypt()?; // 密钥查找和解密会自动发生
+```
+
+### 数字签名用于发送方身份验证
+
+在混合加密中，发送方可以对加密元数据进行签名，以证明自己的身份并保证头部未被篡改。
+
+当在加密期间使用 `.with_signer()` 方法时，`seal-flow` 会对密文头部创建一个数字签名并将其嵌入。在解密期间，库会自动验证此签名。如果使用了 `KeyProvider`，库会使用存储在头部的 `signer_key_id` 自动查找用于验证的公钥。
+
+本示例的完整代码可以在 [`examples/readme/digital_signatures.rs`](./examples/readme/digital_signatures.rs) 中找到。
 
 ### 认证附加数据 (AAD)
 
-`seal-flow` 支持认证附加数据（AAD），这是一种只被认证但不被加密的数据。这是一项关键的安全特性，用于防止重放攻击或上下文混淆攻击，即有效的密文被恶意地用于不同的上下文中。
+`seal-flow` 支持认证附加数据（AAD），这是一种只被认证但不被加密的数据。这是一项关键的安全特性，用于防止重放攻击或上下文混淆攻击（即有效的密文被恶意地用于不同的上下文中）。
 
-AAD 会被混合到密码学计算中，这意味着密文与 AAD 是密码学绑定的。如果在解密期间提供的 AAD 与加密时的 AAD 不完全匹配，解密将会失败。
-
-AAD 的常见用例包括：
+AAD 会被混合到密码学计算中，这意味着密文与 AAD 是密码学绑定的。如果在解密期间提供的 AAD 与加密时的 AAD 不完全匹配，解密将会失败。常见用例包括：
 -   用户 ID、会话 ID 或请求 ID。
 -   版本号或文件路径。
 -   任何定义加密数据上下文的元数据。
 
-该示例的完整代码可以在 [`examples/readme/readme_aad.rs`](./examples/readme/readme_aad.rs) 中找到。
+该示例的完整代码可以在 [`examples/readme/aad.rs`](./examples/readme/aad.rs) 中找到。
 
-### 数字签名
+### 高级密钥派生 (KDF & PBKDF)
 
-在混合加密中，你还可以对数据进行签名，以证明其来源和完整性。
+本库提供对密钥派生函数的直接访问，允许您创建健壮的密钥层次结构。这对于以下场景非常有用：
+-   **密钥轮换**: 从一个长期主密钥派生出子密钥。
+-   **基于密码的加密**: 使用盐和高迭代次数，从低熵的用户密码安全地派生出强密码学密钥。
+-   **域分离**: 从同一个主密钥为不同目的生成不同的密钥（例如，"加密密钥"、"认证密钥"）。
 
-本示例的完整代码可以在 [`examples/readme/readme_digital_signatures.rs`](./examples/readme/readme_digital_signatures.rs) 中找到。
+该示例的完整代码可以在 [`examples/readme/advanced_key_derivation.rs`](./examples/readme/advanced_key_derivation.rs) 中找到。
 
-### 多种处理模式
+## 执行模式
 
-虽然 `.to_vec()` 非常适合处理内存中的数据，但 `seal-flow` 还支持其他模式以满足不同需求：
+`seal-flow` 提供四种不同的执行模式以处理任何工作负载。由于所有模式都生成统一格式的数据，您可以自由地混合和匹配它们——例如，在服务器上进行流式加密，然后在客户端上进行并行解密。
 
--   **流式处理 (Streaming):** 使用 `into_writer()` 来加密/解密I/O流 (`Read`/`Write`)，无需将所有内容加载到内存中。
--   **并行处理 (Parallel):** 使用 `par_to_vec()` 在多核系统上进行高吞吐量的内存处理。
--   **异步处理 (Asynchronous):** 使用 `into_async_writer()` 在 `async` 应用程序中进行非阻塞I/O。
-
-得益于统一的数据格式，用一种模式加密的数据可以用任何其他模式解密。请参阅 `examples/` 目录查看详细用法。
+| 模式       | API 方法                                        | 用例                                                           |
+| ---------- | ------------------------------------------------- | -------------------------------------------------------------- |
+| **内存处理** | `.to_vec()`, `.slice()`                           | 简单、快速地处理可完全载入内存的数据。                         |
+| **并行内存处理** | `.to_vec_parallel()`, `.slice_parallel()`         | 在多核系统上对较大数据进行高吞吐量处理。                       |
+| **流式处理** | `.into_writer()`, `.reader()`                     | 用于处理大文件或网络I/O，避免内存占用过高。                    |
+| **异步流式处理** | `.into_async_writer()`, `.async_reader()`         | 用于高并发异步应用中的非阻塞I/O（例如 Tokio）。|
 
 ## 互操作性
 

@@ -5,7 +5,7 @@
 
 A stateless, high-level cryptographic workflow library built on top of `seal-crypto`. It provides a unified, fluent, and secure interface for common cryptographic operations like hybrid and symmetric encryption.
 
-[中文文档 (Chinese README)](./README_CN.md)
+[中文文档 (Chinese README)](./CN.md)
 
 ## Core Philosophy: The Fluent "Seal" API
 
@@ -39,48 +39,94 @@ seal-flow = "0.1.0" # Replace with the latest version
 
 This example demonstrates a full encryption and decryption cycle, including metadata (AAD) and the safe key-lookup pattern.
 
-The full code for this example can be found in [`examples/readme/readme_symmetric_workflow.rs`](./examples/readme/readme_symmetric_workflow.rs).
+The full code for this example can be found in [`examples/readme/symmetric_workflow.rs`](./examples/readme/symmetric_workflow.rs).
 
 ## Usage: Hybrid Encryption Workflow
 
 Hybrid encryption follows the same fluent pattern. You encrypt with a public key and decrypt with the corresponding private key.
 
-The full code for this example can be found in [`examples/readme/readme_hybrid_workflow.rs`](./examples/readme/readme_hybrid_workflow.rs).
+The full code for this example can be found in [`examples/readme/hybrid_workflow.rs`](./examples/readme/hybrid_workflow.rs).
 
-## Key Features & Advanced Usage
+## Key Features in Detail
 
-### Simplified & Secure Key Management
+### Secure and Flexible Decryption
 
-`seal-flow` promotes security by using strongly-typed key wrappers instead of raw bytes: `SymmetricKey`, `AsymmetricPublicKey`, `AsymmetricPrivateKey`.
+The library is designed to prevent you from accidentally using the wrong key. Decryption is a two-step process that lets you safely inspect the ciphertext's metadata before supplying a key.
 
-For decryption, the `with_key(key_wrapper)` method is recommended. It automatically and safely infers the correct cryptographic algorithm from the ciphertext header, reducing the risk of errors.
+**1. Manual Key Lookup (The Default Pattern)**
 
-For advanced scenarios (e.g., integrating with legacy systems), you can use `with_typed_key::<Algorithm>(concrete_key)` to explicitly specify the algorithm, overriding the header.
+When you begin decryption, the library first parses the header and gives you a `PendingDecryptor`. You can inspect this object to find the `key_id` that was used for encryption. This allows you to fetch the correct key from your key store.
 
-### Key Derivation (KDF & PBKDF)
+```rust
+// 1. Start decryption and get the pending state
+let pending = seal.decrypt().slice(&ciphertext)?;
 
-Derive keys from a master key or a password for use cases like key rotation or password-based encryption. This is also useful for creating key hierarchies, for example, using a password to derive a master secret, and then using an Extendable-Output Function (XOF) like SHAKE256 to generate multiple keys of different lengths from it.
+// 2. Safely get the key ID without decrypting
+let key_id = pending.key_id().unwrap(); // e.g., "my-key-v1"
 
-The full code for this example can be found in [`examples/readme/readme_advanced_key_derivation.rs`](./examples/readme/readme_advanced_key_derivation.rs).
+// 3. Fetch the correct key from your key management system
+let key_to_use = my_key_store.get(key_id).unwrap();
+
+// 4. Provide the key to complete decryption
+let plaintext = pending.with_key(key_to_use)?;
+```
+
+**2. Automated Key Lookup (Using `KeyProvider`)**
+
+For even greater convenience, you can implement the `KeyProvider` trait for your key store. This allows the library to handle the key lookup process for you automatically.
+
+```rust
+// Your key store must implement the `KeyProvider` trait
+struct MyKeyStore { /* ... */ }
+impl KeyProvider for MyKeyStore { /* ... */ }
+
+let key_provider = MyKeyStore::new();
+
+// 1. Attach the provider and call `resolve_and_decrypt()`
+let plaintext = seal.decrypt()
+    .with_key_provider(&key_provider)
+    .slice(&ciphertext)?
+    .resolve_and_decrypt()?; // Key lookup and decryption happen automatically
+```
+
+### Digital Signatures for Sender Authentication
+
+In hybrid encryption, the sender can sign the encryption metadata to prove their identity and guarantee that the header has not been tampered with.
+
+When the `.with_signer()` method is used during encryption, `seal-flow` creates a digital signature over the ciphertext header and embeds it. During decryption, the library automatically verifies this signature. If a `KeyProvider` is used, the public verification key is looked up automatically using the `signer_key_id` stored in the header.
+
+The full code for this example can be found in [`examples/readme/digital_signatures.rs`](./examples/readme/digital_signatures.rs).
 
 ### Authenticated Associated Data (AAD)
 
-`seal-flow` supports Associated Data (AAD), which is data that is authenticated but not encrypted. This is a critical security feature for preventing replay attacks or context-confusion attacks, where a valid ciphertext is maliciously used in a different context.
+`seal-flow` supports Associated Data (AAD), which is data that is authenticated but not encrypted. This is a critical security feature for preventing replay or context-confusion attacks, where a valid ciphertext is maliciously used in a different context.
 
-The AAD is mixed into the cryptographic calculations, meaning the ciphertext is cryptographically bound to the AAD. If the AAD provided during decryption does not exactly match the AAD from encryption, the decryption will fail.
-
-Common use cases for AAD include:
+The AAD is mixed into the cryptographic calculations, meaning the ciphertext is cryptographically bound to it. If the AAD provided during decryption does not exactly match the AAD from encryption, the decryption will fail. Common use cases include:
 -   User IDs, session IDs, or request IDs.
 -   Version numbers or file paths.
 -   Any metadata that defines the context of the encrypted data.
 
-The full code for this example can be found in [`examples/readme/readme_aad.rs`](./examples/readme/readme_aad.rs).
+The full code for this example can befound in [`examples/readme/aad.rs`](./examples/readme/aad.rs).
 
-### Digital Signatures
+### Advanced Key Derivation (KDF & PBKDF)
 
-In hybrid encryption, you can also sign the data to prove its origin and integrity.
+The library provides direct access to key derivation functions, allowing you to create robust key hierarchies. This is useful for:
+-   **Key Rotation**: Deriving sub-keys from a long-term master key.
+-   **Password-Based Encryption**: Securely deriving a strong cryptographic key from a low-entropy user password using a salt and high iteration count.
+-   **Domain Separation**: Generating different keys for different purposes (e.g., "encryption-key", "auth-key") from the same master secret.
 
-The full code for this example can be found in [`examples/readme/readme_digital_signatures.rs`](./examples/readme/readme_digital_signatures.rs).
+The full code for this example can be found in [`examples/readme/advanced_key_derivation.rs`](./examples/readme/advanced_key_derivation.rs).
+
+## Execution Modes
+
+`seal-flow` offers four distinct execution modes to handle any workload. Because all modes produce data in a unified format, you can mix and match them freely—for example, stream-encrypt on a server and parallel-decrypt on a client.
+
+| Mode                      | API Methods                                       | Use Case                                                              |
+| ------------------------- | ------------------------------------------------- | --------------------------------------------------------------------- |
+| **In-Memory**             | `.to_vec()`, `.slice()`                           | Simple, fast processing for data that fits comfortably in RAM.        |
+| **Parallel In-Memory**    | `.to_vec_parallel()`, `.slice_parallel()`         | High-throughput processing for larger data on multi-core systems.     |
+| **Streaming**             | `.into_writer()`, `.reader()`                     | For very large files or network I/O in low-memory environments.       |
+| **Asynchronous Streaming**| `.into_async_writer()`, `.async_reader()`         | Non-blocking I/O for high-concurrency async applications (e.g., Tokio).|
 
 ## Interoperability
 
