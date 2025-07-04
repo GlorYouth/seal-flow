@@ -1,12 +1,61 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::keys::AsymmetricPublicKey;
+use crate::common::algorithms::SignatureAlgorithm;
 
 use decryptor::HybridDecryptorBuilder;
 use encryptor::HybridEncryptor;
 use std::marker::PhantomData;
+use suites::PqcEncryptor;
+use crate::keys::AsymmetricPrivateKey;
 
 pub mod decryptor;
 pub mod encryptor;
+pub mod suites;
+
+/// Configuration for a digital signature to be applied during encryption.
+pub struct SignerOptions {
+    /// The private key used for signing.
+    pub key: AsymmetricPrivateKey,
+    /// The ID of the signing key.
+    pub key_id: String,
+    /// The signature algorithm to use.
+    pub algorithm: SignatureAlgorithm,
+}
+
+/// Generic options for configuring a hybrid encryption operation.
+#[derive(Default)]
+pub struct HybridEncryptionOptions {
+    pub(crate) aad: Option<Vec<u8>>,
+    pub(crate) signer: Option<SignerOptions>,
+}
+
+impl HybridEncryptionOptions {
+    /// Creates a new, default set of options.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the Associated Data (AAD) for the encryption operation.
+    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
+        self.aad = Some(aad.into());
+        self
+    }
+
+    /// Configures the operation to sign the encryption metadata.
+    pub fn with_signer(
+        mut self,
+        key: AsymmetricPrivateKey,
+        key_id: String,
+        algorithm: SignatureAlgorithm,
+    ) -> Self {
+        self.signer = Some(SignerOptions {
+            key,
+            key_id,
+            algorithm,
+        });
+        self
+    }
+}
 
 /// A factory for creating hybrid encryption and decryption executors.
 #[derive(Default)]
@@ -37,6 +86,14 @@ impl HybridSeal {
         }
     }
 
+    /// Begins a hybrid encryption operation using a recommended Post-Quantum Cryptography (PQC) suite.
+    ///
+    /// This provides a simplified API that uses `Kyber768` for key encapsulation and
+    /// `Aes256Gcm` for data encapsulation.
+    pub fn encrypt_pqc_suite(&self, pk: AsymmetricPublicKey, kek_id: String) -> PqcEncryptor {
+        PqcEncryptor::new(pk, kek_id)
+    }
+
     /// Begins a hybrid decryption operation.
     ///
     /// This returns a builder that you can use to configure the decryptor
@@ -53,6 +110,7 @@ mod tests {
     use crate::Error;
     use seal_crypto::prelude::*;
     use seal_crypto::schemes::asymmetric::post_quantum::dilithium::Dilithium2;
+    use seal_crypto::schemes::asymmetric::traditional::ecc::Ed25519;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use seal_crypto::schemes::xof::shake::Shake256;
     use seal_crypto::schemes::{
@@ -71,6 +129,135 @@ mod tests {
     type TestKem = Rsa2048<Sha256>;
     type TestDek = Aes256Gcm;
     type TestSigner = Dilithium2;
+
+    #[test]
+    fn test_generic_options_roundtrip() -> crate::Result<()> {
+        // 1. Setup keys
+        let (enc_pk, enc_sk) = TestKem::generate_keypair()?;
+        let enc_pk_wrapped = AsymmetricPublicKey::new(enc_pk.to_bytes());
+        let (sig_pk, sig_sk) = Ed25519::generate_keypair()?;
+        let sig_pk_wrapped = SignaturePublicKey::new(sig_pk.to_bytes());
+        let sig_sk_wrapped = AsymmetricPrivateKey::new(sig_sk.to_bytes());
+
+        // 2. Setup data and options
+        let plaintext = get_test_data();
+        let aad = b"generic-options-aad";
+        let kek_id = "test-generic-options-kek-id".to_string();
+        let signer_key_id = "test-generic-options-signer-id".to_string();
+        let seal = HybridSeal::new();
+
+        let options = HybridEncryptionOptions::new()
+            .with_aad(aad)
+            .with_signer(
+                sig_sk_wrapped,
+                signer_key_id.clone(),
+                crate::common::algorithms::SignatureAlgorithm::Ed25519,
+            );
+
+        // 3. Encrypt using generic encryptor with options
+        let encrypted = seal
+            .encrypt::<TestDek>(enc_pk_wrapped, kek_id.clone())
+            .with_options(options)
+            .to_vec::<TestKem>(plaintext)?;
+
+        // 4. Decrypt and verify
+        let mut verifiers = HashMap::new();
+        verifiers.insert(signer_key_id.clone(), sig_pk_wrapped);
+
+        let pending = seal.decrypt().slice(&encrypted)?;
+        assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
+
+        let retrieved_signer_id = pending
+            .signer_key_id()
+            .ok_or("missing signer key id")
+            .map_err(|e| Error::AsyncTaskError(e.to_string()))?;
+        let verification_key = verifiers
+            .get(retrieved_signer_id)
+            .ok_or("verification key not found")
+            .map_err(|e| Error::AsyncTaskError(e.to_string()))?;
+
+        let decrypted = pending
+            .with_aad(aad)
+            .with_verification_key(verification_key.clone())?
+            .with_typed_key::<TestKem, TestDek>(&enc_sk)?;
+
+        assert_eq!(plaintext, decrypted.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn test_pqc_suite_with_options_roundtrip() -> crate::Result<()> {
+        // 1. Setup keys
+        let (enc_pk, enc_sk) = suites::PqcKem::generate_keypair()?;
+        let enc_pk_wrapped = AsymmetricPublicKey::new(enc_pk.to_bytes());
+        let (sig_pk, sig_sk) = TestSigner::generate_keypair()?;
+        let sig_pk_wrapped = SignaturePublicKey::new(sig_pk.to_bytes());
+        let sig_sk_wrapped = AsymmetricPrivateKey::new(sig_sk.to_bytes());
+
+        // 2. Setup data and options
+        let plaintext = get_test_data();
+        let aad = b"pqc-options-aad";
+        let kek_id = "test-pqc-options-kek-id".to_string();
+        let signer_key_id = "test-pqc-options-signer-id".to_string();
+        let seal = HybridSeal::new();
+
+        let options = suites::PqcEncryptionOptions::new()
+            .with_aad(aad)
+            .with_signer(sig_sk_wrapped, signer_key_id.clone());
+
+        // 3. Encrypt using the PQC suite with options
+        let encrypted = seal
+            .encrypt_pqc_suite(enc_pk_wrapped, kek_id.clone())
+            .with_options::<TestSigner>(options)
+            .to_vec(plaintext)?;
+
+        // 4. Decrypt and verify
+        let mut verifiers = HashMap::new();
+        verifiers.insert(signer_key_id.clone(), sig_pk_wrapped);
+
+        let pending = seal.decrypt().slice(&encrypted)?;
+        assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
+
+        // Get the verification key from the verifiers map
+        let retrieved_signer_id = pending
+            .signer_key_id()
+            .ok_or("missing signer key id")
+            .map_err(|e| Error::AsyncTaskError(e.to_string()))?;
+        let verification_key = verifiers
+            .get(retrieved_signer_id)
+            .ok_or("verification key not found")
+            .map_err(|e| Error::AsyncTaskError(e.to_string()))?;
+
+        let decrypted = pending
+            .with_aad(aad)
+            .with_verification_key(verification_key.clone())?
+            .with_typed_key::<suites::PqcKem, suites::PqcDek>(&enc_sk)?;
+
+        assert_eq!(plaintext, decrypted.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn test_pqc_suite_in_memory_roundtrip() -> crate::Result<()> {
+        let (pk, sk) = suites::PqcKem::generate_keypair()?;
+        let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
+        let plaintext = get_test_data();
+        let kek_id = "test-pqc-kek-id".to_string();
+        let seal = HybridSeal::new();
+
+        // Encrypt using the PQC suite
+        let encrypted = seal
+            .encrypt_pqc_suite(pk_wrapped, kek_id.clone())
+            .to_vec(plaintext)?;
+
+        // Decrypt using the generic decryptor
+        let pending = seal.decrypt().slice(&encrypted)?;
+        assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
+        let decrypted = pending.with_typed_key::<suites::PqcKem, suites::PqcDek>(&sk)?;
+
+        assert_eq!(plaintext, decrypted.as_slice());
+        Ok(())
+    }
 
     #[test]
     fn test_in_memory_roundtrip() -> crate::Result<()> {

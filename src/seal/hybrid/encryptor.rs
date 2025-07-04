@@ -1,10 +1,16 @@
 use crate::algorithms::traits::{
     AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm,
 };
+use crate::common::algorithms::SignatureAlgorithm as SignatureAlgorithmEnum;
 use crate::common::header::{DerivationInfo, KdfInfo, XofInfo};
 use crate::common::{DerivationSet, SignerSet};
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
+use crate::seal::hybrid::HybridEncryptionOptions;
 use seal_crypto::prelude::*;
+use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
+    Dilithium2, Dilithium3, Dilithium5,
+};
+use seal_crypto::schemes::asymmetric::traditional::ecc::{EcdsaP256, Ed25519};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
@@ -27,6 +33,35 @@ impl<'a, S> HybridEncryptor<'a, S>
 where
     S: SymmetricAlgorithm,
 {
+    /// Applies a set of pre-configured options to the encryptor.
+    pub fn with_options(mut self, options: HybridEncryptionOptions) -> Self {
+        if let Some(aad) = options.aad {
+            self = self.with_aad(aad);
+        }
+
+        if let Some(signer_opts) = options.signer {
+            match signer_opts.algorithm {
+                SignatureAlgorithmEnum::Dilithium2 => {
+                    self = self.with_signer::<Dilithium2>(signer_opts.key, signer_opts.key_id)
+                }
+                SignatureAlgorithmEnum::Dilithium3 => {
+                    self = self.with_signer::<Dilithium3>(signer_opts.key, signer_opts.key_id)
+                }
+                SignatureAlgorithmEnum::Dilithium5 => {
+                    self = self.with_signer::<Dilithium5>(signer_opts.key, signer_opts.key_id)
+                }
+                SignatureAlgorithmEnum::Ed25519 => {
+                    self = self.with_signer::<Ed25519>(signer_opts.key, signer_opts.key_id)
+                }
+                SignatureAlgorithmEnum::EcdsaP256 => {
+                    self = self.with_signer::<EcdsaP256>(signer_opts.key, signer_opts.key_id)
+                }
+            }
+        }
+
+        self
+    }
+
     /// Sets the Associated Data (AAD) for this encryption operation.
     pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.aad = Some(aad.into());
