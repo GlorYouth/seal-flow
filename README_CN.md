@@ -5,6 +5,8 @@
 
 `seal-flow` 是一个构建在 `seal-crypto` 之上的无状态、高级别的密码学工作流（workflow）库。它为混合加密和对称加密等常见的密码学操作提供了统一、流畅且安全的接口。
 
+[English README](./README.md)
+
 ## 核心设计：流畅的 "Seal" API
 
 `seal-flow` 旨在使复杂的密码学工作流变得简单而安全。库的核心是高层 `seal` API，它采用了**流畅的构建者模式（fluent builder pattern）**。
@@ -128,4 +130,30 @@ AAD 会被混合到密码学计算中，这意味着密文与 AAD 是密码学�
 
 ## 互操作性
 
-`seal-flow`
+`seal-flow` 的一个关键特性是其在不同处理模式间的完美互操作性。使用任何模式（例如 `streaming`）加密的数据，只要底层算法（如 `Aes256Gcm`）和密钥相同，就可以被任何其他模式（例如 `in_memory_parallel`）解密。
+
+这一点由统一的数据格式保证，并通过我们全面的 `interoperability_matrix` 集成测试进行验证。这使您可以根据具体需求，灵活地独立选择最高效的加密和解密模式。例如，内存受限的服务器可以流式加密一个大文件，而性能强大的客户端机器则可以并行解密以获得最佳性能。
+
+## API 层级详解
+
+该库暴露了三个不同的 API 层级：
+
+-   **高层 API (`seal` 模块):** 这是为大多数用户推荐的入口点。它采用流畅的构建者模式 (`SymmetricSeal`, `HybridSeal`)，抽象掉了所有复杂性。您只需链式调用方法来定义操作，选择模式并执行。
+-   **中层 API (`flows` 模块):** 适用于需要更精细控制的高级用户。该层允许您直接访问和使用特定的执行流（例如 `streaming`, `parallel`, `asynchronous`），而无需构建者抽象。
+-   **底层 API (`crypto` 模块):** 提供对底层 `seal-crypto` crate 中加密基元直接、无过滤的访问。这适用于需要在核心算法之上构建自定义逻辑的专家。
+
+## 运行示例
+
+您可以使用 `cargo` 运行提供的示例：
+
+```bash
+# 运行高级别对称加密示例
+cargo run --example high_level_symmetric --features=async
+
+# 运行中级别混合加密示例
+cargo run --example mid_level_hybrid --features=async
+```
+
+## 许可证
+
+本项目采用 Mozilla Public License 2.0 授权。详情请参阅 [LICENSE](LICENSE) 文件。
