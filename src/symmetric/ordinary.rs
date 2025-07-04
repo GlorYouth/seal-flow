@@ -1,4 +1,6 @@
 //! Implements the ordinary (single-threaded, in-memory) symmetric encryption scheme.
+//!
+//! 实现普通（单线程，内存中）对称加密方案。
 
 use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
@@ -8,6 +10,8 @@ use crate::error::{Error, FormatError, Result};
 use crate::impls::ordinary::{decrypt_in_memory, encrypt_in_memory};
 
 /// Encrypts plaintext using a chunking mechanism.
+///
+/// 使用分块机制加密明文。
 pub fn encrypt<S: SymmetricAlgorithm>(
     key: S::Key,
     plaintext: &[u8],
@@ -28,6 +32,10 @@ where
 /// This state is entered after the header has been successfully parsed from
 /// the ciphertext, allowing the user to inspect the header (e.g., to find
 /// the `key_id`) before supplying the appropriate key to proceed with decryption.
+///
+/// 一个待处理的内存数据解密器，等待密钥提供。
+///
+/// 当从密文中成功解析标头后，进入此状态，允许用户在提供适当的密钥以继续解密之前检查标头（例如，查找 `key_id`）。
 pub struct PendingDecryptor<'a> {
     header: Header,
     ciphertext_body: &'a [u8],
@@ -35,6 +43,8 @@ pub struct PendingDecryptor<'a> {
 
 impl<'a> PendingDecryptor<'a> {
     /// Creates a new `PendingDecryptor` by parsing the header from the ciphertext.
+    ///
+    /// 通过从密文中解析标头来创建一个新的 `PendingDecryptor`。
     pub fn from_ciphertext(ciphertext: &'a [u8]) -> Result<Self> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
         Ok(Self {
@@ -44,6 +54,8 @@ impl<'a> PendingDecryptor<'a> {
     }
 
     /// Consumes the `PendingDecryptor` and returns the decrypted plaintext.
+    ///
+    /// 消费 `PendingDecryptor` 并返回解密的明文。
     pub fn into_plaintext<S: SymmetricAlgorithm>(
         self,
         key: S::Key,
@@ -59,6 +71,10 @@ impl<'a> PendingDecryptor<'a> {
 /// Decrypts a ciphertext body using the provided key and header.
 ///
 /// This function assumes `decode_header` has been called and its results are provided.
+///
+/// 使用提供的密钥和标头解密密文体。
+///
+/// 此函数假定已经调用了 `decode_header` 并提供了其结果。
 pub fn decrypt_body<S: SymmetricAlgorithm>(
     key: S::Key,
     header: &Header,

@@ -1,4 +1,6 @@
 //! Implements `std::io` traits for synchronous, streaming symmetric encryption.
+//!
+//! 为同步、流式对称加密实现 `std::io` trait。
 
 use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
@@ -9,11 +11,42 @@ use crate::impls::streaming::{DecryptorImpl, EncryptorImpl};
 use std::io::{self, Read, Write};
 
 /// Implements `std::io::Write` for synchronous, streaming symmetric encryption.
+///
+/// 为同步、流式对称加密实现 `std::io::Write`。
 pub struct Encryptor<W: Write, S: SymmetricAlgorithm> {
     inner: EncryptorImpl<W, S>,
 }
 
 impl<W: Write, S: SymmetricAlgorithm> Encryptor<W, S> {
+    /// Creates a new `Encryptor`.
+    ///
+    /// The header is immediately written to the underlying writer.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer`: The writer to which encrypted data will be written.
+    /// * `key`: The symmetric key for encryption.
+    /// * `key_id`: An identifier for the key, stored in the header.
+    /// * `aad`: Optional additional authenticated data.
+    ///
+    /// # Returns
+    ///
+    /// A new `Encryptor` instance.
+    ///
+    /// 创建一个新的 `Encryptor`。
+    ///
+    /// 标头会立即写入底层的 writer。
+    ///
+    /// # 参数
+    ///
+    /// * `writer`: 将写入加密数据的 writer。
+    /// * `key`: 用于加密的对称密钥。
+    /// * `key_id`: 密钥的标识符，存储在标头中。
+    /// * `aad`: 可选的附加认证数据。
+    ///
+    /// # 返回
+    ///
+    ///一个新的 `Encryptor` 实例。
     pub fn new(mut writer: W, key: S::Key, key_id: String, aad: Option<&[u8]>) -> Result<Self> {
         let (header, base_nonce) = create_header::<S>(key_id)?;
 
@@ -30,6 +63,9 @@ impl<W: Write, S: SymmetricAlgorithm> Encryptor<W, S> {
     ///
     /// This method must be called to ensure that the last partial chunk of data is
     /// encrypted and the authentication tag is written to the underlying writer.
+    ///
+    /// 必须调用此方法以确保最后的数据块被加密，
+    /// 并且认证标签被写入底层的 writer。
     pub fn finish(self) -> Result<()> {
         self.inner.finish()
     }
@@ -50,6 +86,10 @@ impl<W: Write, S: SymmetricAlgorithm> Write for Encryptor<W, S> {
 /// This state is entered after the header has been successfully read from the
 /// stream, allowing the user to inspect the header (e.g., to find the `key_id`)
 /// before supplying the appropriate key to proceed with decryption.
+///
+/// 一个待处理的解密器，等待提供密钥。
+///
+/// 当从流中成功读取标头后，进入此状态，允许用户在提供适当的密钥以继续解密之前检查标头（例如，查找 `key_id`）。
 pub struct PendingDecryptor<R: Read> {
     reader: R,
     header: Header,
@@ -57,6 +97,8 @@ pub struct PendingDecryptor<R: Read> {
 
 impl<R: Read> PendingDecryptor<R> {
     /// Creates a new `PendingDecryptor` by reading the header from the provided reader.
+    ///
+    /// 通过从提供的 reader 中读取标头来创建一个新的 `PendingDecryptor`。
     pub fn from_reader(mut reader: R) -> Result<Self> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
         Ok(Self { reader, header })
@@ -64,6 +106,8 @@ impl<R: Read> PendingDecryptor<R> {
 
     /// Consumes the `PendingDecryptor` and returns a full `Decryptor` instance,
     /// ready to decrypt the stream.
+    ///
+    /// 消费 `PendingDecryptor` 并返回一个完整的 `Decryptor` 实例，准备解密流。
     pub fn into_decryptor<S: SymmetricAlgorithm>(
         self,
         key: S::Key,
@@ -86,6 +130,8 @@ impl<R: Read> PendingDecryptor<R> {
 }
 
 /// Implements `std::io::Read` for synchronous, streaming symmetric decryption.
+///
+/// 为同步、流式对称解密实现 `std::io::Read`。
 pub struct Decryptor<R: Read, S: SymmetricAlgorithm> {
     inner: DecryptorImpl<R, S>,
 }

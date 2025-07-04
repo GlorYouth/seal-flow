@@ -1,6 +1,9 @@
 //! Implements an asynchronous streaming symmetric encryption/decryption scheme.
 //! This mode is designed for high-performance processing of large files or data streams
 //! by overlapping asynchronous I/O with parallel computation.
+//!
+//! 实现异步流式对称加解密方案。
+//! 此模式通过将异步 I/O 与并行计算重叠，专为高性能处理大文件或数据流而设计。
 
 #![cfg(feature = "async")]
 
@@ -20,6 +23,8 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 pin_project! {
     /// An asynchronous, streaming symmetric encryptor.
+    ///
+    /// 一个异步的、流式的对称加密器。
     pub struct Encryptor<W: AsyncWrite, S: SymmetricAlgorithm> {
         #[pin]
         inner: EncryptorImpl<W, S>,
@@ -32,6 +37,8 @@ where
     S::Key: Send + Sync + 'static,
 {
     /// Creates a new `Encryptor`.
+    ///
+    /// 创建一个新的 `Encryptor`。
     pub async fn new(
         mut writer: W,
         key: S::Key,
@@ -80,6 +87,10 @@ where
 /// This state is entered after the header has been successfully read from the
 /// stream, allowing the user to inspect the header (e.g., to find the `key_id`)
 /// before supplying the appropriate key to proceed with decryption.
+///
+/// 一个异步的、等待提供密钥的解密器。
+///
+/// 当从流中成功读取标头后，进入此状态，允许用户在提供适当的密钥以继续解密之前检查标头（例如，查找 `key_id`）。
 pub struct PendingDecryptor<R: AsyncRead + Unpin> {
     reader: R,
     header: Header,
@@ -88,6 +99,8 @@ pub struct PendingDecryptor<R: AsyncRead + Unpin> {
 impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
     /// Creates a new `PendingDecryptor` by asynchronously reading the header
     /// from the provided reader.
+    ///
+    /// 通过从提供的 reader 异步读取标头来创建一个新的 `PendingDecryptor`。
     pub async fn from_reader(mut reader: R) -> Result<Self> {
         let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
         Ok(Self { reader, header })
@@ -95,6 +108,8 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
 
     /// Consumes the `PendingDecryptor` and returns a full `Decryptor` instance,
     /// ready to decrypt the stream.
+    ///
+    /// 消费 `PendingDecryptor` 并返回一个完整的 `Decryptor` 实例，准备解密流。
     pub fn into_decryptor<S: SymmetricAlgorithm>(
         self,
         key: S::Key,
@@ -129,6 +144,8 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
 
 pin_project! {
     /// An asynchronous, streaming symmetric decryptor.
+    ///
+    /// 一个异步的、流式的对称解密器。
     pub struct Decryptor<R: AsyncRead, S: SymmetricAlgorithm> {
         #[pin]
         inner: DecryptorImpl<R, S>,

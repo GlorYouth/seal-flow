@@ -1,6 +1,9 @@
 //! Implements a parallel streaming symmetric encryption/decryption scheme.
 //! This mode is designed for high-performance processing of large files or data streams
 //! by overlapping I/O with parallel computation.
+//!
+//! 实现并行流式对称加解密方案。
+//! 此模式通过将 I/O 与并行计算重叠，专为高性能处理大文件或数据流而设计。
 
 use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
@@ -11,6 +14,8 @@ use crate::impls::parallel_streaming::{decrypt_pipeline, encrypt_pipeline};
 use std::io::{Read, Write};
 
 /// Encrypts data from a reader and writes to a writer using a parallel streaming approach.
+///
+/// 使用并行流式方法从 reader 加密数据并写入 writer。
 pub fn encrypt<S, R, W>(
     key: S::Key,
     reader: R,
@@ -35,6 +40,8 @@ where
 }
 
 /// Decrypts a stream and writes the output to another stream.
+///
+/// 解密一个流并将输出写入另一个流。
 pub fn decrypt_body_stream<S, R, W>(
     key: S::Key,
     header: &Header,
@@ -64,6 +71,10 @@ where
 /// This state is entered after the header has been successfully read from the
 /// stream, allowing the user to inspect the header (e.g., to find the `key_id`)
 /// before supplying the appropriate key to proceed with decryption.
+///
+/// 一个用于并行流的待处理解密器，等待密钥。
+///
+/// 当从流中成功读取标头后，进入此状态，允许用户在提供适当的密钥以继续解密之前检查标头（例如，查找 `key_id`）。
 pub struct PendingDecryptor<R: Read + Send> {
     reader: R,
     header: Header,
@@ -71,6 +82,8 @@ pub struct PendingDecryptor<R: Read + Send> {
 
 impl<R: Read + Send> PendingDecryptor<R> {
     /// Creates a new `PendingDecryptor` by reading the header from the stream.
+    ///
+    /// 通过从流中读取标头来创建一个新的 `PendingDecryptor`。
     pub fn from_reader(mut reader: R) -> Result<Self> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
         Ok(Self { reader, header })
@@ -78,6 +91,9 @@ impl<R: Read + Send> PendingDecryptor<R> {
 
     /// Consumes the `PendingDecryptor` and decrypts the rest of the stream,
     /// writing the plaintext to the provided writer.
+    ///
+    /// 消费 `PendingDecryptor` 并解密流的其余部分，
+    /// 将明文写入提供的 writer。
     pub fn decrypt_to_writer<S: SymmetricAlgorithm, W: Write>(
         self,
         key: S::Key,
