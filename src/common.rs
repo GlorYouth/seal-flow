@@ -56,10 +56,10 @@ pub struct SignerSet {
     pub(crate) signer: Box<dyn Fn(&[u8], Option<&[u8]>) -> crate::Result<Vec<u8>> + Send + Sync>,
 }
 
-pub struct DerivationSet<'a> {
+pub struct DerivationSet {
     pub(crate) derivation_info: header::DerivationInfo,
     pub(crate) deriver_fn:
-        Box<dyn Fn(&[u8]) -> crate::Result<Zeroizing<Vec<u8>>> + Send + Sync + 'a>,
+        Box<dyn Fn(&[u8]) -> crate::Result<Zeroizing<Vec<u8>>> + Send + Sync + 'static>,
 }
 
 // A private trait to abstract access to the header from the inner implementation.

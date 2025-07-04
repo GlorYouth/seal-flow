@@ -47,11 +47,11 @@ pub type PqcDek = Aes256Gcm;
 /// This struct simplifies the encryption process by pre-selecting `Kyber768` as the KEM
 /// and `Aes256Gcm` as the DEK. It exposes a familiar builder-like API for setting
 /// options like AAD and signers, without requiring the user to specify algorithm generics.
-pub struct PqcEncryptor<'a> {
-    inner: HybridEncryptor<'a, PqcDek>,
+pub struct PqcEncryptor {
+    inner: HybridEncryptor<PqcDek>,
 }
 
-impl<'a> PqcEncryptor<'a> {
+impl PqcEncryptor {
     /// Creates a new PQC encryptor. This is typically called from `HybridSeal::encrypt_pqc_suite`.
     pub(crate) fn new(pk: AsymmetricPublicKey, kek_id: String) -> Self {
         Self {
@@ -118,7 +118,7 @@ impl<'a> PqcEncryptor<'a> {
     pub fn into_writer<W: Write>(
         self,
         writer: W,
-    ) -> crate::Result<crate::hybrid::streaming::Encryptor<'a, W, PqcKem, PqcDek>> {
+    ) -> crate::Result<crate::hybrid::streaming::Encryptor<W, PqcKem, PqcDek>> {
         self.inner.into_writer::<PqcKem, W>(writer)
     }
 

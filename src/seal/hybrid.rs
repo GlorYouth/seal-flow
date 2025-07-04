@@ -1,6 +1,7 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::keys::AsymmetricPublicKey;
 use crate::common::algorithms::SignatureAlgorithm;
+use crate::common::algorithms::{KdfAlgorithm, XofAlgorithm};
 
 use decryptor::HybridDecryptorBuilder;
 use encryptor::HybridEncryptor;
@@ -22,11 +23,34 @@ pub struct SignerOptions {
     pub algorithm: SignatureAlgorithm,
 }
 
+/// Options for using a Key Derivation Function (KDF).
+pub struct KdfOptions {
+    pub algorithm: KdfAlgorithm,
+    pub salt: Option<Vec<u8>>,
+    pub info: Option<Vec<u8>>,
+    pub output_len: u32,
+}
+
+/// Options for using an Extendable-Output Function (XOF).
+pub struct XofOptions {
+    pub algorithm: XofAlgorithm,
+    pub salt: Option<Vec<u8>>,
+    pub info: Option<Vec<u8>>,
+    pub output_len: u32,
+}
+
+/// Enum to select between KDF and XOF for key derivation.
+pub enum DerivationOptions {
+    Kdf(KdfOptions),
+    Xof(XofOptions),
+}
+
 /// Generic options for configuring a hybrid encryption operation.
 #[derive(Default)]
 pub struct HybridEncryptionOptions {
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) signer: Option<SignerOptions>,
+    pub(crate) derivation: Option<DerivationOptions>,
 }
 
 impl HybridEncryptionOptions {
@@ -53,6 +77,40 @@ impl HybridEncryptionOptions {
             key_id,
             algorithm,
         });
+        self
+    }
+
+    /// Configures the operation to use a Key Derivation Function (KDF).
+    pub fn with_kdf(
+        mut self,
+        algorithm: KdfAlgorithm,
+        salt: Option<Vec<u8>>,
+        info: Option<Vec<u8>>,
+        output_len: u32,
+    ) -> Self {
+        self.derivation = Some(DerivationOptions::Kdf(KdfOptions {
+            algorithm,
+            salt,
+            info,
+            output_len,
+        }));
+        self
+    }
+
+    /// Configures the operation to use an Extendable-Output Function (XOF).
+    pub fn with_xof(
+        mut self,
+        algorithm: XofAlgorithm,
+        salt: Option<Vec<u8>>,
+        info: Option<Vec<u8>>,
+        output_len: u32,
+    ) -> Self {
+        self.derivation = Some(DerivationOptions::Xof(XofOptions {
+            algorithm,
+            salt,
+            info,
+            output_len,
+        }));
         self
     }
 }
@@ -180,6 +238,42 @@ mod tests {
             .with_aad(aad)
             .with_verification_key(verification_key.clone())?
             .with_typed_key::<TestKem, TestDek>(&enc_sk)?;
+
+        assert_eq!(plaintext, decrypted.as_slice());
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_options_with_kdf_roundtrip() -> crate::Result<()> {
+        // 1. Setup keys
+        let (enc_pk, enc_sk) = TestKem::generate_keypair()?;
+        let enc_pk_wrapped = AsymmetricPublicKey::new(enc_pk.to_bytes());
+
+        // 2. Setup data and options
+        let plaintext = get_test_data();
+        let salt = b"my-kdf-salt";
+        let info = b"my-kdf-info";
+        let kek_id = "test-generic-kdf-kek-id".to_string();
+        let seal = HybridSeal::new();
+
+        let options = HybridEncryptionOptions::new().with_kdf(
+            crate::common::algorithms::KdfAlgorithm::HkdfSha512,
+            Some(salt.to_vec()),
+            Some(info.to_vec()),
+            32,
+        );
+
+        // 3. Encrypt using generic encryptor with options
+        let encrypted = seal
+            .encrypt::<TestDek>(enc_pk_wrapped, kek_id.clone())
+            .with_options(options)
+            .to_vec::<TestKem>(plaintext)?;
+
+        // 4. Decrypt and verify
+        let pending = seal.decrypt().slice(&encrypted)?;
+        assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
+
+        let decrypted = pending.with_typed_key::<TestKem, TestDek>(&enc_sk)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())

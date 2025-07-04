@@ -34,13 +34,13 @@ where
     S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
 {
     /// Creates a new `Encryptor`.
-    pub async fn new<'a>(
+    pub async fn new(
         mut writer: W,
         pk: A::PublicKey,
         kek_id: String,
         signer: Option<SignerSet>,
-        aad: Option<&'a [u8]>,
-        derivation_config: Option<DerivationSet<'a>>,
+        aad: Option<&[u8]>,
+        derivation_config: Option<DerivationSet>,
     ) -> Result<Self> {
         let (info, deriver_fn) = derivation_config
             .map(|d| (d.derivation_info, d.deriver_fn))

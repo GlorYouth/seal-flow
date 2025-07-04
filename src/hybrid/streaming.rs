@@ -10,12 +10,12 @@ use seal_crypto::zeroize::Zeroizing;
 use std::io::{self, Read, Write};
 
 /// An `std::io::Write` adapter for streaming hybrid encryption.
-pub struct Encryptor<'a, W: Write, A, S: SymmetricAlgorithm> {
+pub struct Encryptor<W: Write, A, S: SymmetricAlgorithm> {
     inner: EncryptorImpl<W, S>,
-    _phantom: std::marker::PhantomData<(&'a A, &'a W)>,
+    _phantom: std::marker::PhantomData<(A, S)>,
 }
 
-impl<'a, W, A, S> Encryptor<'a, W, A, S>
+impl<W, A, S> Encryptor<W, A, S>
 where
     W: Write,
     A: AsymmetricAlgorithm,
@@ -73,7 +73,7 @@ where
     }
 }
 
-impl<W: Write, A, S: SymmetricAlgorithm> Write for Encryptor<'_, W, A, S> {
+impl<W: Write, A, S: SymmetricAlgorithm> Write for Encryptor<W, A, S> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.inner.write(buf)
     }

@@ -1,23 +1,28 @@
 use crate::algorithms::traits::{
     AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm,
 };
-use crate::common::algorithms::SignatureAlgorithm as SignatureAlgorithmEnum;
+use crate::common::algorithms::{
+    KdfAlgorithm as KdfAlgorithmEnum, SignatureAlgorithm as SignatureAlgorithmEnum,
+    XofAlgorithm as XofAlgorithmEnum,
+};
 use crate::common::header::{DerivationInfo, KdfInfo, XofInfo};
 use crate::common::{DerivationSet, SignerSet};
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
-use crate::seal::hybrid::HybridEncryptionOptions;
+use crate::seal::hybrid::{DerivationOptions, HybridEncryptionOptions};
 use seal_crypto::prelude::*;
 use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
     Dilithium2, Dilithium3, Dilithium5,
 };
 use seal_crypto::schemes::asymmetric::traditional::ecc::{EcdsaP256, Ed25519};
+use seal_crypto::schemes::kdf::hkdf::{HkdfSha256, HkdfSha512};
+use seal_crypto::schemes::xof::shake::{Shake128, Shake256};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use tokio::io::AsyncWrite;
 
 /// A context for hybrid encryption operations, allowing selection of execution mode.
-pub struct HybridEncryptor<'a, S>
+pub struct HybridEncryptor<S>
 where
     S: SymmetricAlgorithm,
 {
@@ -25,11 +30,11 @@ where
     pub(crate) kek_id: String,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) signer: Option<SignerSet>,
-    pub(crate) derivation_config: Option<DerivationSet<'a>>,
+    pub(crate) derivation_config: Option<DerivationSet>,
     pub(crate) _phantom: PhantomData<S>,
 }
 
-impl<'a, S> HybridEncryptor<'a, S>
+impl<S> HybridEncryptor<S>
 where
     S: SymmetricAlgorithm,
 {
@@ -59,6 +64,39 @@ where
             }
         }
 
+        if let Some(derivation_opts) = options.derivation {
+            self = match derivation_opts {
+                DerivationOptions::Kdf(opts) => match opts.algorithm {
+                    KdfAlgorithmEnum::HkdfSha256 => self.with_kdf::<HkdfSha256>(
+                        HkdfSha256::default(),
+                        opts.salt,
+                        opts.info,
+                        opts.output_len,
+                    ),
+                    KdfAlgorithmEnum::HkdfSha512 => self.with_kdf::<HkdfSha512>(
+                        HkdfSha512::default(),
+                        opts.salt,
+                        opts.info,
+                        opts.output_len,
+                    ),
+                },
+                DerivationOptions::Xof(opts) => match opts.algorithm {
+                    XofAlgorithmEnum::Shake128 => self.with_xof::<Shake128>(
+                        Shake128::default(),
+                        opts.salt,
+                        opts.info,
+                        opts.output_len,
+                    ),
+                    XofAlgorithmEnum::Shake256 => self.with_xof::<Shake256>(
+                        Shake256::default(),
+                        opts.salt,
+                        opts.info,
+                        opts.output_len,
+                    ),
+                },
+            };
+        }
+
         self
     }
 
@@ -73,17 +111,20 @@ where
     pub fn with_kdf<Kdf>(
         mut self,
         deriver: Kdf,
-        salt: Option<&'a [u8]>,
-        info: Option<&'a [u8]>,
+        salt: Option<impl Into<Vec<u8>>>,
+        info: Option<impl Into<Vec<u8>>>,
         output_len: u32,
     ) -> Self
     where
-        Kdf: KdfAlgorithm + Send + Sync + 'a,
+        Kdf: KdfAlgorithm + Send + Sync + 'static,
     {
+        let salt = salt.map(|s| s.into());
+        let info = info.map(|i| i.into());
+
         let kdf_info = KdfInfo {
             kdf_algorithm: Kdf::ALGORITHM,
-            salt: salt.as_ref().map(|s| s.as_ref().to_vec()),
-            info: info.as_ref().map(|i| i.as_ref().to_vec()),
+            salt: salt.clone(),
+            info: info.clone(),
             output_len,
         };
 
@@ -91,8 +132,8 @@ where
             deriver
                 .derive(
                     ikm,
-                    salt.as_ref().map(|s| s.as_ref()),
-                    info.as_ref().map(|i| i.as_ref()),
+                    salt.as_deref(),
+                    info.as_deref(),
                     output_len as usize,
                 )
                 .map(|dk| Zeroizing::new(dk.as_bytes().to_vec()))
@@ -110,25 +151,28 @@ where
     pub fn with_xof<Xof>(
         mut self,
         deriver: Xof,
-        salt: Option<&'a [u8]>,
-        info: Option<&'a [u8]>,
+        salt: Option<impl Into<Vec<u8>>>,
+        info: Option<impl Into<Vec<u8>>>,
         output_len: u32,
     ) -> Self
     where
-        Xof: XofAlgorithm + Send + Sync + 'a,
+        Xof: XofAlgorithm + Send + Sync + 'static,
     {
+        let salt = salt.map(|s| s.into());
+        let info = info.map(|i| i.into());
+
         let xof_info = XofInfo {
             xof_algorithm: Xof::ALGORITHM,
-            salt: salt.as_ref().map(|s| s.as_ref().to_vec()),
-            info: info.as_ref().map(|i| i.as_ref().to_vec()),
+            salt: salt.clone(),
+            info: info.clone(),
             output_len,
         };
 
         let deriver_fn = Box::new(move |ikm: &[u8]| {
             let mut reader = deriver.reader(
                 ikm,
-                salt.as_ref().map(|s| s.as_ref()),
-                info.as_ref().map(|i| i.as_ref()),
+                salt.as_deref(),
+                info.as_deref(),
             )?;
             let mut dek_bytes = vec![0u8; output_len as usize];
             reader.read(&mut dek_bytes);
@@ -209,7 +253,7 @@ where
     pub fn into_writer<A: AsymmetricAlgorithm, W: Write>(
         self,
         writer: W,
-    ) -> crate::Result<crate::hybrid::streaming::Encryptor<'a, W, A, S>>
+    ) -> crate::Result<crate::hybrid::streaming::Encryptor<W, A, S>>
     where
         Vec<u8>: From<<A as seal_crypto::prelude::Kem>::EncapsulatedKey>,
         S::Key: From<Zeroizing<Vec<u8>>> + Clone,
@@ -258,7 +302,7 @@ where
         A: AsymmetricAlgorithm + 'static,
         A::PublicKey: Send,
         A::EncapsulatedKey: Into<Vec<u8>> + Send,
-        S: SymmetricAlgorithm + 'a,
+        S: SymmetricAlgorithm,
         S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
         let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
