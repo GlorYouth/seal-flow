@@ -2,6 +2,8 @@
 use crate::crypto::errors::Error;
 use seal_crypto::{prelude::*, zeroize};
 
+pub mod provider;
+
 /// A byte wrapper for a symmetric encryption key.
 ///
 /// This struct stores raw key bytes that can be converted to specific algorithm keys

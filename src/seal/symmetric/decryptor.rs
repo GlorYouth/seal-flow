@@ -2,6 +2,7 @@ use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::algorithms::SymmetricAlgorithm as SymmetricAlgorithmEnum;
 use crate::common::header::Header;
 use crate::common::PendingImpl;
+use crate::keys::provider::KeyProvider;
 use crate::keys::SymmetricKey;
 use std::io::{Read, Write};
 use tokio::io::AsyncRead;
@@ -42,15 +43,16 @@ macro_rules! dispatch_symmetric_key_bytes {
 
 /// A generic pending symmetric decryptor, waiting for configuration and key.
 /// This struct unifies the logic for various decryption modes (in-memory, streaming, etc.).
-pub struct PendingDecryptor<T> {
+pub struct PendingDecryptor<'a, T> {
     inner: T,
     aad: Option<Vec<u8>>,
+    key_provider: Option<&'a dyn KeyProvider>,
 }
 
-impl<T: PendingImpl> PendingDecryptor<T> {
+impl<'a, T: PendingImpl> PendingDecryptor<'a, T> {
     /// Creates a new `PendingDecryptor` with the given inner implementation.
-    fn new(inner: T) -> Self {
-        Self { inner, aad: None }
+    fn new(inner: T, key_provider: Option<&'a dyn KeyProvider>) -> Self {
+        Self { inner, aad: None, key_provider }
     }
 
     /// Returns a reference to the header.
@@ -73,65 +75,88 @@ impl<T: PendingImpl> PendingDecryptor<T> {
 
 /// A type alias for a pending in-memory symmetric decryptor.
 pub type PendingInMemoryDecryptor<'a> =
-    PendingDecryptor<crate::symmetric::ordinary::PendingDecryptor<'a>>;
+    PendingDecryptor<'a, crate::symmetric::ordinary::PendingDecryptor<'a>>;
 /// A type alias for a pending parallel in-memory symmetric decryptor.
 pub type PendingInMemoryParallelDecryptor<'a> =
-    PendingDecryptor<crate::symmetric::parallel::PendingDecryptor<'a>>;
+    PendingDecryptor<'a, crate::symmetric::parallel::PendingDecryptor<'a>>;
 /// A type alias for a pending synchronous streaming symmetric decryptor.
-pub type PendingStreamingDecryptor<R> =
-    PendingDecryptor<crate::symmetric::streaming::PendingDecryptor<R>>;
+pub type PendingStreamingDecryptor<'a, R> =
+    PendingDecryptor<'a, crate::symmetric::streaming::PendingDecryptor<R>>;
 /// A type alias for a pending parallel streaming symmetric decryptor.
-pub type PendingParallelStreamingDecryptor<R> =
-    PendingDecryptor<crate::symmetric::parallel_streaming::PendingDecryptor<R>>;
+pub type PendingParallelStreamingDecryptor<'a, R> =
+    PendingDecryptor<'a, crate::symmetric::parallel_streaming::PendingDecryptor<R>>;
 /// A type alias for a pending asynchronous streaming symmetric decryptor.
 #[cfg(feature = "async")]
-pub type PendingAsyncStreamingDecryptor<R> =
-    PendingDecryptor<crate::symmetric::asynchronous::PendingDecryptor<R>>;
+pub type PendingAsyncStreamingDecryptor<'a, R> =
+    PendingDecryptor<'a, crate::symmetric::asynchronous::PendingDecryptor<R>>;
 
 /// A builder for symmetric decryption operations.
 #[derive(Default)]
-pub struct SymmetricDecryptorBuilder;
+pub struct SymmetricDecryptorBuilder<'a> {
+    key_provider: Option<&'a dyn KeyProvider>,
+}
 
-impl SymmetricDecryptorBuilder {
+impl<'a> SymmetricDecryptorBuilder<'a> {
     /// Creates a new `SymmetricDecryptorBuilder`.
     pub fn new() -> Self {
-        Self
+        Self { key_provider: None }
+    }
+
+    /// Attaches a `KeyProvider` to the builder.
+    ///
+    /// When a `KeyProvider` is set, you can use the `resolve_and_decrypt`
+    /// method on the pending decryptor to automatically handle key lookup.
+    pub fn with_key_provider(mut self, provider: &'a dyn KeyProvider) -> Self {
+        self.key_provider = Some(provider);
+        self
     }
 
     /// Configures decryption from an in-memory byte slice.
     ///
     /// Returns a `PendingInMemoryDecryptor` that allows inspecting the header
     /// before providing the key.
-    pub fn slice(self, ciphertext: &[u8]) -> crate::Result<PendingInMemoryDecryptor> {
+    pub fn slice(self, ciphertext: &'a [u8]) -> crate::Result<PendingInMemoryDecryptor<'a>> {
         let mid_level_pending =
             crate::symmetric::ordinary::PendingDecryptor::from_ciphertext(ciphertext)?;
-        Ok(PendingDecryptor::new(mid_level_pending))
+        Ok(PendingDecryptor::new(
+            mid_level_pending,
+            self.key_provider,
+        ))
     }
 
     /// Configures parallel decryption from an in-memory byte slice.
     pub fn slice_parallel(
         self,
-        ciphertext: &[u8],
-    ) -> crate::Result<PendingInMemoryParallelDecryptor> {
+        ciphertext: &'a [u8],
+    ) -> crate::Result<PendingInMemoryParallelDecryptor<'a>> {
         let mid_level_pending =
             crate::symmetric::parallel::PendingDecryptor::from_ciphertext(ciphertext)?;
-        Ok(PendingDecryptor::new(mid_level_pending))
+        Ok(PendingDecryptor::new(
+            mid_level_pending,
+            self.key_provider,
+        ))
     }
 
     /// Configures decryption from a synchronous `Read` stream.
-    pub fn reader<R: Read>(self, reader: R) -> crate::Result<PendingStreamingDecryptor<R>> {
+    pub fn reader<R: Read>(self, reader: R) -> crate::Result<PendingStreamingDecryptor<'a, R>> {
         let mid_level_pending = crate::symmetric::streaming::PendingDecryptor::from_reader(reader)?;
-        Ok(PendingDecryptor::new(mid_level_pending))
+        Ok(PendingDecryptor::new(
+            mid_level_pending,
+            self.key_provider,
+        ))
     }
 
     /// Configures parallel decryption from a synchronous `Read` stream.
     pub fn reader_parallel<R: Read + Send>(
         self,
         reader: R,
-    ) -> crate::Result<PendingParallelStreamingDecryptor<R>> {
+    ) -> crate::Result<PendingParallelStreamingDecryptor<'a, R>> {
         let mid_level_pending =
             crate::symmetric::parallel_streaming::PendingDecryptor::from_reader(reader)?;
-        Ok(PendingDecryptor::new(mid_level_pending))
+        Ok(PendingDecryptor::new(
+            mid_level_pending,
+            self.key_provider,
+        ))
     }
 
     /// Begins an asynchronous streaming decryption operation.
@@ -139,14 +164,34 @@ impl SymmetricDecryptorBuilder {
     pub async fn async_reader<R: AsyncRead + Unpin>(
         self,
         reader: R,
-    ) -> crate::Result<PendingAsyncStreamingDecryptor<R>> {
+    ) -> crate::Result<PendingAsyncStreamingDecryptor<'a, R>> {
         let mid_level_pending =
             crate::symmetric::asynchronous::PendingDecryptor::from_reader(reader).await?;
-        Ok(PendingDecryptor::new(mid_level_pending))
+        Ok(PendingDecryptor::new(
+            mid_level_pending,
+            self.key_provider,
+        ))
     }
 }
 
 impl<'a> PendingInMemoryDecryptor<'a> {
+    /// Automatically resolves the key using the attached `KeyProvider` and
+    /// completes the decryption.
+    ///
+    /// # Errors
+    ///
+    /// This method will return an error if no `KeyProvider` was set on the
+    /// `SymmetricDecryptorBuilder`, or if the key ID from the ciphertext
+    /// cannot be found by the provider.
+    pub fn resolve_and_decrypt(self) -> crate::Result<Vec<u8>> {
+        let provider = self
+            .key_provider
+            .ok_or(crate::Error::MissingKeyProvider)?;
+        let key_id = self.key_id().ok_or(crate::Error::MissingKeyId)?;
+        let key = provider.get_symmetric_key(key_id)?;
+        self.with_key(key)
+    }
+
     /// Supplies a key from its raw bytes for decryption.
     pub fn with_key(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
@@ -172,6 +217,17 @@ impl<'a> PendingInMemoryDecryptor<'a> {
 }
 
 impl<'a> PendingInMemoryParallelDecryptor<'a> {
+    /// Automatically resolves the key using the attached `KeyProvider` and
+    /// completes the decryption.
+    pub fn resolve_and_decrypt(self) -> crate::Result<Vec<u8>> {
+        let provider = self
+            .key_provider
+            .ok_or(crate::Error::MissingKeyProvider)?;
+        let key_id = self.key_id().ok_or(crate::Error::MissingKeyId)?;
+        let key = provider.get_symmetric_key(key_id)?;
+        self.with_key(key)
+    }
+
     /// Supplies a key from its raw bytes for decryption.
     pub fn with_key(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
@@ -196,7 +252,21 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     }
 }
 
-impl<R: Read> PendingStreamingDecryptor<R> {
+impl<'a, R: Read> PendingStreamingDecryptor<'a, R> {
+    /// Automatically resolves the key using the attached `KeyProvider` and
+    /// returns a decrypting reader.
+    pub fn resolve_and_decrypt<'s>(self) -> crate::Result<Box<dyn Read + 's>>
+    where
+        R: 's,
+    {
+        let provider = self
+            .key_provider
+            .ok_or(crate::Error::MissingKeyProvider)?;
+        let key_id = self.key_id().ok_or(crate::Error::MissingKeyId)?;
+        let key = provider.get_symmetric_key(key_id)?;
+        self.with_key(key)
+    }
+
     /// Supplies a key from its raw bytes for decryption.
     pub fn with_key<'s>(self, key: SymmetricKey) -> crate::Result<Box<dyn Read + 's>>
     where
@@ -228,10 +298,21 @@ impl<R: Read> PendingStreamingDecryptor<R> {
     }
 }
 
-impl<R> PendingParallelStreamingDecryptor<R>
+impl<'a, R> PendingParallelStreamingDecryptor<'a, R>
 where
     R: Read + Send,
 {
+    /// Automatically resolves the key using the attached `KeyProvider` and
+    /// decrypts the stream to the provided writer.
+    pub fn resolve_and_decrypt_to_writer<W: Write>(self, writer: W) -> crate::Result<()> {
+        let provider = self
+            .key_provider
+            .ok_or(crate::Error::MissingKeyProvider)?;
+        let key_id = self.key_id().ok_or(crate::Error::MissingKeyId)?;
+        let key = provider.get_symmetric_key(key_id)?;
+        self.with_key_to_writer(key, writer)
+    }
+
     /// Supplies a key from its raw bytes and decrypts to the provided writer.
     pub fn with_key_to_writer<W: Write>(self, key: SymmetricKey, writer: W) -> crate::Result<()> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
@@ -262,7 +343,21 @@ where
 }
 
 #[cfg(feature = "async")]
-impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
+impl<'a, R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<'a, R> {
+    /// Automatically resolves the key using the attached `KeyProvider` and
+    /// returns a decrypting async reader.
+    pub fn resolve_and_decrypt<'s>(self) -> crate::Result<Box<dyn AsyncRead + Unpin + 's>>
+    where
+        R: 's,
+    {
+        let provider = self
+            .key_provider
+            .ok_or(crate::Error::MissingKeyProvider)?;
+        let key_id = self.key_id().ok_or(crate::Error::MissingKeyId)?;
+        let key = provider.get_symmetric_key(key_id)?;
+        self.with_key(key)
+    }
+
     /// Supplies a key from its raw bytes for decryption.
     pub fn with_key<'s>(self, key: SymmetricKey) -> crate::Result<Box<dyn AsyncRead + Unpin + 's>>
     where

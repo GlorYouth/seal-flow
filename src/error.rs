@@ -56,11 +56,17 @@ pub enum Error {
     #[error("提供的密钥类型与密文中指定的加密算法不匹配")]
     MismatchedKeyType,
 
-    #[error("在密钥存储中找不到指定的密钥ID")]
-    KeyNotFound,
+    #[error("在密钥存储中找不到指定的密钥ID: {0}")]
+    KeyNotFound(String),
 
     #[error("密文中未找到密钥加密密钥（KEK）ID")]
     KekIdNotFound,
+
+    #[error("在需要时未在构建器上提供 KeyProvider")]
+    MissingKeyProvider,
+
+    #[error("密文头部中缺少所需的密钥ID")]
+    MissingKeyId,
 
     #[error("异步任务错误: {0}")]
     AsyncTaskError(String),

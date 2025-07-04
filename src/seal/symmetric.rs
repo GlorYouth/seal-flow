@@ -1,3 +1,64 @@
+//! High-level API for symmetric encryption.
+//!
+//! This module provides a unified and user-friendly interface for symmetric
+//! authenticated encryption (AEAD). It is the recommended entry point for most users
+//! who need to encrypt data with a pre-shared key.
+//!
+//! ## Workflow
+//!
+//! The symmetric encryption workflow is straightforward:
+//! 1.  **Encryption**: Provide a symmetric key, a key identifier, and the plaintext.
+//!     The library encrypts the data and prepends a header containing metadata
+//!     like the encryption algorithm and the key ID.
+//! 2.  **Decryption**: The recipient first reads the header from the ciphertext to learn
+//!     which key ID is required. They can then fetch the correct key and use it
+//!     to decrypt the data. The library verifies the data's integrity and
+//!     authenticity automatically.
+//!
+//! ## Key-Lookup Safety
+//!
+//! A key feature of this API is the "safe key-lookup" workflow for decryption.
+//! Instead of immediately decrypting, calling `.decrypt()` returns a `pending`
+//! decryptor. You can safely inspect this object to get the `key_id` before
+//! supplying the actual key. This prevents using the wrong key and allows for
+//! efficient key management.
+//!
+//! Alternatively, you can use a `KeyProvider` to automate the key lookup process.
+//!
+//! ## Execution Modes
+//!
+//! The API supports multiple execution modes, similar to the hybrid module:
+//! - **In-Memory (Ordinary)**: For data that fits comfortably in memory. (`to_vec`, `slice`)
+//! - **In-Memory (Parallel)**: A parallelized version for better performance on multi-core systems.
+//!   (`to_vec_parallel`, `slice_parallel`)
+//! - **Streaming**: For large files or network streams. (`into_writer`, `reader`)
+//! - **Asynchronous Streaming**: For use with async runtimes like Tokio. (`into_async_writer`, `async_reader`)
+//!
+//! # Example
+//!
+//! ```no_run
+//! use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+//! use seal_flow::prelude::*;
+//!
+//! // 1. Setup key
+//! let key = Aes256Gcm::generate_key().unwrap();
+//! let key_wrapped = SymmetricKey::new(key.to_bytes());
+//! let key_id = "my-secret-key-v1".to_string();
+//!
+//! // 2. Encrypt
+//! let seal = SymmetricSeal::new();
+//! let plaintext = b"secret message";
+//! let ciphertext = seal.encrypt(key_wrapped.clone(), key_id)
+//!     .to_vec::<Aes256Gcm>(plaintext)
+//!     .unwrap();
+//!
+//! // 3. Decrypt
+//! let pending = seal.decrypt().slice(&ciphertext).unwrap();
+//! assert_eq!(pending.key_id(), Some("my-secret-key-v1"));
+//! let decrypted = pending.with_key(key_wrapped).unwrap();
+//!
+//! assert_eq!(plaintext, &decrypted[..]);
+//! ```
 use crate::keys::SymmetricKey;
 use decryptor::SymmetricDecryptorBuilder;
 use encryptor::SymmetricEncryptor;
@@ -7,6 +68,7 @@ pub mod encryptor;
 
 /// A factory for creating symmetric encryption and decryption executors.
 /// This struct is the main entry point for the high-level symmetric API.
+/// It is stateless and can be reused for multiple operations.
 #[derive(Default)]
 pub struct SymmetricSeal;
 
@@ -18,9 +80,13 @@ impl SymmetricSeal {
 
     /// Begins a symmetric encryption operation.
     ///
-    /// This captures the essential encryption parameters (key, key ID)
-    /// and returns a context object. You can then call methods on this context
-    /// to select the desired execution mode (e.g., in-memory, streaming).
+    /// This method captures the essential encryption parameters: the `key` to be used
+    /// for encryption and a `key_id` to identify it. The `key_id` is stored
+    /// in the ciphertext header, allowing a decryptor to know which key to request.
+    ///
+    /// This returns a `SymmetricEncryptor` context object. You can then chain calls
+    /// to configure options (like `.with_aad()`) or call an execution method
+    /// (e.g., `.to_vec()`) to perform the encryption.
     pub fn encrypt(&self, key: SymmetricKey, key_id: String) -> SymmetricEncryptor {
         SymmetricEncryptor {
             key,
@@ -31,9 +97,12 @@ impl SymmetricSeal {
 
     /// Begins a decryption operation.
     ///
-    /// This returns a builder that you can use to configure the decryptor
-    /// based on the source of the ciphertext (e.g., from a slice or a stream).
-    pub fn decrypt(&self) -> SymmetricDecryptorBuilder {
+    /// This returns a `SymmetricDecryptorBuilder`. You can then use this builder
+    /// to specify the source of the ciphertext (e.g., `.slice()` or `.reader()`).
+    ///
+    /// The builder can also be configured with a `KeyProvider` to automate the
+    /// key lookup process during decryption.
+    pub fn decrypt(&self) -> SymmetricDecryptorBuilder<'_> {
         SymmetricDecryptorBuilder::new()
     }
 }
