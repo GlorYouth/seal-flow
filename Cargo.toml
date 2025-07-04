@@ -72,3 +72,33 @@ required-features = ["async"]
 [[example]]
 name = "mid_level_hybrid"
 required-features = ["async"]
+
+[[example]]
+name = "readme_aad"
+path = "examples/readme/readme_aad.rs"
+required-features = ["async"]
+
+[[example]]
+name = "readme_advanced_key_derivation"
+path = "examples/readme/readme_advanced_key_derivation.rs"
+required-features = ["async"]
+
+[[example]]
+name = "readme_digital_signatures"
+path = "examples/readme/readme_digital_signatures.rs"
+required-features = ["async"]
+
+[[example]]
+name = "readme_hybrid_workflow"
+path = "examples/readme/readme_hybrid_workflow.rs"
+required-features = ["async"]
+
+[[example]]
+name = "readme_key_provider"
+path = "examples/readme/readme_key_provider.rs"
+required-features = ["async"]
+
+[[example]]
+name = "readme_symmetric_workflow"
+path = "examples/readme/readme_symmetric_workflow.rs"
+required-features = ["async"]

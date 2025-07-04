@@ -39,13 +39,13 @@ seal-flow = "0.1.0" # Replace with the latest version
 
 This example demonstrates a full encryption and decryption cycle, including metadata (AAD) and the safe key-lookup pattern.
 
-The full code for this example can be found in [`examples/readme_symmetric_workflow.rs`](./examples/readme_symmetric_workflow.rs).
+The full code for this example can be found in [`examples/readme/readme_symmetric_workflow.rs`](./examples/readme/readme_symmetric_workflow.rs).
 
 ## Usage: Hybrid Encryption Workflow
 
 Hybrid encryption follows the same fluent pattern. You encrypt with a public key and decrypt with the corresponding private key.
 
-The full code for this example can be found in [`examples/readme_hybrid_workflow.rs`](./examples/readme_hybrid_workflow.rs).
+The full code for this example can be found in [`examples/readme/readme_hybrid_workflow.rs`](./examples/readme/readme_hybrid_workflow.rs).
 
 ## Key Features & Advanced Usage
 
@@ -61,7 +61,7 @@ For advanced scenarios (e.g., integrating with legacy systems), you can use `wit
 
 Derive keys from a master key or a password for use cases like key rotation or password-based encryption. This is also useful for creating key hierarchies, for example, using a password to derive a master secret, and then using an Extendable-Output Function (XOF) like SHAKE256 to generate multiple keys of different lengths from it.
 
-The full code for this example can be found in [`examples/readme_advanced_key_derivation.rs`](./examples/readme_advanced_key_derivation.rs).
+The full code for this example can be found in [`examples/readme/readme_advanced_key_derivation.rs`](./examples/readme/readme_advanced_key_derivation.rs).
 
 ### Authenticated Associated Data (AAD)
 
@@ -74,13 +74,13 @@ Common use cases for AAD include:
 -   Version numbers or file paths.
 -   Any metadata that defines the context of the encrypted data.
 
-The full code for this example can be found in [`examples/readme_aad.rs`](./examples/readme_aad.rs).
+The full code for this example can be found in [`examples/readme/readme_aad.rs`](./examples/readme/readme_aad.rs).
 
 ### Digital Signatures
 
 In hybrid encryption, you can also sign the data to prove its origin and integrity.
 
-The full code for this example can be found in [`examples/readme_digital_signatures.rs`](./examples/readme_digital_signatures.rs).
+The full code for this example can be found in [`examples/readme/readme_digital_signatures.rs`](./examples/readme/readme_digital_signatures.rs).
 
 ## Interoperability
 

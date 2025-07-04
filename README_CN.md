@@ -37,13 +37,13 @@ seal-flow = "0.1.0" # 请替换为最新版本
 
 本示例演示了一个完整的加密和解密周期，包括元数据（AAD）和安全的密钥查找模式。
 
-本示例的完整代码可以在 [`examples/readme_symmetric_workflow.rs`](./examples/readme_symmetric_workflow.rs) 中找到。
+本示例的完整代码可以在 [`examples/readme/readme_symmetric_workflow.rs`](./examples/readme/readme_symmetric_workflow.rs) 中找到。
 
 ## 使用方法：混合加密工作流
 
 混合加密遵循同样流畅的模式。你使用公钥加密，并用相应的私钥解密。
 
-本示例的完整代码可以在 [`examples/readme_hybrid_workflow.rs`](./examples/readme_hybrid_workflow.rs) 中找到。
+本示例的完整代码可以在 [`examples/readme/readme_hybrid_workflow.rs`](./examples/readme/readme_hybrid_workflow.rs) 中找到。
 
 ## 主要特性与高级用法
 
@@ -59,7 +59,7 @@ seal-flow = "0.1.0" # 请替换为最新版本
 
 从主密钥或密码派生密钥，用于密钥轮换或基于密码的加密等场景。这对于创建密钥层次结构也很有用，例如，使用密码派生主密钥，然后使用可扩展输出函数（XOF），如 SHAKE256，从中生成多个不同长度的密钥。
 
-该示例的完整代码可以在 [`examples/readme_advanced_key_derivation.rs`](./examples/readme_advanced_key_derivation.rs) 中找到。
+该示例的完整代码可以在 [`examples/readme/readme_advanced_key_derivation.rs`](./examples/readme/readme_advanced_key_derivation.rs) 中找到。
 
 ### 认证附加数据 (AAD)
 
@@ -72,13 +72,13 @@ AAD 的常见用例包括：
 -   版本号或文件路径。
 -   任何定义加密数据上下文的元数据。
 
-该示例的完整代码可以在 [`examples/readme_aad.rs`](./examples/readme_aad.rs) 中找到。
+该示例的完整代码可以在 [`examples/readme/readme_aad.rs`](./examples/readme/readme_aad.rs) 中找到。
 
 ### 数字签名
 
 在混合加密中，你还可以对数据进行签名，以证明其来源和完整性。
 
-本示例的完整代码可以在 [`examples/readme_digital_signatures.rs`](./examples/readme_digital_signatures.rs) 中找到。
+本示例的完整代码可以在 [`examples/readme/readme_digital_signatures.rs`](./examples/readme/readme_digital_signatures.rs) 中找到。
 
 ### 多种处理模式
 
