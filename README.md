@@ -5,7 +5,7 @@
 
 A stateless, high-level cryptographic workflow library built on top of `seal-crypto`. It provides a unified, fluent, and secure interface for common cryptographic operations like hybrid and symmetric encryption.
 
-[中文文档 (Chinese README)](./CN.md)
+[中文文档 (Chinese README)](./README_CN.md)
 
 ## Core Philosophy: The Fluent "Seal" API
 
