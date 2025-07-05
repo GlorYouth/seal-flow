@@ -26,6 +26,28 @@ impl SymmetricKey {
         Self(bytes.into())
     }
 
+    /// Generates a new random symmetric key of the specified length.
+    ///
+    /// This is useful for creating new keys for encryption or for key rotation.
+    /// It uses the operating system's cryptographically secure random number generator.
+    ///
+    /// 生成一个指定长度的新的随机对称密钥。
+    ///
+    /// 这对于为加密或密钥轮换创建新密钥很有用。
+    /// 它使用操作系统的加密安全随机数生成器。
+    ///
+    /// # Arguments
+    ///
+    /// * `len` - The desired length of the key in bytes.
+    ///
+    /// * `len` - 所需的密钥长度（以字节为单位）。
+    pub fn generate(len: usize) -> Result<Self, Error> {
+        use rand::{rngs::OsRng, TryRngCore};
+        let mut key_bytes = vec![0; len];
+        OsRng.try_fill_bytes(&mut key_bytes)?;
+        Ok(Self::new(key_bytes))
+    }
+
     /// Get a reference to the raw bytes of the key
     ///
     /// 获取密钥原始字节的引用
@@ -189,6 +211,23 @@ impl SignaturePublicKey {
 mod tests {
     use super::*;
     use seal_crypto::schemes::kdf::{hkdf::HkdfSha256, pbkdf2::Pbkdf2Sha256};
+
+    #[test]
+    fn test_symmetric_key_generate() {
+        use seal_crypto::{prelude::SymmetricCipher, schemes::symmetric::aes_gcm::Aes256Gcm};
+
+        let key_len = <Aes256Gcm as SymmetricCipher>::KEY_SIZE;
+        let key1 = SymmetricKey::generate(key_len).unwrap();
+        let key2 = SymmetricKey::generate(key_len).unwrap();
+
+        assert_eq!(key1.as_bytes().len(), key_len);
+        assert_eq!(key2.as_bytes().len(), key_len);
+        assert_ne!(
+            key1.as_bytes(),
+            key2.as_bytes(),
+            "Generated keys should be unique"
+        );
+    }
 
     #[test]
     fn test_symmetric_key_from_bytes() {
