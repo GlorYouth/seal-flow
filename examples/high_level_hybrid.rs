@@ -6,6 +6,7 @@ use seal_flow::algorithms::asymmetric::Rsa2048;
 use seal_flow::algorithms::hash::Sha256;
 use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::prelude::*;
+use seal_flow::secrecy::SecretBox;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -37,7 +38,7 @@ impl KeyStore {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> seal_flow::error::Result<()> {
     // 1. Setup
     // 创建密钥对并将私钥存储在KeyStore中
     let (pk, sk) = Kem::generate_keypair()?;
@@ -222,12 +223,12 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Password Protection for KEK ---");
 
     // 1. 模拟从用户密码派生密钥保护材料
-    let user_password = b"complex-secure-password";
+    let user_password = SecretBox::new(Box::from(b"complex-secure-password".as_slice()));
     let user_salt = b"kek-protection-salt";
     let pbkdf2_deriver = Pbkdf2Sha256::new(100_000);
 
     let kek_protection_key =
-        SymmetricKey::derive_from_password(user_password, &pbkdf2_deriver, user_salt, 32)?;
+        SymmetricKey::derive_from_password(&user_password, &pbkdf2_deriver, user_salt, 32)?;
 
     println!("从用户密码成功派生 KEK 保护密钥");
 

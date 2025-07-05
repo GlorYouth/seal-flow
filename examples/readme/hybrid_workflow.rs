@@ -18,7 +18,7 @@ type Kem = Rsa2048<Sha256>;
 // 该算法用于加密实际的明文数据。
 type Dek = Aes256Gcm;
 
-fn main() -> Result<()> {
+fn main() -> seal_flow::error::Result<()> {
     // --- Setup ---
     // --- 准备工作 ---
 

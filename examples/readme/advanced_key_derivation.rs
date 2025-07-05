@@ -1,9 +1,10 @@
 use seal_flow::algorithms::kdf::HkdfSha256;
 use seal_flow::algorithms::kdf::passwd::Pbkdf2Sha256;
 use seal_flow::algorithms::xof::Shake256;
+use seal_flow::secrecy::SecretBox;
 use seal_flow::prelude::*;
 
-fn main() -> Result<()> {
+fn main() -> seal_flow::error::Result<()> {
     println!("--- Use Case 1: Key Rotation with HKDF ---");
     // You have a single, long-term master key and need to generate different
     // versions of a derived key for periodic key rotation.
@@ -34,14 +35,14 @@ fn main() -> Result<()> {
     // 场景2：使用 XOF（SHAKE256）进行多级派生。
     // 您首先从一个低熵源（如密码）派生出一个长的主密钥，然后使用可扩展输出函数（XOF）
     // 从这个单一的密钥中生成多个不同长度的密钥。
-    let password = b"a-very-secure-user-password";
+    let password = SecretBox::new(Box::from(b"a-very-secure-user-password".as_slice()));
     let pbkdf2 = Pbkdf2Sha256::new(100_000); // Use high iterations in production
 
     // First, use PBKDF2 to stretch the password into a longer, high-entropy secret.
     // This is the input keying material (IKM) for the XOF.
     // 首先，使用 PBKDF2 将密码"拉伸"成一个更长的、高熵的密钥。
     // 这将作为 XOF 的输入密钥材料（IKM）。
-    let master_secret = SymmetricKey::derive_from_password(password, &pbkdf2, b"app-salt", 64)?;
+    let master_secret = SymmetricKey::derive_from_password(&password, &pbkdf2, b"app-salt", 64)?;
 
     // Now, create an XOF reader initialized with the master secret.
     // The XOF acts like a cryptographically secure stream of bytes derived from the secret.

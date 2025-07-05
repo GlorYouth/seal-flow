@@ -41,20 +41,20 @@ impl FileKeyProvider {
 }
 
 impl KeyProvider for FileKeyProvider {
-    fn get_symmetric_key(&self, _key_id: &str) -> Result<SymmetricKey> {
+    fn get_symmetric_key(&self, _key_id: &str) -> Result<SymmetricKey, KeyProviderError> {
         unimplemented!("Not used in this hybrid example")
     }
-    fn get_asymmetric_private_key(&self, key_id: &str) -> Result<AsymmetricPrivateKey> {
+    fn get_asymmetric_private_key(&self, key_id: &str) -> Result<AsymmetricPrivateKey, KeyProviderError> {
         self.asymmetric_private_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| Error::KeyManagement(KeyManagementError::KeyNotFound(key_id.to_string())))
+            .ok_or_else(|| KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(key_id.to_string())))
     }
-    fn get_signature_public_key(&self, key_id: &str) -> Result<SignaturePublicKey> {
+    fn get_signature_public_key(&self, key_id: &str) -> Result<SignaturePublicKey, KeyProviderError> {
         self.signature_public_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| Error::KeyManagement(KeyManagementError::KeyNotFound(key_id.to_string())))
+            .ok_or_else(|| KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(key_id.to_string())))
     }
 }
 
@@ -78,7 +78,7 @@ impl Read for LargeFileStream {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> seal_flow::error::Result<()> {
     // --- 1. Setup ---
     println!("Setting up keys and provider...");
 

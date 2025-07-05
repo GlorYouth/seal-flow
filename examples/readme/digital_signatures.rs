@@ -14,7 +14,7 @@ type Dek = Aes256Gcm;
 // 定义用于数字签名的算法。
 type Sig = Ed25519;
 
-fn main() -> Result<()> {
+fn main() -> seal_flow::error::Result<()> {
     // The high-level API factory is stateless and reusable.
     // 高级 API 工厂是无状态且可重用的。
     let seal = HybridSeal::new();

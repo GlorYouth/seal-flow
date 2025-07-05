@@ -1,8 +1,8 @@
 //! This module defines byte wrappers for cryptographic keys.
 //!
 //! 这个模块为加密密钥定义了字节包装器。
-use crate::crypto::errors::Error;
-use seal_crypto::{prelude::*, zeroize};
+use crate::error::Error;
+use seal_crypto::{prelude::*, secrecy::SecretBox, zeroize};
 
 pub mod provider;
 
@@ -86,7 +86,7 @@ impl SymmetricKey {
     /// * `salt` - A salt. This is **required** for password-based derivation to be secure.
     /// * `output_len` - The desired length of the derived key in bytes.
     pub fn derive_from_password<P>(
-        password: &[u8],
+        password: &SecretBox<[u8]>,
         deriver: &P,
         salt: &[u8],
         output_len: usize,
@@ -231,32 +231,32 @@ mod tests {
     #[test]
     fn test_symmetric_key_derive_from_password() {
         // 使用PBKDF2-SHA256从密码派生密钥
-        let password = b"my_secure_password";
+        let password = SecretBox::new(Box::from(b"my_secure_password".as_slice()));
         let salt = b"random_salt_value";
 
         // 设置较少的迭代次数以加速测试（实际应用中应使用更多迭代）
         let deriver = Pbkdf2Sha256::new(1000);
 
         let derived_key1 =
-            SymmetricKey::derive_from_password(password, &deriver, salt, 32).unwrap();
+            SymmetricKey::derive_from_password(&password, &deriver, salt, 32).unwrap();
 
         // 相同的密码、盐和迭代次数应该产生相同的密钥
         let derived_key2 =
-            SymmetricKey::derive_from_password(password, &deriver, salt, 32).unwrap();
+            SymmetricKey::derive_from_password(&password, &deriver, salt, 32).unwrap();
 
         assert_eq!(derived_key1.as_bytes(), derived_key2.as_bytes());
 
         // 不同的密码应该产生不同的密钥
-        let different_password = b"different_password";
+        let different_password = SecretBox::new(Box::from(b"different_password".as_slice()));
         let derived_key3 =
-            SymmetricKey::derive_from_password(different_password, &deriver, salt, 32).unwrap();
+            SymmetricKey::derive_from_password(&different_password, &deriver, salt, 32).unwrap();
 
         assert_ne!(derived_key1.as_bytes(), derived_key3.as_bytes());
 
         // 不同的盐应该产生不同的密钥
         let different_salt = b"different_salt_value";
         let derived_key4 =
-            SymmetricKey::derive_from_password(password, &deriver, different_salt, 32).unwrap();
+            SymmetricKey::derive_from_password(&password, &deriver, different_salt, 32).unwrap();
 
         assert_ne!(derived_key1.as_bytes(), derived_key4.as_bytes());
     }

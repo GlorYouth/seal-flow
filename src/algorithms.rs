@@ -1,4 +1,4 @@
 pub(crate) mod definitions;
-pub mod traits;
+pub(crate) mod traits;
 
 pub use definitions::*;

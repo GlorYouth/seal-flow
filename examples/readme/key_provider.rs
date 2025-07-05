@@ -51,38 +51,38 @@ impl InMemoryKeyProvider {
 
 impl KeyProvider for InMemoryKeyProvider {
     /// Looks up a symmetric key by its ID.
-    fn get_symmetric_key(&self, key_id: &str) -> Result<SymmetricKey> {
+    fn get_symmetric_key(&self, key_id: &str) -> Result<SymmetricKey, KeyProviderError> {
         self.symmetric_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| Error::KeyManagement(KeyManagementError::KeyNotFound(key_id.to_string())))
+            .ok_or_else(|| KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(key_id.to_string())))
     }
 
     /// Looks up an asymmetric private key by its ID.
-    fn get_asymmetric_private_key(&self, key_id: &str) -> Result<AsymmetricPrivateKey> {
+    fn get_asymmetric_private_key(&self, key_id: &str) -> Result<AsymmetricPrivateKey, KeyProviderError> {
         self.asymmetric_private_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| Error::KeyManagement(KeyManagementError::KeyNotFound(key_id.to_string())))
+            .ok_or_else(|| KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(key_id.to_string())))
     }
 
     /// Looks up a signature verification public key by its ID.
-    fn get_signature_public_key(&self, key_id: &str) -> Result<SignaturePublicKey> {
+    fn get_signature_public_key(&self, key_id: &str) -> Result<SignaturePublicKey, KeyProviderError> {
         self.signature_public_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| Error::KeyManagement(KeyManagementError::KeyNotFound(key_id.to_string())))
+            .ok_or_else(|| KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(key_id.to_string())))
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> seal_flow::error::Result<()> {
     run_symmetric_example()?;
     run_hybrid_example()?;
     Ok(())
 }
 
 /// Demonstrates using the KeyProvider for symmetric decryption.
-fn run_symmetric_example() -> Result<()> {
+fn run_symmetric_example() -> seal_flow::error::Result<()> {
     println!("--- Running Symmetric Encryption Example with KeyProvider ---");
     // 1. Setup
     // 1. 准备工作
@@ -123,7 +123,7 @@ fn run_symmetric_example() -> Result<()> {
 }
 
 /// Demonstrates using the KeyProvider for hybrid decryption with signatures.
-fn run_hybrid_example() -> Result<()> {
+fn run_hybrid_example() -> seal_flow::error::Result<()> {
     println!("--- Running Hybrid Encryption Example with KeyProvider ---");
 
     type Kem = Rsa2048<Sha256>;

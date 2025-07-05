@@ -1332,8 +1332,6 @@ dependencies = [
 [[package]]
 name = "seal-crypto"
 version = "0.1.2-rc5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a8828cdd706f31054871a6628a6c0b75b7d97daa5e4a436cfd78cc227fda2da"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1343,6 +1341,7 @@ dependencies = [
  "ecdsa",
  "ed25519-dalek",
  "elliptic-curve",
+ "getrandom 0.3.3",
  "hkdf",
  "hmac",
  "p256",
@@ -1353,6 +1352,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rand_core 0.9.3",
  "rsa",
+ "secrecy",
  "sha2",
  "sha3",
  "signature",
@@ -1389,6 +1389,15 @@ dependencies = [
  "generic-array",
  "pkcs8",
  "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "secrecy"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
+dependencies = [
  "zeroize",
 ]
 

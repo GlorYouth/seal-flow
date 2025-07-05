@@ -7,6 +7,7 @@ use seal_flow::flows::header::Header;
 use seal_flow::error::Result;
 use seal_flow::flows::hybrid::*;
 use seal_flow::prelude::*;
+use seal_flow::secrecy::SecretBox;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -192,12 +193,12 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Password-Based Key Derivation in Hybrid Context ---");
 
     // 从密码派生签名密钥 (这在真实场景中可能用于派生私钥保护密钥)
-    let password = b"complex-secure-password";
+    let password = SecretBox::new(Box::from(b"complex-secure-password".as_slice()));
     let salt = b"signing-key-salt";
     let pbkdf2_deriver = Pbkdf2Sha256::new(100_000);
 
     let signing_key_material = SymmetricKey::derive_from_password(
-        password,
+        &password,
         &pbkdf2_deriver,
         salt,
         64, // 足够长的密钥，用于派生多个不同用途的子密钥

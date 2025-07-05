@@ -2,6 +2,7 @@ use seal_flow::algorithms::kdf::HkdfSha256;
 use seal_flow::algorithms::kdf::passwd::Pbkdf2Sha256;
 use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::prelude::*;
+use seal_flow::secrecy::SecretBox;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -21,7 +22,7 @@ impl KeyStore {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> seal_flow::error::Result<()> {
     // 1. Setup
     // 创建密钥并存储在我们的KeyStore中
     let key = TheAlgorithm::generate_key()?;
@@ -198,7 +199,7 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Password-Based Key Derivation ---");
 
     // 模拟用户密码
-    let password = b"secure-user-password-example";
+    let password = SecretBox::new(Box::from(b"secure-user-password-example".as_slice()));
     let salt = b"random-salt-value";
 
     // 在实际应用中应使用更高的迭代次数（至少100,000）
@@ -206,7 +207,7 @@ async fn main() -> Result<()> {
 
     // 从密码派生加密密钥
     let password_derived_key =
-        SymmetricKey::derive_from_password(password, &pbkdf2_deriver, salt, 32)?;
+        SymmetricKey::derive_from_password(&password, &pbkdf2_deriver, salt, 32)?;
 
     // 使用密码派生的密钥加密数据
     let password_key_id = "password-derived-key";
@@ -222,7 +223,7 @@ async fn main() -> Result<()> {
 
     // 在另一个环境中，我们可以从相同的密码和盐值重新派生出相同的密钥
     let password_derived_key2 =
-        SymmetricKey::derive_from_password(password, &pbkdf2_deriver, salt, 32)?;
+        SymmetricKey::derive_from_password(&password, &pbkdf2_deriver, salt, 32)?;
 
     // 使用重新派生的密钥解密
     let decrypted8 = pending_decryptor8.with_key(password_derived_key2)?;
@@ -233,10 +234,10 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Multi-Level Key Derivation ---");
 
     // 从密码派生主密钥
-    let master_password = b"master-password";
+    let master_password = SecretBox::new(Box::from(b"master-password".as_slice()));
     let master_salt = b"master-salt";
     let master_key_material = SymmetricKey::derive_from_password(
-        master_password,
+        &master_password,
         &pbkdf2_deriver,
         master_salt,
         64, // 更长的密钥，用于进一步派生

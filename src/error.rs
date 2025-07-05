@@ -1,6 +1,7 @@
 //! Defines the primary error type and result alias for the entire crate.
 //!
 //! 定义了整个 crate 的主要错误类型和结果别名。
+use crate::keys::provider::KeyProviderError;
 use thiserror::Error;
 
 /// An error related to `bincode` serialization or deserialization.
@@ -180,6 +181,12 @@ pub enum Error {
     /// 与密钥查找或管理相关的错误。
     #[error("密钥管理错误: {0}")]
     KeyManagement(#[from] KeyManagementError),
+
+    /// An error related to key provider.
+    ///
+    /// 与密钥提供者相关的错误。
+    #[error("密钥提供者错误: {0}")]
+    KeyProvider(#[from] KeyProviderError),
 
     /// An error indicating invalid configuration or API misuse.
     ///

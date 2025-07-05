@@ -5,6 +5,7 @@ use seal_flow::flows::header::Header;
 use seal_flow::error::Result;
 use seal_flow::flows::symmetric::*;
 use seal_flow::prelude::*;
+use seal_flow::secrecy::SecretBox;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -200,7 +201,7 @@ async fn main() -> Result<()> {
     // --- Mode 8: 从密码派生密钥 ---
     println!("\n--- Testing Password-Based Key Derivation ---");
 
-    let password = b"user-secure-password";
+    let password = SecretBox::new(Box::from(b"user-secure-password".as_slice()));
     let salt = b"random-salt-value";
 
     // 在实际应用中应使用更高的迭代次数 (至少 100,000)
@@ -208,7 +209,7 @@ async fn main() -> Result<()> {
 
     // 从用户密码派生加密密钥
     let password_derived_key =
-        SymmetricKey::derive_from_password(password, &pbkdf2_deriver, salt, 32)?;
+        SymmetricKey::derive_from_password(&password, &pbkdf2_deriver, salt, 32)?;
 
     // 使用从密码派生的密钥加密数据
     let password_key_id = "password-derived-key";
@@ -223,7 +224,7 @@ async fn main() -> Result<()> {
 
     // 模拟另一个位置：重新从相同密码派生相同密钥进行解密
     let password_derived_key2 =
-        SymmetricKey::derive_from_password(password, &pbkdf2_deriver, salt, 32)?;
+        SymmetricKey::derive_from_password(&password, &pbkdf2_deriver, salt, 32)?;
 
     let pending_decryptor8 = ordinary::PendingDecryptor::from_ciphertext(&ciphertext8)?;
     let password_key2 =

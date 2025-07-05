@@ -3,7 +3,7 @@ use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::prelude::*;
 use std::collections::HashMap;
 
-fn main() -> Result<()> {
+fn main() -> seal_flow::error::Result<()> {
     // --- Setup ---
     // --- 准备工作 ---
 

@@ -1,5 +1,16 @@
-use crate::error::Result;
 use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey, SymmetricKey};
+
+#[derive(Debug, thiserror::Error)]
+pub enum KeyProviderError {
+    #[error("Key not found: {0}")]
+    KeyNotFound(String),
+    #[error("Key management error: {0}")]
+    KeyManagementError(crate::error::KeyManagementError),
+    #[error("Format error: {0}")]
+    FormatError(Box<dyn std::error::Error + Send + Sync>),
+    #[error("Other error: {0}")]
+    Other(Box<dyn std::error::Error + Send + Sync>),
+}
 
 /// A trait for dynamically looking up cryptographic keys by their ID.
 ///
@@ -15,19 +26,19 @@ pub trait KeyProvider {
     ///
     /// 通过 ID 查找对称密钥。
     /// 用于对称解密。
-    fn get_symmetric_key(&self, key_id: &str) -> Result<SymmetricKey>;
+    fn get_symmetric_key(&self, key_id: &str) -> Result<SymmetricKey, KeyProviderError>;
 
     /// Looks up an asymmetric private key by its ID.
     /// Used for key unwrapping in hybrid decryption.
     ///
     /// 通过 ID 查找非对称私钥。
     /// 用于混合解密中的密钥解包。
-    fn get_asymmetric_private_key(&self, key_id: &str) -> Result<AsymmetricPrivateKey>;
+    fn get_asymmetric_private_key(&self, key_id: &str) -> Result<AsymmetricPrivateKey, KeyProviderError>;
 
     /// Looks up a signature verification public key by its ID.
     /// Used for verifying metadata signatures during hybrid decryption.
     ///
     /// 通过 ID 查找签名验证公钥。
     /// 用于在混合解密期间验证元数据签名。
-    fn get_signature_public_key(&self, key_id: &str) -> Result<SignaturePublicKey>;
+    fn get_signature_public_key(&self, key_id: &str) -> Result<SignaturePublicKey, KeyProviderError>;
 } 
