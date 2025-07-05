@@ -1,6 +1,6 @@
-use seal_crypto::prelude::*;
-use seal_crypto::schemes::kdf::{hkdf::HkdfSha256, pbkdf2::Pbkdf2Sha256};
-use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+use seal_flow::algorithms::kdf::HkdfSha256;
+use seal_flow::algorithms::kdf::passwd::Pbkdf2Sha256;
+use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::prelude::*;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};

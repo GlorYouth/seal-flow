@@ -5,14 +5,9 @@
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 
-use seal_crypto::{
-    prelude::*,
-    schemes::{
-        asymmetric::post_quantum::kyber::Kyber768, // PQC-safe KEM
-        asymmetric::traditional::ecc::Ed25519,     // Standard digital signature
-        symmetric::aes_gcm::Aes256Gcm,              // Fast and secure DEM
-    },
-};
+use seal_flow::algorithms::asymmetric::Kyber768;
+use seal_flow::algorithms::signature::Ed25519;
+use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::prelude::*;
 use seal_flow::error::KeyManagementError;
 

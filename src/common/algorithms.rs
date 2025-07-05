@@ -41,6 +41,7 @@ pub enum SignatureAlgorithm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
 pub enum KdfAlgorithm {
     HkdfSha256,
+    HkdfSha384,
     HkdfSha512,
 }
 

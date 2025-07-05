@@ -1,7 +1,6 @@
-use seal_crypto::{
-    prelude::*,
-    schemes::{asymmetric::traditional::rsa::Rsa2048, hash::Sha256, symmetric::aes_gcm::Aes256Gcm},
-};
+use seal_flow::algorithms::asymmetric::Rsa2048;
+use seal_flow::algorithms::hash::Sha256;
+use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::prelude::*;
 use std::collections::HashMap;
 

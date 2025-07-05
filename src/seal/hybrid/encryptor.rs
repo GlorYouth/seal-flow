@@ -14,7 +14,7 @@ use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
     Dilithium2, Dilithium3, Dilithium5,
 };
 use seal_crypto::schemes::asymmetric::traditional::ecc::{EcdsaP256, Ed25519};
-use seal_crypto::schemes::kdf::hkdf::{HkdfSha256, HkdfSha512};
+use seal_crypto::schemes::kdf::hkdf::{HkdfSha256, HkdfSha384, HkdfSha512};
 use seal_crypto::schemes::xof::shake::{Shake128, Shake256};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
@@ -73,6 +73,12 @@ where
                 DerivationOptions::Kdf(opts) => match opts.algorithm {
                     KdfAlgorithmEnum::HkdfSha256 => self.with_kdf::<HkdfSha256>(
                         HkdfSha256::default(),
+                        opts.salt,
+                        opts.info,
+                        opts.output_len,
+                    ),
+                    KdfAlgorithmEnum::HkdfSha384 => self.with_kdf::<HkdfSha384>(
+                        HkdfSha384::default(),
                         opts.salt,
                         opts.info,
                         opts.output_len,

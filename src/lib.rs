@@ -39,6 +39,7 @@ pub use seal_crypto as crypto;
 
 pub mod prelude {
     //! A "prelude" for users of the `seal-flow` crate.
+    pub use seal_crypto::prelude::*;
     pub use crate::common::PendingImpl;
     pub use crate::error::{Error, Result};
     pub use crate::keys::{
@@ -71,7 +72,7 @@ pub mod flows {
     }
 }
 
-mod algorithms;
+pub mod algorithms;
 pub mod common;
 mod hybrid;
 pub(crate) mod impls;

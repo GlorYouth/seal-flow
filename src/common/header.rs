@@ -130,7 +130,7 @@ impl DerivationInfo {
     ) -> Result<seal_crypto::zeroize::Zeroizing<Vec<u8>>> {
         use seal_crypto::prelude::{DigestXofReader, KeyBasedDerivation, XofDerivation};
         use seal_crypto::schemes::{
-            kdf::hkdf::{HkdfSha256, HkdfSha512},
+            kdf::hkdf::{HkdfSha256, HkdfSha384, HkdfSha512},
             xof::shake::{Shake128, Shake256},
         };
         use seal_crypto::zeroize::Zeroizing;
@@ -139,6 +139,13 @@ impl DerivationInfo {
             DerivationInfo::Kdf(kdf_info) => {
                 let derived = match kdf_info.kdf_algorithm {
                     crate::common::algorithms::KdfAlgorithm::HkdfSha256 => HkdfSha256::default()
+                        .derive(
+                            shared_secret,
+                            kdf_info.salt.as_deref(),
+                            kdf_info.info.as_deref(),
+                            kdf_info.output_len as usize,
+                        )?,
+                    crate::common::algorithms::KdfAlgorithm::HkdfSha384 => HkdfSha384::default()
                         .derive(
                             shared_secret,
                             kdf_info.salt.as_deref(),

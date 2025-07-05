@@ -1,12 +1,6 @@
-use seal_crypto::{
-    // Import traits required for XOF reader functionality.
-    // 导入 XOF reader 功能所需的 trait。
-    prelude::{DigestXofReader, XofDerivation},
-    schemes::{
-        kdf::{hkdf::HkdfSha256, pbkdf2::Pbkdf2Sha256},
-        xof::shake::Shake256,
-    },
-};
+use seal_flow::algorithms::kdf::HkdfSha256;
+use seal_flow::algorithms::kdf::passwd::Pbkdf2Sha256;
+use seal_flow::algorithms::xof::Shake256;
 use seal_flow::prelude::*;
 
 fn main() -> Result<()> {

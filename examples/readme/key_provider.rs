@@ -2,14 +2,10 @@
 //! the decryption workflow.
 //！本示例演示了如何使用 `KeyProvider` trait 来简化解密工作流。
 
-use seal_crypto::{
-    prelude::*,
-    schemes::{
-        asymmetric::traditional::{ecc::Ed25519, rsa::Rsa2048},
-        hash::Sha256,
-        symmetric::aes_gcm::Aes256Gcm,
-    },
-};
+use seal_flow::algorithms::signature::Ed25519;
+use seal_flow::algorithms::asymmetric::Rsa2048;
+use seal_flow::algorithms::hash::Sha256;
+use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::error::KeyManagementError;
 use seal_flow::prelude::*;
 use std::collections::HashMap;

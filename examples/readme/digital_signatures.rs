@@ -1,10 +1,7 @@
-use seal_crypto::{
-    prelude::*,
-    schemes::{
-        asymmetric::traditional::ecc::Ed25519, asymmetric::traditional::rsa::Rsa2048, hash::Sha256,
-        symmetric::aes_gcm::Aes256Gcm,
-    },
-};
+use seal_flow::algorithms::signature::Ed25519;
+use seal_flow::algorithms::asymmetric::Rsa2048;
+use seal_flow::algorithms::hash::Sha256;
+use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::prelude::*;
 
 // Define the asymmetric algorithm for Key Encapsulation (KEM).

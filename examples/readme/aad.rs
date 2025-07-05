@@ -1,5 +1,4 @@
-use seal_crypto::prelude::SymmetricKeyGenerator;
-use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::prelude::*;
 
 fn main() -> Result<()> {
