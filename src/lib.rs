@@ -1,7 +1,5 @@
 #![doc = include_str!("../README.md")]
 //!
-//! 这是一个实现了 `seal-flow` 加密标准的库。
-//!
 //! `seal-flow` 是一个旨在统一和简化加密操作的 Rust 库。它为对称和非对称（混合）加密提供了一个高级、流畅的接口，支持多种执行模式，包括内存、流式和异步操作。
 //!
 //! 主要目标是提供一个对开发者友好且难以误用的 API，同时允许通过模块化设计实现高级配置。
@@ -70,13 +68,18 @@ pub mod flows {
     pub mod hybrid {
         pub use crate::hybrid::{asynchronous, ordinary, parallel, parallel_streaming, streaming};
     }
+
+    pub use crate::common::header;
 }
 
-pub mod algorithms;
-pub mod common;
-mod hybrid;
+pub(crate) mod common;
 pub(crate) mod impls;
+
+pub mod algorithms;
+pub use error::{Error, Result};
+
+mod hybrid;
 mod keys;
 mod symmetric;
 
-pub use error::{Error, Result};
+

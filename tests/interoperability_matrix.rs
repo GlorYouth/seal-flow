@@ -1,7 +1,6 @@
-use seal_crypto::prelude::*;
-use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
-use seal_crypto::schemes::hash::Sha256;
-use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+use seal_flow::algorithms::asymmetric::Rsa2048;
+use seal_flow::algorithms::hash::Sha256;
+use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::{
     error::Result,
     prelude::*,
