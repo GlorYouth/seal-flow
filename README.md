@@ -57,7 +57,7 @@ The library is designed to prevent you from accidentally using the wrong key. De
 
 When you begin decryption, the library first parses the header and gives you a `PendingDecryptor`. You can inspect this object to find the `key_id` that was used for encryption. This allows you to fetch the correct key from your key store.
 
-```rust
+```rust,ignore
 // 1. Start decryption and get the pending state
 let pending = seal.decrypt().slice(&ciphertext)?;
 
@@ -75,7 +75,7 @@ let plaintext = pending.with_key(key_to_use)?;
 
 For even greater convenience, you can implement the `KeyProvider` trait for your key store. This allows the library to handle the key lookup process for you automatically.
 
-```rust
+```rust,ignore
 // Your key store must implement the `KeyProvider` trait
 struct MyKeyStore { /* ... */ }
 impl KeyProvider for MyKeyStore { /* ... */ }

@@ -57,7 +57,7 @@ seal-flow = "0.1.0" # 请替换为最新版本
 
 当您开始解密时，库会首先解析头部并返回一个 `PendingDecryptor`（待定解密器）。您可以检查此对象以获取用于加密的 `key_id`。这使您能从您的密钥库中获取正确的密钥。
 
-```rust
+```rust,ignore
 // 1. 开始解密并获取待定状态
 let pending = seal.decrypt().slice(&ciphertext)?;
 
@@ -75,7 +75,7 @@ let plaintext = pending.with_key(key_to_use)?;
 
 为了更加方便，您可以为您的密钥库实现 `KeyProvider` trait。这允许库为您自动处理密钥查找过程。
 
-```rust
+```rust,ignore
 // 你的密钥库必须实现 KeyProvider trait
 struct MyKeyStore { /* ... */ }
 impl KeyProvider for MyKeyStore { /* ... */ }
