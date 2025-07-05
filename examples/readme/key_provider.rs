@@ -9,6 +9,7 @@ use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::error::KeyManagementError;
 use seal_flow::prelude::*;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// A simple implementation of `KeyProvider` that stores keys in memory.
 /// In a real application, this might connect to a Hardware Security Module (HSM),
@@ -112,7 +113,7 @@ fn run_symmetric_example() -> seal_flow::error::Result<()> {
     println!("Decrypting with resolve_and_decrypt()...");
     let decrypted = seal
         .decrypt()
-        .with_key_provider(&provider)
+        .with_key_provider(Arc::new(provider))
         .slice(&ciphertext)?
         .resolve_and_decrypt()?;
 
@@ -175,7 +176,7 @@ fn run_hybrid_example() -> seal_flow::error::Result<()> {
     println!("Decrypting and verifying with resolve_and_decrypt()...");
     let decrypted = seal
         .decrypt()
-        .with_key_provider(&provider)
+        .with_key_provider(Arc::new(provider))
         .slice(&ciphertext)?
         .resolve_and_decrypt()?;
 

@@ -480,7 +480,7 @@ impl HybridSeal {
     /// 密文的来源（例如 `.slice()` 或 `.reader()`）。
     ///
     /// 该构建器还可以配置一个 `KeyProvider`，以在解密期间自动执行密钥查找过程。
-    pub fn decrypt(&self) -> HybridDecryptorBuilder<'_> {
+    pub fn decrypt(&self) -> HybridDecryptorBuilder {
         HybridDecryptorBuilder::new()
     }
 }

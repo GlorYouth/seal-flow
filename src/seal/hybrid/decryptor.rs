@@ -18,6 +18,7 @@ use seal_crypto::schemes::symmetric::{
 };
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
+use std::sync::Arc;
 use tokio::io::AsyncRead;
 
 macro_rules! dispatch_symmetric_algorithm {
@@ -67,18 +68,18 @@ macro_rules! dispatch_asymmetric_key_bytes {
 ///
 /// 一个通用的、等待配置和私钥的待处理混合解密器。
 /// 该结构统一了各种解密模式（内存中、流式等）的逻辑。
-pub struct PendingDecryptor<'a, T> {
+pub struct PendingDecryptor<T> {
     inner: T,
     aad: Option<Vec<u8>>,
     verification_key: Option<SignaturePublicKey>,
-    key_provider: Option<&'a dyn KeyProvider>,
+    key_provider: Option<Arc<dyn KeyProvider>>,
 }
 
-impl<'a, T: PendingImpl> PendingDecryptor<'a, T> {
+impl<T: PendingImpl> PendingDecryptor<T> {
     /// Creates a new `PendingDecryptor` with the given inner implementation.
     ///
     /// 使用给定的内部实现创建一个新的 `PendingDecryptor`。
-    fn new(inner: T, key_provider: Option<&'a dyn KeyProvider>) -> Self {
+    fn new(inner: T, key_provider: Option<Arc<dyn KeyProvider>>) -> Self {
         Self {
             inner,
             aad: None,
@@ -134,38 +135,38 @@ impl<'a, T: PendingImpl> PendingDecryptor<'a, T> {
 ///
 /// 待处理内存混合解密器的类型别名。
 pub type PendingInMemoryDecryptor<'a> =
-    PendingDecryptor<'a, crate::hybrid::ordinary::PendingDecryptor<'a>>;
+    PendingDecryptor<crate::hybrid::ordinary::PendingDecryptor<'a>>;
 /// A type alias for a pending parallel in-memory hybrid decryptor.
 ///
 /// 待处理并行内存混合解密器的类型别名。
 pub type PendingInMemoryParallelDecryptor<'a> =
-    PendingDecryptor<'a, crate::hybrid::parallel::PendingDecryptor<'a>>;
+    PendingDecryptor<crate::hybrid::parallel::PendingDecryptor<'a>>;
 /// A type alias for a pending synchronous streaming hybrid decryptor.
 ///
 /// 待处理同步流混合解密器的类型别名。
-pub type PendingStreamingDecryptor<'a, R> =
-    PendingDecryptor<'a, crate::hybrid::streaming::PendingDecryptor<R>>;
+pub type PendingStreamingDecryptor<R> =
+    PendingDecryptor<crate::hybrid::streaming::PendingDecryptor<R>>;
 /// A type alias for a pending parallel streaming hybrid decryptor.
 ///
 /// 待处理并行流混合解密器的类型别名。
-pub type PendingParallelStreamingDecryptor<'a, R> =
-    PendingDecryptor<'a, crate::hybrid::parallel_streaming::PendingDecryptor<R>>;
+pub type PendingParallelStreamingDecryptor<R> =
+    PendingDecryptor<crate::hybrid::parallel_streaming::PendingDecryptor<R>>;
 /// A type alias for a pending asynchronous streaming hybrid decryptor.
 ///
 /// 待处理异步流混合解密器的类型别名。
 #[cfg(feature = "async")]
-pub type PendingAsyncStreamingDecryptor<'a, R> =
-    PendingDecryptor<'a, crate::hybrid::asynchronous::PendingDecryptor<R>>;
+pub type PendingAsyncStreamingDecryptor<R> =
+    PendingDecryptor<crate::hybrid::asynchronous::PendingDecryptor<R>>;
 
 /// A builder for hybrid decryption operations.
 ///
 /// 混合解密操作的构建器。
 #[derive(Default)]
-pub struct HybridDecryptorBuilder<'a> {
-    key_provider: Option<&'a dyn KeyProvider>,
+pub struct HybridDecryptorBuilder {
+    key_provider: Option<Arc<dyn KeyProvider>>,
 }
 
-impl<'a> HybridDecryptorBuilder<'a> {
+impl HybridDecryptorBuilder {
     /// Creates a new `HybridDecryptorBuilder`.
     ///
     /// 创建一个新的 `HybridDecryptorBuilder`。
@@ -182,7 +183,7 @@ impl<'a> HybridDecryptorBuilder<'a> {
     ///
     /// 设置 `KeyProvider` 后，您可以在待处理解密器上使用 `resolve_and_decrypt`
     /// 方法来自动处理密钥查找。
-    pub fn with_key_provider(mut self, provider: &'a dyn KeyProvider) -> Self {
+    pub fn with_key_provider(mut self, provider: Arc<dyn KeyProvider>) -> Self {
         self.key_provider = Some(provider);
         self
     }
@@ -190,7 +191,7 @@ impl<'a> HybridDecryptorBuilder<'a> {
     /// Configures decryption from an in-memory byte slice.
     ///
     /// 从内存中的字节切片配置解密。
-    pub fn slice(self, ciphertext: &'a [u8]) -> crate::Result<PendingInMemoryDecryptor<'a>> {
+    pub fn slice<'a>(self, ciphertext: &'a [u8]) -> crate::Result<PendingInMemoryDecryptor<'a>> {
         let mid_level_pending =
             crate::hybrid::ordinary::PendingDecryptor::from_ciphertext(ciphertext)?;
         Ok(PendingDecryptor::new(
@@ -202,7 +203,7 @@ impl<'a> HybridDecryptorBuilder<'a> {
     /// Configures parallel decryption from an in-memory byte slice.
     ///
     /// 从内存中的字节切片配置并行解密。
-    pub fn slice_parallel(
+    pub fn slice_parallel<'a>(
         self,
         ciphertext: &'a [u8],
     ) -> crate::Result<PendingInMemoryParallelDecryptor<'a>> {
@@ -220,7 +221,7 @@ impl<'a> HybridDecryptorBuilder<'a> {
     pub fn reader<R: Read + 'static>(
         self,
         reader: R,
-    ) -> crate::Result<PendingStreamingDecryptor<'a, R>> {
+    ) -> crate::Result<PendingStreamingDecryptor<R>> {
         let mid_level_pending = crate::hybrid::streaming::PendingDecryptor::from_reader(reader)?;
         Ok(PendingDecryptor::new(
             mid_level_pending,
@@ -234,7 +235,7 @@ impl<'a> HybridDecryptorBuilder<'a> {
     pub fn reader_parallel<R: Read + Send>(
         self,
         reader: R,
-    ) -> crate::Result<PendingParallelStreamingDecryptor<'a, R>> {
+    ) -> crate::Result<PendingParallelStreamingDecryptor<R>> {
         let mid_level_pending =
             crate::hybrid::parallel_streaming::PendingDecryptor::from_reader(reader)?;
         Ok(PendingDecryptor::new(
@@ -250,7 +251,7 @@ impl<'a> HybridDecryptorBuilder<'a> {
     pub async fn async_reader<R: AsyncRead + Unpin>(
         self,
         reader: R,
-    ) -> crate::Result<PendingAsyncStreamingDecryptor<'a, R>> {
+    ) -> crate::Result<PendingAsyncStreamingDecryptor<R>> {
         let mid_level_pending =
             crate::hybrid::asynchronous::PendingDecryptor::from_reader(reader).await?;
         Ok(PendingDecryptor::new(
@@ -267,6 +268,7 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     pub fn resolve_and_decrypt(mut self) -> crate::Result<Vec<u8>> {
         let provider = self
             .key_provider
+            .as_ref()
             .ok_or(KeyManagementError::ProviderMissing)?;
 
         if let Some(signer_key_id) = self.signer_key_id() {
@@ -333,6 +335,7 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     pub fn resolve_and_decrypt(mut self) -> crate::Result<Vec<u8>> {
         let provider = self
             .key_provider
+            .as_ref()
             .ok_or(KeyManagementError::ProviderMissing)?;
 
         if let Some(signer_key_id) = self.signer_key_id() {
@@ -393,13 +396,14 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     }
 }
 
-impl<'a, R: Read + 'static> PendingStreamingDecryptor<'a, R> {
+impl<R: Read + 'static> PendingStreamingDecryptor<R> {
     /// Automatically resolves keys using the attached `KeyProvider` and completes decryption.
     ///
     /// 使用附加的 `KeyProvider` 自动解析密钥并完成解密。
     pub fn resolve_and_decrypt(mut self) -> crate::Result<Box<dyn Read + 'static>> {
         let provider = self
             .key_provider
+            .as_ref()
             .ok_or(KeyManagementError::ProviderMissing)?;
 
         if let Some(signer_key_id) = self.signer_key_id() {
@@ -464,7 +468,7 @@ impl<'a, R: Read + 'static> PendingStreamingDecryptor<'a, R> {
     }
 }
 
-impl<'a, R> PendingParallelStreamingDecryptor<'a, R>
+impl<R> PendingParallelStreamingDecryptor<R>
 where
     R: Read + Send,
 {
@@ -474,6 +478,7 @@ where
     pub fn resolve_and_decrypt_to_writer<W: Write>(mut self, writer: W) -> crate::Result<()> {
         let provider = self
             .key_provider
+            .as_ref()
             .ok_or(KeyManagementError::ProviderMissing)?;
 
         if let Some(signer_key_id) = self.signer_key_id() {
@@ -549,7 +554,7 @@ where
 }
 
 #[cfg(feature = "async")]
-impl<'a, R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<'a, R> {
+impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
     /// Automatically resolves keys and returns a decrypting async reader.
     ///
     /// 自动解析密钥并返回一个解密的异步读取器。
@@ -561,6 +566,7 @@ impl<'a, R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<'a, R> {
     {
         let provider = self
             .key_provider
+            .as_ref()
             .ok_or(KeyManagementError::ProviderMissing)?;
 
         if let Some(signer_key_id) = self.signer_key_id() {

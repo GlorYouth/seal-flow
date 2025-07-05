@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
+use std::sync::Arc;
 
 use seal_flow::algorithms::asymmetric::Kyber768;
 use seal_flow::algorithms::signature::Ed25519;
@@ -134,7 +135,7 @@ fn main() -> seal_flow::error::Result<()> {
     // Use the `KeyProvider` to simplify decryption.
     let pending_decryptor = seal
         .decrypt()
-        .with_key_provider(&key_provider)
+        .with_key_provider(Arc::new(key_provider))
         .reader(encrypted_file)?;
     
     // The `resolve_and_decrypt` method handles everything:
