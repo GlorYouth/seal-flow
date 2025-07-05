@@ -44,6 +44,9 @@ macro_rules! dispatch_symmetric_key_bytes {
 
 /// A generic pending symmetric decryptor, waiting for configuration and key.
 /// This struct unifies the logic for various decryption modes (in-memory, streaming, etc.).
+///
+/// 一个通用的、等待配置和密钥的待处理对称解密器。
+/// 该结构统一了各种解密模式（内存中、流式等）的逻辑。
 pub struct PendingDecryptor<'a, T> {
     inner: T,
     aad: Option<Vec<u8>>,
@@ -52,22 +55,31 @@ pub struct PendingDecryptor<'a, T> {
 
 impl<'a, T: PendingImpl> PendingDecryptor<'a, T> {
     /// Creates a new `PendingDecryptor` with the given inner implementation.
+    ///
+    /// 使用给定的内部实现创建一个新的 `PendingDecryptor`。
     fn new(inner: T, key_provider: Option<&'a dyn KeyProvider>) -> Self {
         Self { inner, aad: None, key_provider }
     }
 
     /// Returns a reference to the header.
+    ///
+    /// 返回对标头的引用。
     pub fn header(&self) -> &Header {
         self.inner.header()
     }
 
     /// Returns the key ID from the header.
+    ///
+    /// 从标头返回密钥 ID。
     pub fn key_id(&self) -> Option<&str> {
         self.header().payload.key_id()
     }
 
     /// Sets the Associated Data (AAD) for this decryption operation.
     /// The AAD must match the value provided during encryption.
+    ///
+    /// 为此解密操作设置关联数据 (AAD)。
+    /// AAD 必须与加密时提供的值匹配。
     pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.aad = Some(aad.into());
         self
@@ -75,23 +87,35 @@ impl<'a, T: PendingImpl> PendingDecryptor<'a, T> {
 }
 
 /// A type alias for a pending in-memory symmetric decryptor.
+///
+/// 待处理内存对称解密器的类型别名。
 pub type PendingInMemoryDecryptor<'a> =
     PendingDecryptor<'a, crate::symmetric::ordinary::PendingDecryptor<'a>>;
 /// A type alias for a pending parallel in-memory symmetric decryptor.
+///
+/// 待处理并行内存对称解密器的类型别名。
 pub type PendingInMemoryParallelDecryptor<'a> =
     PendingDecryptor<'a, crate::symmetric::parallel::PendingDecryptor<'a>>;
 /// A type alias for a pending synchronous streaming symmetric decryptor.
+///
+/// 待处理同步流对称解密器的类型别名。
 pub type PendingStreamingDecryptor<'a, R> =
     PendingDecryptor<'a, crate::symmetric::streaming::PendingDecryptor<R>>;
 /// A type alias for a pending parallel streaming symmetric decryptor.
+///
+/// 待处理并行流对称解密器的类型别名。
 pub type PendingParallelStreamingDecryptor<'a, R> =
     PendingDecryptor<'a, crate::symmetric::parallel_streaming::PendingDecryptor<R>>;
 /// A type alias for a pending asynchronous streaming symmetric decryptor.
+///
+/// 待处理异步流对称解密器的类型别名。
 #[cfg(feature = "async")]
 pub type PendingAsyncStreamingDecryptor<'a, R> =
     PendingDecryptor<'a, crate::symmetric::asynchronous::PendingDecryptor<R>>;
 
 /// A builder for symmetric decryption operations.
+///
+/// 对称解密操作的构建器。
 #[derive(Default)]
 pub struct SymmetricDecryptorBuilder<'a> {
     key_provider: Option<&'a dyn KeyProvider>,
@@ -99,6 +123,8 @@ pub struct SymmetricDecryptorBuilder<'a> {
 
 impl<'a> SymmetricDecryptorBuilder<'a> {
     /// Creates a new `SymmetricDecryptorBuilder`.
+    ///
+    /// 创建一个新的 `SymmetricDecryptorBuilder`。
     pub fn new() -> Self {
         Self { key_provider: None }
     }
@@ -107,6 +133,11 @@ impl<'a> SymmetricDecryptorBuilder<'a> {
     ///
     /// When a `KeyProvider` is set, you can use the `resolve_and_decrypt`
     /// method on the pending decryptor to automatically handle key lookup.
+    ///
+    /// 将一个 `KeyProvider` 附加到构建器上。
+    ///
+    /// 设置 `KeyProvider` 后，您可以在待处理解密器上使用 `resolve_and_decrypt`
+    /// 方法来自动处理密钥查找。
     pub fn with_key_provider(mut self, provider: &'a dyn KeyProvider) -> Self {
         self.key_provider = Some(provider);
         self
@@ -116,6 +147,10 @@ impl<'a> SymmetricDecryptorBuilder<'a> {
     ///
     /// Returns a `PendingInMemoryDecryptor` that allows inspecting the header
     /// before providing the key.
+    ///
+    /// 从内存中的字节切片配置解密。
+    ///
+    /// 返回一个 `PendingInMemoryDecryptor`，允许在提供密钥之前检查标头。
     pub fn slice(self, ciphertext: &'a [u8]) -> crate::Result<PendingInMemoryDecryptor<'a>> {
         let mid_level_pending =
             crate::symmetric::ordinary::PendingDecryptor::from_ciphertext(ciphertext)?;
@@ -126,6 +161,8 @@ impl<'a> SymmetricDecryptorBuilder<'a> {
     }
 
     /// Configures parallel decryption from an in-memory byte slice.
+    ///
+    /// 从内存中的字节切片配置并行解密。
     pub fn slice_parallel(
         self,
         ciphertext: &'a [u8],
@@ -139,6 +176,8 @@ impl<'a> SymmetricDecryptorBuilder<'a> {
     }
 
     /// Configures decryption from a synchronous `Read` stream.
+    ///
+    /// 从同步 `Read` 流配置解密。
     pub fn reader<R: Read>(self, reader: R) -> crate::Result<PendingStreamingDecryptor<'a, R>> {
         let mid_level_pending = crate::symmetric::streaming::PendingDecryptor::from_reader(reader)?;
         Ok(PendingDecryptor::new(
@@ -148,6 +187,8 @@ impl<'a> SymmetricDecryptorBuilder<'a> {
     }
 
     /// Configures parallel decryption from a synchronous `Read` stream.
+    ///
+    /// 从同步 `Read` 流配置并行解密。
     pub fn reader_parallel<R: Read + Send>(
         self,
         reader: R,
@@ -161,6 +202,8 @@ impl<'a> SymmetricDecryptorBuilder<'a> {
     }
 
     /// Begins an asynchronous streaming decryption operation.
+    ///
+    /// 开始一个异步流式解密操作。
     #[cfg(feature = "async")]
     pub async fn async_reader<R: AsyncRead + Unpin>(
         self,
@@ -184,6 +227,13 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     /// This method will return an error if no `KeyProvider` was set on the
     /// `SymmetricDecryptorBuilder`, or if the key ID from the ciphertext
     /// cannot be found by the provider.
+    ///
+    /// 使用附加的 `KeyProvider` 自动解析密钥并完成解密。
+    ///
+    /// # 错误
+    ///
+    /// 如果 `SymmetricDecryptorBuilder` 上未设置 `KeyProvider`，或者
+    /// 提供者找不到密文中的密钥 ID，此方法将返回错误。
     pub fn resolve_and_decrypt(self) -> crate::Result<Vec<u8>> {
         let provider = self
             .key_provider
@@ -196,6 +246,8 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     }
 
     /// Supplies a key from its raw bytes for decryption.
+    ///
+    /// 提供原始字节形式的密钥以进行解密。
     pub fn with_key(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
 
@@ -210,6 +262,8 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     }
 
     /// Supplies the typed key and returns the decrypted plaintext.
+    ///
+    /// 提供类型化的密钥并返回解密的明文。
     pub fn with_typed_key<S: SymmetricAlgorithm>(self, key: S::Key) -> crate::Result<Vec<u8>>
     where
         S::Key: Clone + Send + Sync,
@@ -222,6 +276,8 @@ impl<'a> PendingInMemoryDecryptor<'a> {
 impl<'a> PendingInMemoryParallelDecryptor<'a> {
     /// Automatically resolves the key using the attached `KeyProvider` and
     /// completes the decryption.
+    ///
+    /// 使用附加的 `KeyProvider` 自动解析密钥并完成解密。
     pub fn resolve_and_decrypt(self) -> crate::Result<Vec<u8>> {
         let provider = self
             .key_provider
@@ -234,6 +290,8 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     }
 
     /// Supplies a key from its raw bytes for decryption.
+    ///
+    /// 提供原始字节形式的密钥以进行解密。
     pub fn with_key(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
 
@@ -248,6 +306,8 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     }
 
     /// Supplies the typed key and returns the decrypted plaintext.
+    ///
+    /// 提供类型化的密钥并返回解密的明文。
     pub fn with_typed_key<S: SymmetricAlgorithm>(self, key: S::Key) -> crate::Result<Vec<u8>>
     where
         S::Key: Clone + Send + Sync,
@@ -260,6 +320,8 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
 impl<'a, R: Read> PendingStreamingDecryptor<'a, R> {
     /// Automatically resolves the key using the attached `KeyProvider` and
     /// returns a decrypting reader.
+    ///
+    /// 使用附加的 `KeyProvider` 自动解析密钥并返回一个解密读取器。
     pub fn resolve_and_decrypt<'s>(self) -> crate::Result<Box<dyn Read + 's>>
     where
         R: 's,
@@ -275,6 +337,8 @@ impl<'a, R: Read> PendingStreamingDecryptor<'a, R> {
     }
 
     /// Supplies a key from its raw bytes for decryption.
+    ///
+    /// 提供原始字节形式的密钥以进行解密。
     pub fn with_key<'s>(self, key: SymmetricKey) -> crate::Result<Box<dyn Read + 's>>
     where
         R: 's,
@@ -294,6 +358,8 @@ impl<'a, R: Read> PendingStreamingDecryptor<'a, R> {
     }
 
     /// Supplies the typed key and returns a fully initialized `Decryptor`.
+    ///
+    /// 提供类型化的密钥并返回一个完全初始化的 `Decryptor`。
     pub fn with_typed_key<S: SymmetricAlgorithm>(
         self,
         key: S::Key,
@@ -311,6 +377,8 @@ where
 {
     /// Automatically resolves the key using the attached `KeyProvider` and
     /// decrypts the stream to the provided writer.
+    ///
+    /// 使用附加的 `KeyProvider` 自动解析密钥，并将流解密到提供的写入器。
     pub fn resolve_and_decrypt_to_writer<W: Write>(self, writer: W) -> crate::Result<()> {
         let provider = self
             .key_provider
@@ -323,6 +391,8 @@ where
     }
 
     /// Supplies a key from its raw bytes and decrypts to the provided writer.
+    ///
+    /// 提供原始字节形式的密钥，并将解密后的数据写入提供的写入器。
     pub fn with_key_to_writer<W: Write>(self, key: SymmetricKey, writer: W) -> crate::Result<()> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
 
@@ -338,6 +408,8 @@ where
     }
 
     /// Supplies the typed key and decrypts the stream, writing to the provided writer.
+    ///
+    /// 提供类型化的密钥，解密流，并将结果写入提供的写入器。
     pub fn with_typed_key_to_writer<S: SymmetricAlgorithm, W: Write>(
         self,
         key: S::Key,
@@ -355,6 +427,8 @@ where
 impl<'a, R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<'a, R> {
     /// Automatically resolves the key using the attached `KeyProvider` and
     /// returns a decrypting async reader.
+    ///
+    /// 使用附加的 `KeyProvider` 自动解析密钥，并返回一个解密的异步读取器。
     pub fn resolve_and_decrypt<'s>(self) -> crate::Result<Box<dyn AsyncRead + Unpin + 's>>
     where
         R: 's,
@@ -370,6 +444,8 @@ impl<'a, R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<'a, R> {
     }
 
     /// Supplies a key from its raw bytes for decryption.
+    ///
+    /// 提供原始字节形式的密钥以进行解密。
     pub fn with_key<'s>(self, key: SymmetricKey) -> crate::Result<Box<dyn AsyncRead + Unpin + 's>>
     where
         R: 's,
@@ -389,6 +465,8 @@ impl<'a, R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<'a, R> {
     }
 
     /// Supplies the typed key and returns a fully initialized `Decryptor`.
+    ///
+    /// 提供类型化的密钥并返回一个完全初始化的 `Decryptor`。
     pub fn with_typed_key<S: SymmetricAlgorithm>(
         self,
         key: S::Key,

@@ -1,4 +1,6 @@
 //! This module defines byte wrappers for cryptographic keys.
+//!
+//! 这个模块为加密密钥定义了字节包装器。
 use crate::crypto::errors::Error;
 use seal_crypto::{prelude::*, zeroize};
 
@@ -8,21 +10,32 @@ pub mod provider;
 ///
 /// This struct stores raw key bytes that can be converted to specific algorithm keys
 /// when needed. This simplifies key management while maintaining flexibility.
+///
+/// 对称加密密钥的字节包装器。
+///
+/// 这个结构体存储原始密钥字节，可以在需要时转换为特定算法的密钥。
+/// 这在简化密钥管理的同时保持了灵活性。
 #[derive(Debug, Clone)]
 pub struct SymmetricKey(pub zeroize::Zeroizing<Vec<u8>>);
 
 impl SymmetricKey {
     /// Create a new symmetric key from bytes
+    ///
+    /// 从字节创建一个新的对称密钥
     pub fn new(bytes: impl Into<zeroize::Zeroizing<Vec<u8>>>) -> Self {
         Self(bytes.into())
     }
 
     /// Get a reference to the raw bytes of the key
+    ///
+    /// 获取密钥原始字节的引用
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
     /// Consume the key and return the inner bytes
+    ///
+    /// 消耗密钥并返回内部字节
     pub fn into_bytes(self) -> zeroize::Zeroizing<Vec<u8>> {
         self.0
     }
@@ -87,63 +100,87 @@ impl SymmetricKey {
 }
 
 /// A byte wrapper for an asymmetric private key.
+///
+/// 非对称私钥的字节包装器。
 #[derive(Debug, Clone)]
 pub struct AsymmetricPrivateKey(pub zeroize::Zeroizing<Vec<u8>>);
 
 impl AsymmetricPrivateKey {
     /// Create a new asymmetric private key from bytes
+    ///
+    /// 从字节创建一个新的非对称私钥
     pub fn new(bytes: impl Into<zeroize::Zeroizing<Vec<u8>>>) -> Self {
         Self(bytes.into())
     }
 
     /// Get a reference to the raw bytes of the key
+    ///
+    /// 获取密钥原始字节的引用
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
     /// Consume the key and return the inner bytes
+    ///
+    /// 消耗密钥并返回内部字节
     pub fn into_bytes(self) -> zeroize::Zeroizing<Vec<u8>> {
         self.0
     }
 }
 
 /// A byte wrapper for an asymmetric public key.
+///
+/// 非对称公钥的字节包装器。
 #[derive(Debug, Clone)]
 pub struct AsymmetricPublicKey(pub zeroize::Zeroizing<Vec<u8>>);
 
 impl AsymmetricPublicKey {
     /// Create a new asymmetric public key from bytes
+    ///
+    /// 从字节创建一个新的非对称公钥
     pub fn new(bytes: impl Into<zeroize::Zeroizing<Vec<u8>>>) -> Self {
         Self(bytes.into())
     }
 
     /// Get a reference to the raw bytes of the key
+    ///
+    /// 获取密钥原始字节的引用
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
     /// Consume the key and return the inner bytes
+    ///
+    /// 消耗密钥并返回内部字节
     pub fn into_bytes(self) -> zeroize::Zeroizing<Vec<u8>> {
         self.0
     }
 }
 
 /// A byte wrapper for a signature public key.
+///
+/// 签名公钥的字节包装器。
 #[derive(Debug, Clone)]
 pub struct SignaturePublicKey(pub zeroize::Zeroizing<Vec<u8>>);
 
 impl SignaturePublicKey {
     /// Create a new signature public key from bytes
+    ///
+    /// 从字节创建一个新的签名公钥
     pub fn new(bytes: impl Into<zeroize::Zeroizing<Vec<u8>>>) -> Self {
         Self(bytes.into())
     }
 
     /// Get a reference to the raw bytes of the key
+    ///
+    /// 获取密钥原始字节的引用
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
     /// Consume the key and return the inner bytes
+    ///
+    /// 消耗密钥并返回内部字节
     pub fn into_bytes(self) -> zeroize::Zeroizing<Vec<u8>> {
         self.0
     }

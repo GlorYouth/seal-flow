@@ -2,6 +2,9 @@ use crate::common::algorithms::SignatureAlgorithm;
 use bytes::BytesMut;
 use seal_crypto::zeroize::Zeroizing;
 
+/// This module re-exports common functionalities from the `common` directory.
+///
+/// 这个模块从 `common` 目录中重新导出公共功能。
 pub mod algorithms;
 pub(crate) mod buffer;
 pub mod header;

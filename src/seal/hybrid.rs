@@ -81,6 +81,85 @@
 //!
 //! assert_eq!(plaintext, &decrypted[..]);
 //! ```
+//!
+//! 混合加密的高级 API。
+//!
+//! 该模块为混合加密提供了一个统一且用户友好的界面，
+//! 结合了非对称（公钥）和对称密码学，以提供可扩展且安全的数据保护。
+//! 这是推荐给大多数用户的入口点。
+//!
+//! ## 工作流程
+//!
+//! 典型的混合加密工作流程涉及两个主要部分：
+//! 1.  **密钥封装机制 (KEM)**：发送方使用非对称算法（例如 RSA、Kyber）
+//!     通过接收方的公钥将随机生成的对称密钥安全地传输给接收方。
+//!     这部分计算成本较高，仅用于密钥交换，不用于批量数据。
+//! 2.  **数据封装机制 (DEM)**：使用（来自 KEM 步骤的）随机生成的密钥
+//!     来加密实际明文数据的对称算法（例如 AES-GCM、XChaCha20-Poly1305）。
+//!     这部分速度非常快，适用于大量数据。
+//!
+//! 该库抽象了此过程的复杂性，提供了一个简单、流畅的 API。
+//!
+//! ## 执行模式
+//!
+//! API 支持多种执行模式，以满足不同的用例：
+//! - **内存中（普通）**：整个加密/解密过程在内存中进行。
+//!   适用于中小型数据。
+//!   - 加密: `to_vec()`
+//!   - 解密: `slice()` -> `with_key()`
+//! - **内存中（并行）**：内存模式的并行化版本，为多核系统提供更好的性能，
+//!   特别是对于仍然可以容纳在内存中的较大数据块。
+//!   - 加密: `to_vec_parallel()`
+//!   - 解密: `slice_parallel()` -> `with_key()`
+//! - **流式**：适用于不应完全加载到内存中的非常大的文件或数据流。
+//!   此模式以块为单位处理数据。
+//!   - 加密: `into_writer()`
+//!   - 解密: `reader()` -> `with_key()`
+//! - **异步流式**：流式模式的非阻塞版本，设计用于与 Tokio 等异步运行时一起使用。
+//!   - 加密: `into_async_writer()`
+//!   - 解密: `async_reader()` -> `with_key()`
+//!
+//! ## 高级功能
+//!
+//! `HybridEncryptionOptions` 结构提供了对高级功能的访问：
+//! - **关联数据 (AAD)**：与密文一起验证上下文元数据。
+//! - **数字签名**：对加密标头进行签名以证明发件人的身份。
+//! - **密钥派生 (KDF/XOF)**：从 KEM 生成的共享秘密派生 DEM 密钥，而不是使用随机密钥。
+//!   这对于协议兼容性和特定的安全要求非常有用。
+//!
+//! # 示例
+//!
+//! ``` ignore
+//! use seal_crypto::schemes::{
+//!     asymmetric::traditional::rsa::Rsa2048,
+//!     hash::Sha256,
+//!     symmetric::aes_gcm::Aes256Gcm,
+//! };
+//! use seal_flow::prelude::*;
+//!
+//! // 1. 定义算法
+//! type Kem = Rsa2048<Sha256>;
+//! type Dek = Aes256Gcm;
+//!
+//! // 2. 设置密钥
+//! let (pk, sk) = Kem::generate_keypair().unwrap();
+//! let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
+//! let sk_wrapped = AsymmetricPrivateKey::new(sk.to_bytes());
+//! let kek_id = "my-key-id".to_string();
+//!
+//! // 3. 加密
+//! let seal = HybridSeal::new();
+//! let plaintext = b"secret message";
+//! let ciphertext = seal.encrypt::<Dek>(pk_wrapped, kek_id)
+//!     .to_vec::<Kem>(plaintext)
+//!     .unwrap();
+//!
+//! // 4. 解密
+//! let pending = seal.decrypt().slice(&ciphertext).unwrap();
+//! let decrypted = pending.with_key(sk_wrapped).unwrap();
+//!
+//! assert_eq!(plaintext, &decrypted[..]);
+//! ```
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::algorithms::{KdfAlgorithm, SignatureAlgorithm, XofAlgorithm};
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
@@ -98,13 +177,24 @@ pub mod suites;
 /// This allows the sender to prove their identity by signing the encryption
 /// metadata (header). The recipient can then verify this signature using the
 /// sender's public key.
+///
+/// 用于在加密期间应用的数字签名的配置。
+///
+/// 这允许发件人通过对加密元数据（标头）进行签名来证明其身份。
+/// 然后，接收方可以使用发件人的公钥验证此签名。
 pub struct SignerOptions {
     /// The private key used for signing.
+    ///
+    /// 用于签名的私钥。
     pub key: AsymmetricPrivateKey,
     /// The ID of the signing key. This ID is stored in the header and is used by
     /// the recipient to look up the corresponding public key for verification.
+    ///
+    /// 签名密钥的 ID。此 ID 存储在标头中，接收方使用它来查找相应的公钥进行验证。
     pub key_id: String,
     /// The signature algorithm to use.
+    ///
+    /// 要使用的签名算法。
     pub algorithm: SignatureAlgorithm,
 }
 
@@ -114,16 +204,30 @@ pub struct SignerOptions {
 /// Using a KDF allows you to derive a deterministic DEK from the shared secret
 /// produced by the Key Encapsulation Mechanism (KEM). This can be necessary for
 /// compatibility with certain cryptographic protocols (e.g., HPKE).
+///
+/// 用于使用密钥派生函数 (KDF) 生成数据加密密钥 (DEK) 的选项。
+///
+/// 通常，每次加密都会生成一个新的随机 DEK。
+/// 使用 KDF 允许您从密钥封装机制 (KEM) 生成的共享秘密中派生出确定性的 DEK。
+/// 这对于与某些加密协议（例如 HPKE）的兼容性可能是必需的。
 pub struct KdfOptions {
     /// The KDF algorithm to use (e.g., HKDF-SHA256).
+    ///
+    /// 要使用的 KDF 算法（例如 HKDF-SHA256）。
     pub algorithm: KdfAlgorithm,
     /// An optional salt value, highly recommended for security.
+    ///
+    /// 可选的盐值，强烈建议为了安全而使用。
     pub salt: Option<Vec<u8>>,
     /// Optional context-specific information, used to bind the derived key to a
     /// specific purpose.
+    ///
+    /// 可选的特定于上下文的信息，用于将派生密钥绑定到特定目的。
     pub info: Option<Vec<u8>>,
     /// The desired length of the derived DEK in bytes. This must match the
     /// key length required by the chosen symmetric algorithm.
+    ///
+    /// 派生 DEK 的所需长度（以字节为单位）。这必须与所选对称算法要求的密钥长度相匹配。
     pub output_len: u32,
 }
 
@@ -131,28 +235,51 @@ pub struct KdfOptions {
 ///
 /// A XOF is similar to a KDF but can produce an output of arbitrary length.
 /// It's a flexible way to derive keys or other security material.
+///
+/// 用于使用可扩展输出函数 (XOF) 生成 DEK 的选项。
+///
+/// XOF 类似于 KDF，但可以产生任意长度的输出。
+/// 这是派生密钥或其他安全材料的一种灵活方式。
 pub struct XofOptions {
     /// The XOF algorithm to use (e.g., SHAKE256).
+    ///
+    /// 要使用的 XOF 算法（例如 SHAKE256）。
     pub algorithm: XofAlgorithm,
     /// An optional salt value.
+    ///
+    /// 可选的盐值。
     pub salt: Option<Vec<u8>>,
     /// Optional context-specific information.
+    ///
+    /// 可选的特定于上下文的信息。
     pub info: Option<Vec<u8>>,
     /// The desired length of the derived DEK in bytes.
+    ///
+    /// 派生 DEK 的所需长度（以字节为单位）。
     pub output_len: u32,
 }
 
 /// Enum to select between KDF and XOF for key derivation.
+///
+/// 用于在 KDF 和 XOF 之间选择以进行密钥派生的枚举。
 pub enum DerivationOptions {
     /// Use a Key Derivation Function.
+    ///
+    /// 使用密钥派生函数。
     Kdf(KdfOptions),
     /// Use an Extendable-Output Function.
+    ///
+    /// 使用可扩展输出函数。
     Xof(XofOptions),
 }
 
 /// A builder for configuring advanced options for a hybrid encryption operation.
 ///
 /// This struct uses a builder pattern to let you chain configuration calls.
+///
+/// 用于配置混合加密操作高级选项的构建器。
+///
+/// 此结构使用构建器模式，让您可以链式调用配置。
 #[derive(Default)]
 pub struct HybridEncryptionOptions {
     pub(crate) aad: Option<Vec<u8>>,
@@ -162,6 +289,8 @@ pub struct HybridEncryptionOptions {
 
 impl HybridEncryptionOptions {
     /// Creates a new, default set of options.
+    ///
+    /// 创建一组新的默认选项。
     pub fn new() -> Self {
         Self::default()
     }
@@ -172,6 +301,12 @@ impl HybridEncryptionOptions {
     /// It's useful for binding the encrypted data to its context (e.g., headers,
     /// version numbers, or identifiers) to prevent semantic or replay attacks.
     /// The same AAD must be provided during decryption for the authentication to succeed.
+    ///
+    /// 为加密操作设置关联数据 (AAD)。
+    ///
+    /// AAD 与密文一起进行身份验证，但不会被加密。
+    /// 它对于将加密数据与其上下文（例如，标头、版本号或标识符）绑定以防止语义攻击或重放攻击非常有用。
+    /// 在解密期间必须提供相同的 AAD，身份验证才能成功。
     pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.aad = Some(aad.into());
         self
@@ -182,6 +317,11 @@ impl HybridEncryptionOptions {
     /// This proves the sender's identity to the recipient. The `key` should be the
     /// sender's private signing key. The `key_id` is included in the header so
     /// the recipient knows which public key to use for verification.
+    ///
+    /// 配置操作以对加密元数据进行数字签名。
+    ///
+    /// 这向接收方证明了发件人的身份。`key` 应该是发件人的私有签名密钥。
+    /// `key_id` 包含在标头中，以便接收方知道使用哪个公钥进行验证。
     pub fn with_signer(
         mut self,
         key: AsymmetricPrivateKey,
@@ -206,6 +346,16 @@ impl HybridEncryptionOptions {
     /// * `info`: Optional context-specific information.
     /// * `output_len`: The desired length of the derived key. Must match the chosen
     ///   symmetric cipher's key length.
+    ///
+    /// 配置操作以使用密钥派生函数 (KDF) 创建 DEK。
+    ///
+    /// 它将从 KEM 的共享秘密派生，而不是生成随机的 DEK。
+    ///
+    /// # 参数
+    /// * `algorithm`: 要使用的 KDF 算法。
+    /// * `salt`: 可选的盐。强烈推荐。
+    /// * `info`: 可选的特定于上下文的信息。
+    /// * `output_len`: 派生密钥的所需长度。必须与所选对称密码的密钥长度匹配。
     pub fn with_kdf(
         mut self,
         algorithm: KdfAlgorithm,
@@ -225,6 +375,10 @@ impl HybridEncryptionOptions {
     /// Configures the operation to use an Extendable-Output Function (XOF) to create the DEK.
     ///
     /// Similar to a KDF, but based on a XOF algorithm like SHAKE256.
+    ///
+    /// 配置操作以使用可扩展输出函数 (XOF) 创建 DEK。
+    ///
+    /// 类似于 KDF，但基于像 SHAKE256 这样的 XOF 算法。
     pub fn with_xof(
         mut self,
         algorithm: XofAlgorithm,
@@ -245,11 +399,17 @@ impl HybridEncryptionOptions {
 /// A factory for creating hybrid encryption and decryption executors.
 /// This struct is the main entry point for the high-level hybrid encryption API.
 /// It is stateless and can be reused for multiple operations.
+///
+/// 用于创建混合加密和解密执行器的工厂。
+/// 这个结构体是高级混合加密 API 的主要入口点。
+/// 它是无状态的，可以重复用于多个操作。
 #[derive(Default)]
 pub struct HybridSeal;
 
 impl HybridSeal {
     /// Creates a new `HybridSeal` factory.
+    ///
+    /// 创建一个新的 `HybridSeal` 工厂。
     pub fn new() -> Self {
         Self
     }
@@ -268,6 +428,17 @@ impl HybridSeal {
     /// This returns a `HybridEncryptor` context object. You can then chain calls
     /// to configure advanced options or call an execution method (like `.to_vec()`)
     /// to perform the encryption.
+    ///
+    /// 开始一个混合加密操作。
+    ///
+    /// 此方法为加密设置上下文。它捕获接收方的公钥 (`pk`) 及其标识符 (`kek_id`)。
+    /// `kek_id` 存储在密文标头中，因此接收方可以轻松识别解密需要哪个私钥。
+    ///
+    /// # 类型参数
+    /// * `S`: 用于批量数据加密的对称算法 (DEK)，例如 `Aes256Gcm`。
+    ///
+    /// 这将返回一个 `HybridEncryptor` 上下文对象。然后，您可以链式调用以配置高级选项
+    /// 或调用执行方法（如 `.to_vec()`）来执行加密。
     pub fn encrypt<S>(&self, pk: AsymmetricPublicKey, kek_id: String) -> HybridEncryptor<S>
     where
         S: SymmetricAlgorithm,
@@ -286,6 +457,11 @@ impl HybridSeal {
     ///
     /// This provides a simplified API that uses `Kyber768` for key encapsulation and
     /// `Aes256Gcm` for data encapsulation, a combination recommended for post-quantum security.
+    ///
+    /// 使用推荐的后量子密码学 (PQC) 套件开始混合加密操作。
+    ///
+    /// 这提供了一个简化的 API，使用 `Kyber768` 进行密钥封装，
+    /// 使用 `Aes256Gcm` 进行数据封装，这是为后量子安全推荐的组合。
     pub fn encrypt_pqc_suite(&self, pk: AsymmetricPublicKey, kek_id: String) -> PqcEncryptor {
         PqcEncryptor::new(pk, kek_id)
     }
@@ -297,6 +473,13 @@ impl HybridSeal {
     ///
     /// The builder can also be configured with a `KeyProvider` to automate the
     /// key lookup process during decryption.
+    ///
+    /// 开始一个混合解密操作。
+    ///
+    /// 这将返回一个 `HybridDecryptorBuilder`。然后，您可以使用此构建器来指定
+    /// 密文的来源（例如 `.slice()` 或 `.reader()`）。
+    ///
+    /// 该构建器还可以配置一个 `KeyProvider`，以在解密期间自动执行密钥查找过程。
     pub fn decrypt(&self) -> HybridDecryptorBuilder<'_> {
         HybridDecryptorBuilder::new()
     }

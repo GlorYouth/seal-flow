@@ -5,6 +5,8 @@ use std::io::{Read, Write};
 use tokio::io::AsyncWrite;
 
 /// A context for symmetric encryption operations, allowing selection of execution mode.
+///
+/// 对称加密操作的上下文，允许选择执行模式。
 pub struct SymmetricEncryptor {
     pub(crate) key: SymmetricKey,
     pub(crate) key_id: String,
@@ -13,12 +15,16 @@ pub struct SymmetricEncryptor {
 
 impl SymmetricEncryptor {
     /// Sets the Associated Data (AAD) for this encryption operation.
+    ///
+    /// 为此加密操作设置关联数据 (AAD)。
     pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.aad = Some(aad.into());
         self
     }
 
     /// Encrypts the given plaintext in-memory.
+    ///
+    /// 在内存中加密给定的明文。
     pub fn to_vec<S: SymmetricAlgorithm>(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
     where
         S::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
@@ -32,6 +38,8 @@ impl SymmetricEncryptor {
     }
 
     /// Encrypts the given plaintext in-memory using parallel processing.
+    ///
+    /// 使用并行处理在内存中加密给定的明文。
     pub fn to_vec_parallel<S: SymmetricAlgorithm>(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
     where
         S::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
@@ -45,6 +53,8 @@ impl SymmetricEncryptor {
     }
 
     /// Creates a streaming encryptor that writes to the given `Write` implementation.
+    ///
+    /// 创建一个流式加密器，写入给定的 `Write` 实现。
     pub fn into_writer<S: SymmetricAlgorithm, W: Write>(
         self,
         writer: W,
@@ -61,6 +71,8 @@ impl SymmetricEncryptor {
     }
 
     /// [Async] Creates an asynchronous streaming encryptor.
+    ///
+    /// [异步] 创建一个异步流式加密器。
     #[cfg(feature = "async")]
     pub async fn into_async_writer<S: SymmetricAlgorithm, W: AsyncWrite + Unpin>(
         self,
@@ -79,6 +91,8 @@ impl SymmetricEncryptor {
     }
 
     /// Encrypts data from a reader and writes to a writer using parallel processing.
+    ///
+    /// 使用并行处理从 reader 加密数据并写入 writer。
     pub fn pipe_parallel<S: SymmetricAlgorithm, R, W>(
         self,
         reader: R,
