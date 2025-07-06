@@ -10,6 +10,7 @@ use crate::common::SignerSet;
 use crate::common::DEFAULT_CHUNK_SIZE;
 use crate::error::Result;
 use rand::{rngs::OsRng, TryRngCore};
+use seal_crypto::prelude::Key;
 use seal_crypto::zeroize::Zeroizing;
 
 /// Creates a complete header, a new base_nonce, and the shared secret (DEK)
@@ -25,7 +26,6 @@ pub fn create_header<A, S>(
 ) -> Result<(Header, [u8; 12], Zeroizing<Vec<u8>>)>
 where
     A: AsymmetricAlgorithm,
-    A::EncapsulatedKey: Into<Vec<u8>>,
     S: SymmetricAlgorithm,
 {
     // 1. KEM Encapsulate
@@ -43,7 +43,7 @@ where
         kek_id,
         kek_algorithm: A::ALGORITHM,
         dek_algorithm: S::ALGORITHM,
-        encrypted_dek: encapsulated_key.into(),
+        encrypted_dek: encapsulated_key.to_bytes(),
         stream_info: Some(StreamInfo {
             chunk_size: DEFAULT_CHUNK_SIZE,
             base_nonce,

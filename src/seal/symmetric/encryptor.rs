@@ -1,7 +1,7 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::keys::SymmetricKey;
-use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
+use seal_crypto::prelude::Key;
 use tokio::io::AsyncWrite;
 
 /// A context for symmetric encryption operations, allowing selection of execution mode.
@@ -25,12 +25,9 @@ impl SymmetricEncryptor {
     /// Encrypts the given plaintext in-memory.
     ///
     /// 在内存中加密给定的明文。
-    pub fn to_vec<S: SymmetricAlgorithm>(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
-    where
-        S::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
-    {
+    pub fn to_vec<S: SymmetricAlgorithm>(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
         crate::symmetric::ordinary::encrypt::<S>(
-            S::Key::from(self.key.into_bytes()),
+            Key::from_bytes(self.key.as_bytes())?,
             plaintext,
             self.key_id,
             self.aad.as_deref(),
@@ -41,11 +38,9 @@ impl SymmetricEncryptor {
     ///
     /// 使用并行处理在内存中加密给定的明文。
     pub fn to_vec_parallel<S: SymmetricAlgorithm>(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
-    where
-        S::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
-    {
+{
         crate::symmetric::parallel::encrypt::<S>(
-            S::Key::from(self.key.into_bytes()),
+            Key::from_bytes(self.key.as_bytes())?,
             plaintext,
             self.key_id,
             self.aad.as_deref(),
@@ -58,13 +53,9 @@ impl SymmetricEncryptor {
     pub fn into_writer<S: SymmetricAlgorithm, W: Write>(
         self,
         writer: W,
-    ) -> crate::Result<crate::symmetric::streaming::Encryptor<W, S>>
-    where
-        S::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
-    {
-        crate::symmetric::streaming::Encryptor::new(
-            writer,
-            S::Key::from(self.key.into_bytes()),
+    ) -> crate::Result<crate::symmetric::streaming::Encryptor<W, S>> {
+        crate::symmetric::streaming::Encryptor::new(writer,
+            Key::from_bytes(self.key.as_bytes())?,
             self.key_id,
             self.aad.as_deref(),
         )
@@ -78,12 +69,10 @@ impl SymmetricEncryptor {
         self,
         writer: W,
     ) -> crate::Result<crate::symmetric::asynchronous::Encryptor<W, S>>
-    where
-        S::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
     {
         crate::symmetric::asynchronous::Encryptor::new(
             writer,
-            S::Key::from(self.key.into_bytes()),
+            Key::from_bytes(self.key.as_bytes())?,
             self.key_id,
             self.aad.as_deref(),
         )
@@ -101,10 +90,9 @@ impl SymmetricEncryptor {
     where
         R: Read + Send,
         W: Write,
-        S::Key: From<Zeroizing<Vec<u8>>> + Clone + Send + Sync,
     {
         crate::symmetric::parallel_streaming::encrypt::<S, R, W>(
-            S::Key::from(self.key.into_bytes()),
+            Key::from_bytes(self.key.as_bytes())?,
             reader,
             writer,
             self.key_id,

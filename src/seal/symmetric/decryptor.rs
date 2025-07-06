@@ -266,10 +266,7 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     /// Supplies the typed key and returns the decrypted plaintext.
     ///
     /// 提供类型化的密钥并返回解密的明文。
-    pub fn with_typed_key<S: SymmetricAlgorithm>(self, key: S::Key) -> crate::Result<Vec<u8>>
-    where
-        S::Key: Clone + Send + Sync,
-    {
+    pub fn with_typed_key<S: SymmetricAlgorithm>(self, key: S::Key) -> crate::Result<Vec<u8>> {
         self.inner
             .into_plaintext::<S>(key.clone(), self.aad.as_deref())
     }
@@ -311,10 +308,7 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     /// Supplies the typed key and returns the decrypted plaintext.
     ///
     /// 提供类型化的密钥并返回解密的明文。
-    pub fn with_typed_key<S: SymmetricAlgorithm>(self, key: S::Key) -> crate::Result<Vec<u8>>
-    where
-        S::Key: Clone + Send + Sync,
-    {
+    pub fn with_typed_key<S: SymmetricAlgorithm>(self, key: S::Key) -> crate::Result<Vec<u8>> {
         self.inner
             .into_plaintext::<S>(key.clone(), self.aad.as_deref())
     }
@@ -367,10 +361,7 @@ impl<R: Read> PendingStreamingDecryptor<R> {
     pub fn with_typed_key<S: SymmetricAlgorithm>(
         self,
         key: S::Key,
-    ) -> crate::Result<crate::symmetric::streaming::Decryptor<R, S>>
-    where
-        S::Key: Clone + Send + Sync,
-    {
+    ) -> crate::Result<crate::symmetric::streaming::Decryptor<R, S>> {
         self.inner.into_decryptor(key.clone(), self.aad.as_deref())
     }
 }
@@ -419,10 +410,7 @@ where
         self,
         key: S::Key,
         writer: W,
-    ) -> crate::Result<()>
-    where
-        S::Key: Clone + Send + Sync,
-    {
+    ) -> crate::Result<()> {
         self.inner
             .decrypt_to_writer::<S, W>(key.clone(), writer, self.aad.as_deref())
     }
@@ -476,10 +464,7 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
     pub fn with_typed_key<S: SymmetricAlgorithm>(
         self,
         key: S::Key,
-    ) -> crate::Result<crate::symmetric::asynchronous::Decryptor<R, S>>
-    where
-        S::Key: Clone + Send + Sync,
-    {
+    ) -> crate::Result<crate::symmetric::asynchronous::Decryptor<R, S>> {
         self.inner.into_decryptor(key.clone(), self.aad.as_deref())
     }
 }

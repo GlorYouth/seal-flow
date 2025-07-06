@@ -8,7 +8,7 @@ use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::impls::parallel_streaming::{decrypt_pipeline, encrypt_pipeline};
-use seal_crypto::zeroize::Zeroizing;
+use seal_crypto::prelude::Key;
 use std::io::{Read, Write};
 
 /// Encrypts data from a reader and writes to a writer using a parallel streaming approach.
@@ -25,9 +25,7 @@ pub fn encrypt<'a, A, S, R, W>(
 ) -> Result<()>
 where
     A: AsymmetricAlgorithm,
-    A::EncapsulatedKey: Into<Vec<u8>> + Send,
     S: SymmetricAlgorithm,
-    S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     R: Read + Send,
     W: Write,
 {
@@ -47,7 +45,7 @@ where
     writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
     writer.write_all(&header_bytes)?;
 
-    let key: S::Key = dek.into();
+    let key: S::Key = S::Key::from_bytes(dek.as_slice())?;
     encrypt_pipeline::<S, R, W>(key, base_nonce, reader, writer, aad)
 }
 
@@ -94,9 +92,6 @@ where
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
-        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
-        A::PrivateKey: Clone,
-        A::EncapsulatedKey: From<Vec<u8>> + Send,
         W: Write,
     {
         decrypt_body_stream::<A, S, _, W>(sk, &self.header, self.reader, writer, aad)
@@ -125,9 +120,6 @@ pub fn decrypt_body_stream<A, S, R, W>(
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
-    A::PrivateKey: Clone,
-    A::EncapsulatedKey: From<Vec<u8>>,
     R: Read + Send,
     W: Write,
 {
@@ -140,13 +132,13 @@ where
         } => (
             info.chunk_size,
             info.base_nonce,
-            encrypted_dek.clone().into(),
+            encrypted_dek.clone(),
             derivation_info.clone(),
         ),
         _ => return Err(Error::Format(FormatError::InvalidHeader)),
     };
 
-    let shared_secret = A::decapsulate(&sk.clone().into(), &encapsulated_key)?;
+    let shared_secret = A::decapsulate(sk, &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?)?;
 
     // Derive key if a deriver function is specified
     // 如果指定了派生器，则派生密钥
@@ -156,7 +148,7 @@ where
         shared_secret
     };
 
-    let key_material: S::Key = dek.into();
+    let key_material: S::Key = Key::from_bytes(dek.as_slice())?;
 
     decrypt_pipeline::<S, R, W>(key_material, base_nonce, chunk_size, reader, writer, aad)
 }
@@ -172,6 +164,7 @@ mod tests {
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::io::Cursor;
+    use seal_crypto::zeroize::Zeroizing;
 
     fn get_test_data(size: usize) -> Vec<u8> {
         (0..size).map(|i| (i % 256) as u8).collect()

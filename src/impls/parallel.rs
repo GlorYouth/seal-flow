@@ -21,7 +21,6 @@ pub fn encrypt_parallel<S>(
 ) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
-    S::Key: Send + Sync,
 {
     let key_material = key.into();
     let chunk_size = DEFAULT_CHUNK_SIZE as usize;

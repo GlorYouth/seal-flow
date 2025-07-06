@@ -20,7 +20,6 @@ pub fn encrypt<'a, S>(
 ) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
-    S::Key: Send + Sync,
 {
     // 1. Setup Header
     let (header, base_nonce) = create_header::<S>(key_id)?;
@@ -43,7 +42,6 @@ pub fn decrypt_body<S>(
 ) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
-    S::Key: Send + Sync,
 {
     // Extract stream info from Header
     let (chunk_size, base_nonce) = match &header.payload {

@@ -2,13 +2,13 @@
 //!
 //! 普通（单线程、内存中）混合加密和解密。
 
+use seal_crypto::prelude::Key;
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::impls::ordinary::{decrypt_in_memory, encrypt_in_memory};
-use seal_crypto::zeroize::Zeroizing;
 
 /// Performs hybrid encryption on in-memory data.
 ///
@@ -23,9 +23,7 @@ pub fn encrypt<'a, A, S>(
 ) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
-    A::EncapsulatedKey: Into<Vec<u8>> + Send,
     S: SymmetricAlgorithm,
-    S::Key: From<Zeroizing<Vec<u8>>>,
 {
     let (info, deriver_fn) = derivation_config
         .map(|d| (d.derivation_info, d.deriver_fn))
@@ -46,7 +44,7 @@ where
     // 3. Serialize the header.
     // 3. 序列化标头。
     let header_bytes = header.encode_to_vec()?;
-    let key_material: S::Key = dek.into();
+    let key_material: S::Key = Key::from_bytes(dek.as_slice())?;
 
     encrypt_in_memory::<S>(key_material, base_nonce, header_bytes, plaintext, aad)
 }
@@ -84,9 +82,7 @@ impl<'a> PendingDecryptor<'a> {
     pub fn into_plaintext<A, S>(self, sk: &A::PrivateKey, aad: Option<&[u8]>) -> Result<Vec<u8>>
     where
         A: AsymmetricAlgorithm,
-        A::EncapsulatedKey: From<Vec<u8>> + Send,
         S: SymmetricAlgorithm,
-        S::Key: From<Zeroizing<Vec<u8>>>,
     {
         decrypt_body::<A, S>(sk, &self.header, self.ciphertext_body, aad)
     }
@@ -113,9 +109,7 @@ pub fn decrypt_body<A, S>(
 ) -> Result<Vec<u8>>
 where
     A: AsymmetricAlgorithm,
-    A::EncapsulatedKey: From<Vec<u8>> + Send,
     S: SymmetricAlgorithm,
-    S::Key: From<Zeroizing<Vec<u8>>>,
 {
     // 1. Extract metadata and the encrypted DEK from the header.
     // 1. 从标头中提取元数据和加密的 DEK。
@@ -126,7 +120,7 @@ where
             derivation_info,
             ..
         } => (
-            encrypted_dek.clone().into(),
+            encrypted_dek.clone(),
             info.chunk_size,
             info.base_nonce,
             derivation_info.clone(),
@@ -136,7 +130,7 @@ where
 
     // 2. KEM Decapsulate to recover the shared secret.
     // 2. KEM 解封装以恢复共享密钥。
-    let shared_secret = A::decapsulate(sk, &encapsulated_key)?;
+    let shared_secret = A::decapsulate(sk, &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?)?;
 
     // 3. Derive key if derivation info is present.
     // 3. 如果存在派生信息，则派生密钥。
@@ -146,7 +140,7 @@ where
         shared_secret
     };
 
-    let key_material: S::Key = dek.into();
+    let key_material: S::Key = Key::from_bytes(dek.as_slice())?;
 
     decrypt_in_memory::<S>(key_material, base_nonce, chunk_size, ciphertext_body, aad)
 }
@@ -162,6 +156,7 @@ mod tests {
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+    use seal_crypto::zeroize::Zeroizing;
 
     type TestKem = Rsa2048<Sha256>;
     type TestDek = Aes256Gcm;

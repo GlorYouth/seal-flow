@@ -82,3 +82,9 @@ mod keys;
 mod symmetric;
 
 pub use seal_crypto::{secrecy, zeroize};
+
+#[cfg(feature = "async")]
+pub use {
+    ::tokio,
+    ::futures,
+};

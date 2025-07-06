@@ -26,7 +26,6 @@ pub fn encrypt_pipeline<S, R, W>(
 ) -> Result<()>
 where
     S: SymmetricAlgorithm,
-    S::Key: Sync + Send,
     R: Read + Send,
     W: Write,
 {
@@ -202,7 +201,6 @@ pub fn decrypt_pipeline<S, R, W>(
 ) -> Result<()>
 where
     S: SymmetricAlgorithm,
-    S::Key: Sync + Send,
     R: Read + Send,
     W: Write,
 {

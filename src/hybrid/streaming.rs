@@ -7,8 +7,7 @@ use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::impls::streaming::{DecryptorImpl, EncryptorImpl};
-use seal_crypto::prelude::{Kem, SymmetricKeySet};
-use seal_crypto::zeroize::Zeroizing;
+use seal_crypto::prelude::Key;
 use std::io::{self, Read, Write};
 
 /// An `std::io::Write` adapter for streaming hybrid encryption.
@@ -24,9 +23,6 @@ where
     W: Write,
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    Vec<u8>: From<<A as Kem>::EncapsulatedKey>,
-    <S as SymmetricKeySet>::Key: From<Zeroizing<Vec<u8>>>,
-    A::EncapsulatedKey: Into<Vec<u8>>,
 {
     /// Creates a new streaming encryptor.
     ///
@@ -68,7 +64,7 @@ where
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
 
-        let inner = EncryptorImpl::new(writer, dek.into(), base_nonce, aad)?;
+        let inner = EncryptorImpl::new(writer, Key::from_bytes(dek.as_slice())?, base_nonce, aad)?;
 
         Ok(Self {
             inner,
@@ -129,9 +125,6 @@ impl<R: Read> PendingDecryptor<R> {
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
-        A::PrivateKey: Clone,
-        A::EncapsulatedKey: From<Vec<u8>> + Send,
-        S::Key: From<Zeroizing<Vec<u8>>>,
     {
         let (encapsulated_key, chunk_size, base_nonce, derivation_info) = match self.header.payload
         {
@@ -141,7 +134,7 @@ impl<R: Read> PendingDecryptor<R> {
                 derivation_info,
                 ..
             } => (
-                encrypted_dek.into(),
+                encrypted_dek.clone(),
                 info.chunk_size,
                 info.base_nonce,
                 derivation_info,
@@ -149,7 +142,7 @@ impl<R: Read> PendingDecryptor<R> {
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
 
-        let shared_secret = A::decapsulate(sk, &encapsulated_key)?;
+        let shared_secret = A::decapsulate(sk, &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?)?;
 
         let dek = if let Some(info) = derivation_info {
             info.derive_key(&shared_secret)?
@@ -157,7 +150,7 @@ impl<R: Read> PendingDecryptor<R> {
             shared_secret
         };
 
-        let key_material: S::Key = dek.into();
+        let key_material: S::Key = Key::from_bytes(dek.as_slice())?;
         let tag_len = S::TAG_SIZE;
         let encrypted_chunk_size = chunk_size as usize + tag_len;
 
@@ -188,8 +181,6 @@ impl<R: Read, A, S> Read for Decryptor<R, A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    S::Key: From<Zeroizing<Vec<u8>>>,
-    A::PrivateKey: Clone,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.inner.read(buf)
@@ -212,6 +203,7 @@ mod tests {
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+    use seal_crypto::zeroize::Zeroizing;
     use std::io::Cursor;
 
     type TestKem = Rsa2048<Sha256>;

@@ -33,8 +33,7 @@ pin_project! {
 
 impl<W: AsyncWrite + Unpin, S> Encryptor<W, S>
 where
-    S: SymmetricAlgorithm + 'static,
-    S::Key: Send + Sync + 'static,
+    S: SymmetricAlgorithm,
 {
     /// Creates a new `Encryptor`.
     ///
@@ -62,8 +61,7 @@ where
 
 impl<W: AsyncWrite + Unpin, S> AsyncWrite for Encryptor<W, S>
 where
-    S: SymmetricAlgorithm + 'static,
-    S::Key: Send + Sync + 'static,
+    S: SymmetricAlgorithm,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -116,8 +114,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
         aad: Option<&[u8]>,
     ) -> Result<Decryptor<R, S>>
     where
-        S: SymmetricAlgorithm + 'static,
-        S::Key: Send + Sync + 'static,
+        S: SymmetricAlgorithm,
     {
         let (chunk_size, base_nonce) = match self.header.payload {
             HeaderPayload::Symmetric {
@@ -154,8 +151,7 @@ pin_project! {
 
 impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> AsyncRead for Decryptor<R, S>
 where
-    S: SymmetricAlgorithm + 'static,
-    S::Key: Send + Sync + 'static,
+    S: SymmetricAlgorithm,
 {
     fn poll_read(
         self: Pin<&mut Self>,

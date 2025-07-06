@@ -80,8 +80,7 @@ pin_project! {
 
 impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> EncryptorImpl<W, S>
 where
-    S: SymmetricAlgorithm + 'static,
-    S::Key: Send + Sync + 'static,
+    S: SymmetricAlgorithm,
 {
     /// Creates a new `EncryptorImpl`.
     ///
@@ -257,8 +256,7 @@ where
 
 impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> AsyncWrite for EncryptorImpl<W, S>
 where
-    S: SymmetricAlgorithm + 'static,
-    S::Key: Send + Sync + 'static,
+    S: SymmetricAlgorithm,
 {
     fn poll_write(
         mut self: Pin<&mut Self>,
@@ -354,8 +352,7 @@ pin_project! {
 
 impl<R: AsyncRead + Unpin, S> DecryptorImpl<R, S>
 where
-    S: SymmetricAlgorithm + 'static,
-    S::Key: Send + Sync + 'static,
+    S: SymmetricAlgorithm,
 {
     /// Creates a new `DecryptorImpl`.
     ///
@@ -514,8 +511,7 @@ where
 
 impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> AsyncRead for DecryptorImpl<R, S>
 where
-    S: SymmetricAlgorithm + 'static,
-    S::Key: Send + Sync + 'static,
+    S: SymmetricAlgorithm,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,

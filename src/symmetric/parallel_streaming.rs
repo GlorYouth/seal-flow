@@ -25,7 +25,6 @@ pub fn encrypt<S, R, W>(
 ) -> Result<()>
 where
     S: SymmetricAlgorithm,
-    S::Key: Sync + Send,
     R: Read + Send,
     W: Write,
 {
@@ -51,7 +50,6 @@ pub fn decrypt_body_stream<S, R, W>(
 ) -> Result<()>
 where
     S: SymmetricAlgorithm,
-    S::Key: Sync + Send,
     R: Read + Send,
     W: Write,
 {
@@ -99,10 +97,7 @@ impl<R: Read + Send> PendingDecryptor<R> {
         key: S::Key,
         writer: W,
         aad: Option<&[u8]>,
-    ) -> Result<()>
-    where
-        S::Key: Sync + Send,
-    {
+    ) -> Result<()> {
         decrypt_body_stream::<S, R, W>(key, &self.header, self.reader, writer, aad)
     }
 }

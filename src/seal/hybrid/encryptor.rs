@@ -130,7 +130,7 @@ where
         output_len: u32,
     ) -> Self
     where
-        Kdf: KdfAlgorithm + Send + Sync + 'static,
+        Kdf: KdfAlgorithm,
     {
         let salt = salt.map(|s| s.into());
         let info = info.map(|i| i.into());
@@ -172,7 +172,7 @@ where
         output_len: u32,
     ) -> Self
     where
-        Xof: XofAlgorithm + Send + Sync + 'static,
+        Xof: XofAlgorithm,
     {
         let salt = salt.map(|s| s.into());
         let info = info.map(|i| i.into());
@@ -213,7 +213,7 @@ where
         signer_key_id: String,
     ) -> Self
     where
-        SignerAlgo: SignatureAlgorithm + 'static,
+        SignerAlgo: SignatureAlgorithm,
     {
         self.signer = Some(SignerSet {
             signer_key_id,
@@ -236,9 +236,6 @@ where
     ///
     /// 在内存中加密给定的明文。
     pub fn to_vec<A: AsymmetricAlgorithm>(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
-    where
-        A::EncapsulatedKey: Into<Vec<u8>> + Send,
-        S::Key: From<Zeroizing<Vec<u8>>>,
     {
         let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
 
@@ -256,10 +253,6 @@ where
     ///
     /// 使用并行处理在内存中加密给定的明文。
     pub fn to_vec_parallel<A: AsymmetricAlgorithm>(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
-    where
-        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + Clone,
-        A: AsymmetricAlgorithm,
-        Vec<u8>: From<<A as seal_crypto::prelude::Kem>::EncapsulatedKey>,
     {
         let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
         crate::hybrid::parallel::encrypt::<A, S>(
@@ -279,9 +272,6 @@ where
         self,
         writer: W,
     ) -> crate::Result<crate::hybrid::streaming::Encryptor<W, A, S>>
-    where
-        Vec<u8>: From<<A as seal_crypto::prelude::Kem>::EncapsulatedKey>,
-        S::Key: From<Zeroizing<Vec<u8>>> + Clone,
     {
         let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
 
@@ -303,8 +293,6 @@ where
         R: Read + Send,
         W: Write,
         A: AsymmetricAlgorithm,
-        A::EncapsulatedKey: Into<Vec<u8>> + Send,
-        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
         let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
         crate::hybrid::parallel_streaming::encrypt::<A, S, R, W>(
@@ -328,11 +316,8 @@ where
     ) -> crate::Result<crate::hybrid::asynchronous::Encryptor<W, A, S>>
     where
         W: AsyncWrite + Unpin,
-        A: AsymmetricAlgorithm + 'static,
-        A::PublicKey: Send,
-        A::EncapsulatedKey: Into<Vec<u8>> + Send,
+        A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
-        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
     {
         let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
         crate::hybrid::asynchronous::Encryptor::new(

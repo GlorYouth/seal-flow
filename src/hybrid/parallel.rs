@@ -8,8 +8,7 @@ use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::impls::parallel::{decrypt_parallel, encrypt_parallel};
-use seal_crypto::prelude::Kem;
-use seal_crypto::zeroize::Zeroizing;
+use seal_crypto::prelude::Key;
 
 /// Performs parallel, in-memory hybrid encryption.
 ///
@@ -25,8 +24,6 @@ pub fn encrypt<'a, A, S>(
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
-    Vec<u8>: From<<A as Kem>::EncapsulatedKey>,
 {
     let (info, deriver_fn) = derivation_config
         .map(|d| (d.derivation_info, d.deriver_fn))
@@ -47,7 +44,7 @@ where
     // 3. Serialize the header and prepare for encryption
     // 3. 序列化标头并准备加密
     let header_bytes = header.encode_to_vec()?;
-    let key_material: S::Key = dek.into();
+    let key_material: S::Key = S::Key::from_bytes(dek.as_slice())?;
 
     encrypt_parallel::<S>(key_material, base_nonce, header_bytes, plaintext, aad)
 }
@@ -87,9 +84,6 @@ impl<'a> PendingDecryptor<'a> {
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
-        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
-        A::PrivateKey: Clone,
-        A::EncapsulatedKey: From<Vec<u8>>,
     {
         decrypt_body::<A, S>(sk, &self.header, self.ciphertext_body, aad)
     }
@@ -113,9 +107,6 @@ pub fn decrypt_body<A, S>(
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
-    S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
-    A::PrivateKey: Clone,
-    A::EncapsulatedKey: From<Vec<u8>>,
 {
     let (encapsulated_key, chunk_size, base_nonce, derivation_info) = match &header.payload {
         HeaderPayload::Hybrid {
@@ -124,7 +115,7 @@ where
             derivation_info,
             ..
         } => (
-            encrypted_dek.clone().into(),
+            encrypted_dek.clone(),
             info.chunk_size,
             info.base_nonce,
             derivation_info.clone(),
@@ -132,7 +123,7 @@ where
         _ => return Err(Error::Format(FormatError::InvalidHeader)),
     };
 
-    let shared_secret = A::decapsulate(sk, &encapsulated_key)?;
+    let shared_secret = A::decapsulate(sk, &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?)?;
 
     // 3. Derive key if derivation info is present.
     // 3. 如果存在派生信息，则派生密钥。
@@ -142,7 +133,7 @@ where
         shared_secret
     };
 
-    let key_material: S::Key = dek.into();
+    let key_material: S::Key = Key::from_bytes(dek.as_slice())?;
 
     decrypt_parallel::<S>(key_material, base_nonce, chunk_size, ciphertext_body, aad)
 }
@@ -157,6 +148,7 @@ mod tests {
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+    use seal_crypto::zeroize::Zeroizing;
 
     type TestKem = Rsa2048<Sha256>;
     type TestDek = Aes256Gcm;

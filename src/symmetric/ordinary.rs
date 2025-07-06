@@ -17,10 +17,7 @@ pub fn encrypt<S: SymmetricAlgorithm>(
     plaintext: &[u8],
     key_id: String,
     aad: Option<&[u8]>,
-) -> Result<Vec<u8>>
-where
-    S::Key: Send + Sync,
-{
+) -> Result<Vec<u8>> {
     let (header, base_nonce) = create_header::<S>(key_id)?;
     let header_bytes = header.encode_to_vec()?;
 
@@ -60,10 +57,7 @@ impl<'a> PendingDecryptor<'a> {
         self,
         key: S::Key,
         aad: Option<&[u8]>,
-    ) -> Result<Vec<u8>>
-    where
-        S::Key: Send + Sync,
-    {
+    ) -> Result<Vec<u8>> {
         decrypt_body::<S>(key, &self.header, self.ciphertext_body, aad)
     }
 }

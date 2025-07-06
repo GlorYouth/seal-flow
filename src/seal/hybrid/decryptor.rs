@@ -16,7 +16,6 @@ use seal_crypto::schemes::symmetric::{
     aes_gcm::{Aes128Gcm, Aes256Gcm},
     chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305},
 };
-use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use tokio::io::AsyncRead;
@@ -319,8 +318,6 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
-        A::EncapsulatedKey: From<Vec<u8>> + Send,
-        S::Key: From<Zeroizing<Vec<u8>>>,
     {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
@@ -386,9 +383,6 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
-        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
-        A::PrivateKey: Clone,
-        A::EncapsulatedKey: From<Vec<u8>>,
     {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
@@ -458,9 +452,6 @@ impl<R: Read + 'static> PendingStreamingDecryptor<R> {
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
-        A::PrivateKey: Clone,
-        A::EncapsulatedKey: From<Vec<u8>> + Send,
-        S::Key: From<Zeroizing<Vec<u8>>>,
     {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
@@ -542,9 +533,6 @@ where
     where
         A: AsymmetricAlgorithm,
         S: SymmetricAlgorithm,
-        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync,
-        A::PrivateKey: Clone,
-        A::EncapsulatedKey: From<Vec<u8>> + Send,
     {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
@@ -626,11 +614,8 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
         sk: A::PrivateKey,
     ) -> crate::Result<crate::hybrid::asynchronous::Decryptor<R, A, S>>
     where
-        A: AsymmetricAlgorithm + 'static,
-        S: SymmetricAlgorithm + 'static,
-        A::PrivateKey: Send,
-        A::EncapsulatedKey: From<Vec<u8>> + Send,
-        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
+        A: AsymmetricAlgorithm,
+        S: SymmetricAlgorithm,
     {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;

@@ -10,7 +10,7 @@ use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::impls::asynchronous::{DecryptorImpl, EncryptorImpl};
 use pin_project_lite::pin_project;
-use seal_crypto::zeroize::Zeroizing;
+use seal_crypto::prelude::Key;
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -31,11 +31,8 @@ pin_project! {
 
 impl<W: AsyncWrite + Unpin, A, S> Encryptor<W, A, S>
 where
-    A: AsymmetricAlgorithm + 'static,
-    A::PublicKey: Send,
-    A::EncapsulatedKey: Into<Vec<u8>> + Send,
-    S: SymmetricAlgorithm + 'static,
-    S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
 {
     /// Creates a new `Encryptor`.
     ///
@@ -71,7 +68,7 @@ where
             .await?;
         writer.write_all(&header_bytes).await?;
 
-        let inner = EncryptorImpl::new(writer, dek.into(), base_nonce, aad.as_deref());
+        let inner = EncryptorImpl::new(writer, Key::from_bytes(dek.as_slice())?, base_nonce, aad.as_deref());
 
         Ok(Self {
             inner,
@@ -82,11 +79,8 @@ where
 
 impl<W: AsyncWrite + Unpin, A, S> AsyncWrite for Encryptor<W, A, S>
 where
-    A: AsymmetricAlgorithm + 'static,
-    A::PublicKey: Send,
-    A::EncapsulatedKey: Into<Vec<u8>> + Send,
-    S: SymmetricAlgorithm + 'static,
-    S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -133,11 +127,8 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
         aad: Option<&[u8]>,
     ) -> Result<Decryptor<R, A, S>>
     where
-        A: AsymmetricAlgorithm + 'static,
-        A::PrivateKey: Send,
-        A::EncapsulatedKey: From<Vec<u8>> + Send,
-        S: SymmetricAlgorithm + 'static,
-        S::Key: From<Zeroizing<Vec<u8>>> + Send + Sync + 'static,
+        A: AsymmetricAlgorithm,
+        S: SymmetricAlgorithm,
     {
         let (encapsulated_key, chunk_size, base_nonce, derivation_info) = match &self.header.payload
         {
@@ -147,7 +138,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
                 derivation_info,
                 ..
             } => (
-                encrypted_dek.clone().into(),
+                encrypted_dek.clone(),
                 info.chunk_size,
                 info.base_nonce,
                 derivation_info.clone(),
@@ -156,7 +147,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
         };
 
         let dek = tokio::task::spawn_blocking(move || -> Result<_> {
-            let shared_secret = A::decapsulate(&sk.into(), &encapsulated_key)?;
+            let shared_secret = A::decapsulate(&sk.into(), &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?)?;
             if let Some(info) = derivation_info {
                 info.derive_key(&shared_secret)
             } else {
@@ -171,7 +162,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
 
         let inner = DecryptorImpl::new(
             self.reader,
-            dek.into(),
+            Key::from_bytes(dek.as_slice())?,
             base_nonce,
             encrypted_chunk_size,
             decrypted_chunk_size,
@@ -199,8 +190,7 @@ pin_project! {
 impl<R: AsyncRead + Unpin, A, S> AsyncRead for Decryptor<R, A, S>
 where
     A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm + 'static,
-    S::Key: Send + Sync + 'static,
+    S: SymmetricAlgorithm,
 {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -227,6 +217,7 @@ mod tests {
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+    use seal_crypto::zeroize::Zeroizing;
     use std::io::Cursor;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

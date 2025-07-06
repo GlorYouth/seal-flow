@@ -4,7 +4,7 @@
 use std::io::{Read, Write};
 
 use seal_crypto::{
-    prelude::SymmetricKeySet, schemes::{asymmetric::post_quantum::kyber::Kyber768, symmetric::aes_gcm::Aes256Gcm}, zeroize::Zeroizing
+    schemes::{asymmetric::post_quantum::kyber::Kyber768, symmetric::aes_gcm::Aes256Gcm}
 };
 
 use crate::keys::AsymmetricPublicKey;
@@ -112,10 +112,6 @@ impl PqcEncryptor {
     ///
     /// 使用 PQC 套件通过并行处理在内存中加密给定的明文。
     pub fn to_vec_parallel(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
-    where
-        <PqcDek as SymmetricKeySet>::Key:
-            From<Zeroizing<Vec<u8>>> + Send + Sync + Clone,
-        Vec<u8>: From<<PqcKem as seal_crypto::prelude::Kem>::EncapsulatedKey>,
     {
         self.inner.to_vec_parallel::<PqcKem>(plaintext)
     }
