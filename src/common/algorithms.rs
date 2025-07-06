@@ -16,8 +16,8 @@ pub enum SymmetricAlgorithm {
 /// 非对称加密算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
 pub enum AsymmetricAlgorithm {
-    Rsa2048,
-    Rsa4096,
+    Rsa2048Sha256,
+    Rsa4096Sha256,
     Kyber512,
     Kyber768,
     Kyber1024,

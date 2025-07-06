@@ -5,7 +5,6 @@ use super::traits::{
     SymmetricAlgorithmDetails, XofAlgorithmDetails,
 };
 use crate::common;
-use seal_crypto::prelude::Hasher;
 
 
 pub mod symmetric {
@@ -44,14 +43,14 @@ pub mod asymmetric {
     pub use seal_crypto::schemes::asymmetric::traditional::rsa::{Rsa2048, Rsa4096};
 
 
-    impl<H: Hasher> AsymmetricAlgorithmDetails for Rsa2048<H> {
+    impl AsymmetricAlgorithmDetails for Rsa2048 {
         const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
-            common::algorithms::AsymmetricAlgorithm::Rsa2048;
+            common::algorithms::AsymmetricAlgorithm::Rsa2048Sha256;
     }
     
-    impl<H: Hasher> AsymmetricAlgorithmDetails for Rsa4096<H> {
+    impl AsymmetricAlgorithmDetails for Rsa4096 {
         const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
-            common::algorithms::AsymmetricAlgorithm::Rsa4096;
+            common::algorithms::AsymmetricAlgorithm::Rsa4096Sha256;
     }
     
     impl AsymmetricAlgorithmDetails for Kyber512 {

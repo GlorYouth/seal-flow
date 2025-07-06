@@ -3,25 +3,143 @@
 //! 这个模块为加密密钥定义了字节包装器。
 use crate::error::Error;
 use seal_crypto::{prelude::*, secrecy::SecretBox, zeroize};
-use crate::common::algorithms::{AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum};
-use seal_crypto::schemes::asymmetric::{
-    post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
-    traditional::rsa::{Rsa2048, Rsa4096},
+use crate::common::algorithms::{
+    AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SignatureAlgorithm as SignatureAlgorithmEnum,
+    SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
+use seal_crypto::schemes::asymmetric::{
+    post_quantum::{
+        dilithium::{Dilithium2, Dilithium3, Dilithium5},
+        kyber::{Kyber1024, Kyber512, Kyber768},
+    },
+    traditional::{
+        ecc::{EcdsaP256, Ed25519},
+        rsa::{Rsa2048, Rsa4096},
+    },
+};
+use seal_crypto::schemes::hash::Sha256;
+use seal_crypto::prelude::{AsymmetricKeySet, SymmetricKeySet, KeyGenerator};
 use seal_crypto::schemes::symmetric::{
     aes_gcm::{Aes128Gcm, Aes256Gcm},
     chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305},
 };
-use seal_crypto::prelude::{AsymmetricKeySet, SymmetricKeySet};
 
-pub mod provider;
+pub(crate) mod provider;
+
+/// An enum wrapping a typed asymmetric key pair.
+///
+/// 包装了类型化非对称密钥对的枚举。
+pub enum TypedAsymmetricKeyPair {
+    Rsa2048Sha256((<Rsa2048<Sha256> as AsymmetricKeySet>::PublicKey, <Rsa2048<Sha256> as AsymmetricKeySet>::PrivateKey)),
+    Rsa4096Sha256((<Rsa4096<Sha256> as AsymmetricKeySet>::PublicKey, <Rsa4096<Sha256> as AsymmetricKeySet>::PrivateKey)),
+    Kyber512((<Kyber512 as AsymmetricKeySet>::PublicKey, <Kyber512 as AsymmetricKeySet>::PrivateKey)),
+    Kyber768((<Kyber768 as AsymmetricKeySet>::PublicKey, <Kyber768 as AsymmetricKeySet>::PrivateKey)),
+    Kyber1024((<Kyber1024 as AsymmetricKeySet>::PublicKey, <Kyber1024 as AsymmetricKeySet>::PrivateKey)),
+}
+
+impl TypedAsymmetricKeyPair {
+    /// Generates a new key pair for the specified algorithm.
+    ///
+    /// 为指定的算法生成一个新的密钥对。
+    pub fn generate(algorithm: AsymmetricAlgorithmEnum) -> Result<Self, Error> {
+        match algorithm {
+            AsymmetricAlgorithmEnum::Rsa2048Sha256 => Ok(Rsa2048::<Sha256>::generate_keypair().map(Self::Rsa2048Sha256)?),
+            AsymmetricAlgorithmEnum::Rsa4096Sha256 => Ok(Rsa4096::<Sha256>::generate_keypair().map(Self::Rsa4096Sha256)?),
+            AsymmetricAlgorithmEnum::Kyber512 => Ok(Kyber512::generate_keypair().map(Self::Kyber512)?),
+            AsymmetricAlgorithmEnum::Kyber768 => Ok(Kyber768::generate_keypair().map(Self::Kyber768)?),
+            AsymmetricAlgorithmEnum::Kyber1024 => Ok(Kyber1024::generate_keypair().map(Self::Kyber1024)?),
+        }
+    }
+
+    /// Returns the public key as a generic byte wrapper.
+    ///
+    /// 以通用字节包装器形式返回公钥。
+    pub fn public_key(&self) -> AsymmetricPublicKey {
+        let bytes = match self {
+            Self::Rsa2048Sha256((pk, _)) => pk.to_bytes(),
+            Self::Rsa4096Sha256((pk, _)) => pk.to_bytes(),
+            Self::Kyber512((pk, _)) => pk.to_bytes(),
+            Self::Kyber768((pk, _)) => pk.to_bytes(),
+            Self::Kyber1024((pk, _)) => pk.to_bytes(),
+        };
+        AsymmetricPublicKey::new(bytes)
+    }
+
+    /// Returns the private key as a generic byte wrapper.
+    ///
+    /// 以通用字节包装器形式返回私钥。
+    pub fn private_key(&self) -> AsymmetricPrivateKey {
+        let bytes = match self {
+            Self::Rsa2048Sha256((_, sk)) => sk.to_bytes(),
+            Self::Rsa4096Sha256((_, sk)) => sk.to_bytes(),
+            Self::Kyber512((_, sk)) => sk.to_bytes(),
+            Self::Kyber768((_, sk)) => sk.to_bytes(),
+            Self::Kyber1024((_, sk)) => sk.to_bytes(),
+        };
+        AsymmetricPrivateKey::new(bytes)
+    }
+}
+
+/// An enum wrapping a typed signature key pair.
+///
+/// 包装了类型化签名密钥对的枚举。
+pub enum TypedSignatureKeyPair {
+    Dilithium2((<Dilithium2 as AsymmetricKeySet>::PublicKey, <Dilithium2 as AsymmetricKeySet>::PrivateKey)),
+    Dilithium3((<Dilithium3 as AsymmetricKeySet>::PublicKey, <Dilithium3 as AsymmetricKeySet>::PrivateKey)),
+    Dilithium5((<Dilithium5 as AsymmetricKeySet>::PublicKey, <Dilithium5 as AsymmetricKeySet>::PrivateKey)),
+    Ed25519((<Ed25519 as AsymmetricKeySet>::PublicKey, <Ed25519 as AsymmetricKeySet>::PrivateKey)),
+    EcdsaP256((<EcdsaP256 as AsymmetricKeySet>::PublicKey, <EcdsaP256 as AsymmetricKeySet>::PrivateKey)),
+}
+
+impl TypedSignatureKeyPair {
+    /// Generates a new key pair for the specified algorithm.
+    ///
+    /// 为指定的算法生成一个新的密钥对。
+    pub fn generate(algorithm: SignatureAlgorithmEnum) -> Result<Self, Error> {
+        match algorithm {
+            SignatureAlgorithmEnum::Dilithium2 => Ok(Dilithium2::generate_keypair().map(Self::Dilithium2)?),
+            SignatureAlgorithmEnum::Dilithium3 => Ok(Dilithium3::generate_keypair().map(Self::Dilithium3)?),
+            SignatureAlgorithmEnum::Dilithium5 => Ok(Dilithium5::generate_keypair().map(Self::Dilithium5)?),
+            SignatureAlgorithmEnum::Ed25519 => Ok(Ed25519::generate_keypair().map(Self::Ed25519)?),
+            SignatureAlgorithmEnum::EcdsaP256 => Ok(EcdsaP256::generate_keypair().map(Self::EcdsaP256)?),
+        }
+    }
+
+    /// Returns the public key as a generic byte wrapper.
+    ///
+    /// 以通用字节包装器形式返回公钥。
+    pub fn public_key(&self) -> SignaturePublicKey {
+        let bytes = match self {
+            Self::Dilithium2((pk, _)) => pk.to_bytes(),
+            Self::Dilithium3((pk, _)) => pk.to_bytes(),
+            Self::Dilithium5((pk, _)) => pk.to_bytes(),
+            Self::Ed25519((pk, _)) => pk.to_bytes(),
+            Self::EcdsaP256((pk, _)) => pk.to_bytes(),
+        };
+        SignaturePublicKey::new(bytes)
+    }
+
+    /// Returns the private key as a generic byte wrapper.
+    ///
+    /// 以通用字节包装器形式返回私钥。
+    pub fn private_key(&self) -> AsymmetricPrivateKey {
+        let bytes = match self {
+            Self::Dilithium2((_, sk)) => sk.to_bytes(),
+            Self::Dilithium3((_, sk)) => sk.to_bytes(),
+            Self::Dilithium5((_, sk)) => sk.to_bytes(),
+            Self::Ed25519((_, sk)) => sk.to_bytes(),
+            Self::EcdsaP256((_, sk)) => sk.to_bytes(),
+        };
+        AsymmetricPrivateKey::new(bytes)
+    }
+}
 
 /// An enum wrapping a typed asymmetric private key.
 ///
 /// 包装了类型化非对称私钥的枚举。
 pub enum TypedAsymmetricPrivateKey {
-    Rsa2048(<Rsa2048 as AsymmetricKeySet>::PrivateKey),
-    Rsa4096(<Rsa4096 as AsymmetricKeySet>::PrivateKey),
+    Rsa2048Sha256(<Rsa2048<Sha256> as AsymmetricKeySet>::PrivateKey),
+    Rsa4096Sha256(<Rsa4096<Sha256> as AsymmetricKeySet>::PrivateKey),
     Kyber512(<Kyber512 as AsymmetricKeySet>::PrivateKey),
     Kyber768(<Kyber768 as AsymmetricKeySet>::PrivateKey),
     Kyber1024(<Kyber1024 as AsymmetricKeySet>::PrivateKey),
@@ -209,13 +327,13 @@ impl AsymmetricPrivateKey {
     /// 将原始密钥字节转换为类型化的私钥枚举。
     pub fn into_typed(self, algorithm: AsymmetricAlgorithmEnum) -> Result<TypedAsymmetricPrivateKey, Error> {
         match algorithm {
-            AsymmetricAlgorithmEnum::Rsa2048 => {
-                let sk = <Rsa2048 as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
-                Ok(TypedAsymmetricPrivateKey::Rsa2048(sk))
+            AsymmetricAlgorithmEnum::Rsa2048Sha256 => {
+                let sk = <Rsa2048<Sha256> as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPrivateKey::Rsa2048Sha256(sk))
             }
-            AsymmetricAlgorithmEnum::Rsa4096 => {
-                let sk = <Rsa4096 as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
-                Ok(TypedAsymmetricPrivateKey::Rsa4096(sk))
+            AsymmetricAlgorithmEnum::Rsa4096Sha256 => {
+                let sk = <Rsa4096<Sha256> as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPrivateKey::Rsa4096Sha256(sk))
             }
             AsymmetricAlgorithmEnum::Kyber512 => {
                 let sk = <Kyber512 as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
@@ -290,6 +408,7 @@ impl SignaturePublicKey {
         self.0
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

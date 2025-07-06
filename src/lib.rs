@@ -79,7 +79,7 @@ pub mod algorithms;
 pub use error::{Error, Result};
 
 mod hybrid;
-mod keys;
+pub mod keys;
 mod symmetric;
 
 pub use seal_crypto::{secrecy, zeroize};
