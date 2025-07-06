@@ -1,10 +1,9 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::algorithms::SymmetricAlgorithm as SymmetricAlgorithmEnum;
 use crate::common::header::Header;
 use crate::common::PendingImpl;
 use crate::error::{KeyManagementError};
 use crate::keys::provider::KeyProvider;
-use crate::keys::SymmetricKey;
+use crate::keys::{SymmetricKey, TypedSymmetricKey};
 use crate::seal::traits::{
     InMemoryDecryptor, ParallelStreamingDecryptor, PendingDecryptor as PendingDecryptorTrait,
     StreamingDecryptor, WithAad,
@@ -16,39 +15,8 @@ use tokio::io::AsyncRead;
 #[cfg(feature = "async")]
 use crate::seal::traits::AsyncStreamingDecryptor;
 
-use seal_crypto::prelude::*;
 use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};
 use seal_crypto::schemes::symmetric::chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305};
-
-/// 创建一个宏来处理从原始字节转换为特定算法密钥的过程
-/// 这个宏替代了旧的枚举类型调度方式，直接从字节转换到密钥
-macro_rules! dispatch_symmetric_key_bytes {
-    // 内部规则，处理算法列表
-    (@internal $algorithm:expr, $key_bytes:expr, $callback:ident, $extra_args:tt,
-     $(($algo_enum:path, $algo_type:ty)),*
-    ) => {
-        {
-            match $algorithm {
-                $(
-                    $algo_enum => {
-                        let key = <$algo_type as SymmetricKeySet>::Key::from_bytes($key_bytes)?;
-                        $callback!(key, $algo_type, $extra_args)
-                    },
-                )*
-            }
-        }
-    };
-
-    // 宏的公共入口点
-    ($algorithm:expr, $key_bytes:expr, $callback:ident, $($extra_args:tt)*) => {
-        dispatch_symmetric_key_bytes!(@internal $algorithm, $key_bytes, $callback, ($($extra_args)*),
-            (SymmetricAlgorithmEnum::Aes128Gcm, Aes128Gcm),
-            (SymmetricAlgorithmEnum::Aes256Gcm, Aes256Gcm),
-            (SymmetricAlgorithmEnum::ChaCha20Poly1305, ChaCha20Poly1305),
-            (SymmetricAlgorithmEnum::XChaCha20Poly1305, XChaCha20Poly1305)
-        )
-    };
-}
 
 /// A generic pending symmetric decryptor, waiting for configuration and key.
 /// This struct unifies the logic for various decryption modes (in-memory, streaming, etc.).
@@ -265,15 +233,18 @@ impl<'a> InMemoryDecryptor for PendingInMemoryDecryptor<'a> {
     /// 提供原始字节形式的密钥以进行解密。
     fn with_key(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
+        let typed_key = key.into_typed(algorithm)?;
 
-        // 使用新的宏来替换重复的match语句
-        macro_rules! do_decrypt {
-            ($k:ident, $S:ty, ()) => {
-                self.inner.into_plaintext::<$S>($k, self.aad.as_deref())
-            };
+        match typed_key {
+            TypedSymmetricKey::Aes128Gcm(key) => self.with_typed_key::<Aes128Gcm>(key),
+            TypedSymmetricKey::Aes256Gcm(key) => self.with_typed_key::<Aes256Gcm>(key),
+            TypedSymmetricKey::XChaCha20Poly1305(key) => {
+                self.with_typed_key::<XChaCha20Poly1305>(key)
+            }
+            TypedSymmetricKey::ChaCha20Poly1305(key) => {
+                self.with_typed_key::<ChaCha20Poly1305>(key)
+            }
         }
-
-        dispatch_symmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt,)
     }
 }
 
@@ -310,15 +281,18 @@ impl<'a> InMemoryDecryptor for PendingInMemoryParallelDecryptor<'a> {
     /// 提供原始字节形式的密钥以进行解密。
     fn with_key(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
+        let typed_key = key.into_typed(algorithm)?;
 
-        // 使用新的宏来替换重复的match语句
-        macro_rules! do_decrypt {
-            ($k:ident, $S:ty, ()) => {
-                self.inner.into_plaintext::<$S>($k, self.aad.as_deref())
-            };
+        match typed_key {
+            TypedSymmetricKey::Aes128Gcm(key) => self.with_typed_key::<Aes128Gcm>(key),
+            TypedSymmetricKey::Aes256Gcm(key) => self.with_typed_key::<Aes256Gcm>(key),
+            TypedSymmetricKey::XChaCha20Poly1305(key) => {
+                self.with_typed_key::<XChaCha20Poly1305>(key)
+            }
+            TypedSymmetricKey::ChaCha20Poly1305(key) => {
+                self.with_typed_key::<ChaCha20Poly1305>(key)
+            }
         }
-
-        dispatch_symmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt,)
     }
 }
 
@@ -361,17 +335,22 @@ impl<R: Read> StreamingDecryptor for PendingStreamingDecryptor<R> {
         Self: 's,
     {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
+        let typed_key = key.into_typed(algorithm)?;
 
-        // 使用新的宏来替换重复的match语句
-        macro_rules! do_decrypt {
-            ($k:ident, $S:ty, ()) => {
-                self.inner
-                    .into_decryptor::<$S>($k, self.aad.as_deref())
-                    .map(|d| Box::new(d) as Box<dyn Read>)
-            };
+        match typed_key {
+            TypedSymmetricKey::Aes128Gcm(key) => self
+                .with_typed_key::<Aes128Gcm>(key)
+                .map(|d| Box::new(d) as Box<dyn Read>),
+            TypedSymmetricKey::Aes256Gcm(key) => self
+                .with_typed_key::<Aes256Gcm>(key)
+                .map(|d| Box::new(d) as Box<dyn Read>),
+            TypedSymmetricKey::XChaCha20Poly1305(key) => self
+                .with_typed_key::<XChaCha20Poly1305>(key)
+                .map(|d| Box::new(d) as Box<dyn Read>),
+            TypedSymmetricKey::ChaCha20Poly1305(key) => self
+                .with_typed_key::<ChaCha20Poly1305>(key)
+                .map(|d| Box::new(d) as Box<dyn Read>),
         }
-
-        dispatch_symmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt,)
     }
 }
 
@@ -413,16 +392,22 @@ where
     /// 提供原始字节形式的密钥，并将解密后的数据写入提供的写入器。
     fn with_key_to_writer<W: Write>(self, key: SymmetricKey, writer: W) -> crate::Result<()> {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
+        let typed_key = key.into_typed(algorithm)?;
 
-        // 使用新的宏来替换重复的match语句
-        macro_rules! do_decrypt {
-            ($k:ident, $S:ty, ($writer:ident)) => {
-                self.inner
-                    .decrypt_to_writer::<$S, W>($k, $writer, self.aad.as_deref())
-            };
+        match typed_key {
+            TypedSymmetricKey::Aes128Gcm(key) => {
+                self.with_typed_key_to_writer::<Aes128Gcm, W>(key, writer)
+            }
+            TypedSymmetricKey::Aes256Gcm(key) => {
+                self.with_typed_key_to_writer::<Aes256Gcm, W>(key, writer)
+            }
+            TypedSymmetricKey::XChaCha20Poly1305(key) => {
+                self.with_typed_key_to_writer::<XChaCha20Poly1305, W>(key, writer)
+            }
+            TypedSymmetricKey::ChaCha20Poly1305(key) => {
+                self.with_typed_key_to_writer::<ChaCha20Poly1305, W>(key, writer)
+            }
         }
-
-        dispatch_symmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt, writer)
     }
 }
 
@@ -473,17 +458,22 @@ impl<R: AsyncRead + Unpin> AsyncStreamingDecryptor for PendingAsyncStreamingDecr
         Self: 's,
     {
         let algorithm = self.inner.header().payload.symmetric_algorithm();
+        let typed_key = key.into_typed(algorithm)?;
 
-        // 使用新的宏来替换重复的match语句
-        macro_rules! do_decrypt {
-            ($k:ident, $S:ty, ()) => {
-                self.inner
-                    .into_decryptor::<$S>($k, self.aad.as_deref())
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>)
-            };
+        match typed_key {
+            TypedSymmetricKey::Aes128Gcm(key) => self
+                .with_typed_key::<Aes128Gcm>(key)
+                .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
+            TypedSymmetricKey::Aes256Gcm(key) => self
+                .with_typed_key::<Aes256Gcm>(key)
+                .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
+            TypedSymmetricKey::XChaCha20Poly1305(key) => self
+                .with_typed_key::<XChaCha20Poly1305>(key)
+                .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
+            TypedSymmetricKey::ChaCha20Poly1305(key) => self
+                .with_typed_key::<ChaCha20Poly1305>(key)
+                .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin>),
         }
-
-        dispatch_symmetric_key_bytes!(algorithm, key.as_bytes(), do_decrypt,)
     }
 }
 

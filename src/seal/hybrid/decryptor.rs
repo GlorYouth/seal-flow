@@ -1,13 +1,12 @@
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::algorithms::{
-    AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
+    SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
 use crate::common::header::Header;
 use crate::common::PendingImpl;
 use crate::error::{FormatError, KeyManagementError};
 use crate::keys::provider::KeyProvider;
-use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
-use seal_crypto::prelude::*;
+use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey, TypedAsymmetricPrivateKey};
 use seal_crypto::schemes::asymmetric::{
     post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
     traditional::rsa::{Rsa2048, Rsa4096},
@@ -19,48 +18,6 @@ use seal_crypto::schemes::symmetric::{
 use std::io::{Read, Write};
 use std::sync::Arc;
 use tokio::io::AsyncRead;
-
-macro_rules! dispatch_symmetric_algorithm {
-    ($algorithm:expr, $callback:ident, $($extra_args:tt)*) => {
-        match $algorithm {
-            SymmetricAlgorithmEnum::Aes128Gcm => $callback!(Aes128Gcm, $($extra_args)*),
-            SymmetricAlgorithmEnum::Aes256Gcm => $callback!(Aes256Gcm, $($extra_args)*),
-            SymmetricAlgorithmEnum::XChaCha20Poly1305 => $callback!(XChaCha20Poly1305, $($extra_args)*),
-            SymmetricAlgorithmEnum::ChaCha20Poly1305 => $callback!(ChaCha20Poly1305, $($extra_args)*),
-        }
-    };
-}
-
-/// 创建一个宏来处理从原始字节转换为特定非对称算法密钥的过程
-/// 这个宏替代了旧的枚举类型调度方式，直接从字节转换到密钥
-macro_rules! dispatch_asymmetric_key_bytes {
-    // 内部规则，处理算法列表
-    (@internal $algorithm:expr, $key_bytes:expr, $callback:ident, $extra_args:tt,
-     $(($algo_enum:path, $algo_type:ty)),*
-    ) => {
-        {
-            match $algorithm {
-                $(
-                    $algo_enum => {
-                        let sk = <$algo_type as AsymmetricKeySet>::PrivateKey::from_bytes($key_bytes)?;
-                        $callback!(sk, $algo_type, $extra_args)
-                    },
-                )*
-            }
-        }
-    };
-
-    // 宏的公共入口点
-    ($algorithm:expr, $key_bytes:expr, $callback:ident, $($extra_args:tt)*) => {
-        dispatch_asymmetric_key_bytes!(@internal $algorithm, $key_bytes, $callback, ($($extra_args)*),
-            (AsymmetricAlgorithmEnum::Rsa2048, Rsa2048),
-            (AsymmetricAlgorithmEnum::Rsa4096, Rsa4096),
-            (AsymmetricAlgorithmEnum::Kyber512, Kyber512),
-            (AsymmetricAlgorithmEnum::Kyber768, Kyber768),
-            (AsymmetricAlgorithmEnum::Kyber1024, Kyber1024)
-        )
-    };
-}
 
 /// A generic pending hybrid decryptor, waiting for configuration and private key.
 /// This struct unifies the logic for various decryption modes (in-memory, streaming, etc.).
@@ -217,7 +174,7 @@ impl HybridDecryptorBuilder {
     /// Configures decryption from a synchronous `Read` stream.
     ///
     /// 从同步 `Read` 流配置解密。
-    pub fn reader<R: Read + 'static>(
+    pub fn reader<R: Read>(
         self,
         reader: R,
     ) -> crate::Result<PendingStreamingDecryptor<R>> {
@@ -294,21 +251,41 @@ impl<'a> PendingInMemoryDecryptor<'a> {
             .asymmetric_algorithm()
             .ok_or(FormatError::InvalidHeader)?;
 
+        let typed_key = key.into_typed(asymmetric_algorithm)?;
         let symmetric_algorithm = self.header().payload.symmetric_algorithm();
 
-        macro_rules! do_decrypt {
-            ($S:ty, $sk:ident, $A:ty) => {
-                self.with_typed_key::<$A, $S>(&$sk)
-            };
+        match typed_key {
+            TypedAsymmetricPrivateKey::Rsa2048(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Rsa2048, Aes128Gcm>(&sk),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Rsa2048, Aes256Gcm>(&sk),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Rsa2048, XChaCha20Poly1305>(&sk),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Rsa2048, ChaCha20Poly1305>(&sk),
+            },
+            TypedAsymmetricPrivateKey::Rsa4096(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Rsa4096, Aes128Gcm>(&sk),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Rsa4096, Aes256Gcm>(&sk),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Rsa4096, XChaCha20Poly1305>(&sk),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Rsa4096, ChaCha20Poly1305>(&sk),
+            },
+            TypedAsymmetricPrivateKey::Kyber512(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Kyber512, Aes128Gcm>(&sk),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Kyber512, Aes256Gcm>(&sk),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Kyber512, XChaCha20Poly1305>(&sk),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Kyber512, ChaCha20Poly1305>(&sk),
+            },
+            TypedAsymmetricPrivateKey::Kyber768(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Kyber768, Aes128Gcm>(&sk),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Kyber768, Aes256Gcm>(&sk),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Kyber768, XChaCha20Poly1305>(&sk),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Kyber768, ChaCha20Poly1305>(&sk),
+            },
+            TypedAsymmetricPrivateKey::Kyber1024(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Kyber1024, Aes128Gcm>(&sk),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Kyber1024, Aes256Gcm>(&sk),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Kyber1024, XChaCha20Poly1305>(&sk),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Kyber1024, ChaCha20Poly1305>(&sk),
+            },
         }
-
-        macro_rules! do_dispatch_symmetric {
-            ($sk:ident, $A:ty, ()) => {
-                dispatch_symmetric_algorithm!(symmetric_algorithm, do_decrypt, $sk, $A)
-            };
-        }
-
-        dispatch_asymmetric_key_bytes!(asymmetric_algorithm, key.as_bytes(), do_dispatch_symmetric,)
     }
 
     /// Supplies the typed private key and returns the decrypted plaintext.
@@ -359,21 +336,41 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
             .asymmetric_algorithm()
             .ok_or(FormatError::InvalidHeader)?;
 
+        let typed_key = key.into_typed(asymmetric_algorithm)?;
         let symmetric_algorithm = self.header().payload.symmetric_algorithm();
 
-        macro_rules! do_decrypt {
-            ($S:ty, $sk:ident, $A:ty) => {
-                self.with_typed_key::<$A, $S>(&$sk)
-            };
+        match typed_key {
+            TypedAsymmetricPrivateKey::Rsa2048(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Rsa2048, Aes128Gcm>(&sk),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Rsa2048, Aes256Gcm>(&sk),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Rsa2048, XChaCha20Poly1305>(&sk),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Rsa2048, ChaCha20Poly1305>(&sk),
+            },
+            TypedAsymmetricPrivateKey::Rsa4096(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Rsa4096, Aes128Gcm>(&sk),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Rsa4096, Aes256Gcm>(&sk),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Rsa4096, XChaCha20Poly1305>(&sk),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Rsa4096, ChaCha20Poly1305>(&sk),
+            },
+            TypedAsymmetricPrivateKey::Kyber512(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Kyber512, Aes128Gcm>(&sk),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Kyber512, Aes256Gcm>(&sk),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Kyber512, XChaCha20Poly1305>(&sk),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Kyber512, ChaCha20Poly1305>(&sk),
+            },
+            TypedAsymmetricPrivateKey::Kyber768(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Kyber768, Aes128Gcm>(&sk),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Kyber768, Aes256Gcm>(&sk),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Kyber768, XChaCha20Poly1305>(&sk),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Kyber768, ChaCha20Poly1305>(&sk),
+            },
+            TypedAsymmetricPrivateKey::Kyber1024(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Kyber1024, Aes128Gcm>(&sk),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Kyber1024, Aes256Gcm>(&sk),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Kyber1024, XChaCha20Poly1305>(&sk),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Kyber1024, ChaCha20Poly1305>(&sk),
+            },
         }
-
-        macro_rules! do_dispatch_symmetric {
-            ($sk:ident, $A:ty, ()) => {
-                dispatch_symmetric_algorithm!(symmetric_algorithm, do_decrypt, $sk, $A)
-            };
-        }
-
-        dispatch_asymmetric_key_bytes!(asymmetric_algorithm, key.as_bytes(), do_dispatch_symmetric,)
     }
 
     /// Supplies the typed private key and returns the decrypted plaintext.
@@ -430,22 +427,41 @@ impl<R: Read> PendingStreamingDecryptor<R> {
             .asymmetric_algorithm()
             .ok_or(FormatError::InvalidHeader)?;
 
+        let typed_key = key.into_typed(asymmetric_algorithm)?;
         let symmetric_algorithm = self.header().payload.symmetric_algorithm();
 
-        macro_rules! do_decrypt {
-            ($S:ty, $sk:ident, $A:ty) => {
-                self.with_typed_key::<$A, $S>(&$sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>)
-            };
+        match typed_key {
+            TypedAsymmetricPrivateKey::Rsa2048(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Rsa2048, Aes128Gcm>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Rsa2048, Aes256Gcm>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Rsa2048, XChaCha20Poly1305>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Rsa2048, ChaCha20Poly1305>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+            },
+            TypedAsymmetricPrivateKey::Rsa4096(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Rsa4096, Aes128Gcm>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Rsa4096, Aes256Gcm>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Rsa4096, XChaCha20Poly1305>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Rsa4096, ChaCha20Poly1305>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+            },
+            TypedAsymmetricPrivateKey::Kyber512(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Kyber512, Aes128Gcm>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Kyber512, Aes256Gcm>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Kyber512, XChaCha20Poly1305>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Kyber512, ChaCha20Poly1305>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+            },
+            TypedAsymmetricPrivateKey::Kyber768(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Kyber768, Aes128Gcm>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Kyber768, Aes256Gcm>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Kyber768, XChaCha20Poly1305>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Kyber768, ChaCha20Poly1305>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+            },
+            TypedAsymmetricPrivateKey::Kyber1024(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Kyber1024, Aes128Gcm>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Kyber1024, Aes256Gcm>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Kyber1024, XChaCha20Poly1305>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Kyber1024, ChaCha20Poly1305>(&sk).map(|d| Box::new(d) as Box<dyn Read>),
+            },
         }
-
-        macro_rules! do_dispatch_symmetric {
-            ($sk:ident, $A:ty, ()) => {
-                dispatch_symmetric_algorithm!(symmetric_algorithm, do_decrypt, $sk, $A)
-            };
-        }
-
-        dispatch_asymmetric_key_bytes!(asymmetric_algorithm, key.as_bytes(), do_dispatch_symmetric,)
     }
 
     /// Supplies the typed private key and returns a fully initialized `Decryptor`.
@@ -506,26 +522,41 @@ where
             .asymmetric_algorithm()
             .ok_or(FormatError::InvalidHeader)?;
 
+        let typed_key = key.into_typed(asymmetric_algorithm)?;
         let symmetric_algorithm = self.header().payload.symmetric_algorithm();
 
-        macro_rules! do_decrypt {
-            ($S:ty, $sk:ident, $A:ty, $writer:ident) => {
-                self.with_typed_key_to_writer::<$A, $S, W>(&$sk, $writer)
-            };
+        match typed_key {
+            TypedAsymmetricPrivateKey::Rsa2048(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key_to_writer::<Rsa2048, Aes128Gcm, W>(&sk, writer),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key_to_writer::<Rsa2048, Aes256Gcm, W>(&sk, writer),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key_to_writer::<Rsa2048, XChaCha20Poly1305, W>(&sk, writer),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key_to_writer::<Rsa2048, ChaCha20Poly1305, W>(&sk, writer),
+            },
+            TypedAsymmetricPrivateKey::Rsa4096(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key_to_writer::<Rsa4096, Aes128Gcm, W>(&sk, writer),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key_to_writer::<Rsa4096, Aes256Gcm, W>(&sk, writer),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key_to_writer::<Rsa4096, XChaCha20Poly1305, W>(&sk, writer),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key_to_writer::<Rsa4096, ChaCha20Poly1305, W>(&sk, writer),
+            },
+            TypedAsymmetricPrivateKey::Kyber512(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key_to_writer::<Kyber512, Aes128Gcm, W>(&sk, writer),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key_to_writer::<Kyber512, Aes256Gcm, W>(&sk, writer),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key_to_writer::<Kyber512, XChaCha20Poly1305, W>(&sk, writer),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key_to_writer::<Kyber512, ChaCha20Poly1305, W>(&sk, writer),
+            },
+            TypedAsymmetricPrivateKey::Kyber768(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key_to_writer::<Kyber768, Aes128Gcm, W>(&sk, writer),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key_to_writer::<Kyber768, Aes256Gcm, W>(&sk, writer),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key_to_writer::<Kyber768, XChaCha20Poly1305, W>(&sk, writer),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key_to_writer::<Kyber768, ChaCha20Poly1305, W>(&sk, writer),
+            },
+            TypedAsymmetricPrivateKey::Kyber1024(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key_to_writer::<Kyber1024, Aes128Gcm, W>(&sk, writer),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key_to_writer::<Kyber1024, Aes256Gcm, W>(&sk, writer),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key_to_writer::<Kyber1024, XChaCha20Poly1305, W>(&sk, writer),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key_to_writer::<Kyber1024, ChaCha20Poly1305, W>(&sk, writer),
+            },
         }
-
-        macro_rules! do_dispatch_symmetric {
-            ($sk:ident, $A:ty, ($writer:ident)) => {
-                dispatch_symmetric_algorithm!(symmetric_algorithm, do_decrypt, $sk, $A, $writer)
-            };
-        }
-
-        dispatch_asymmetric_key_bytes!(
-            asymmetric_algorithm,
-            key.as_bytes(),
-            do_dispatch_symmetric,
-            writer
-        )
     }
 
     /// Supplies the typed private key and decrypts the stream, writing to the provided writer.
@@ -593,23 +624,41 @@ impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
             .asymmetric_algorithm()
             .ok_or(FormatError::InvalidHeader)?;
 
+        let typed_key = key.into_typed(asymmetric_algorithm)?;
         let symmetric_algorithm = self.header().payload.symmetric_algorithm();
 
-        macro_rules! do_decrypt {
-            ($S:ty, $sk:ident, $A:ty) => {
-                self.with_typed_key::<$A, $S>($sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>)
-            };
+        match typed_key {
+            TypedAsymmetricPrivateKey::Rsa2048(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Rsa2048, Aes128Gcm>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Rsa2048, Aes256Gcm>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Rsa2048, XChaCha20Poly1305>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Rsa2048, ChaCha20Poly1305>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+            },
+            TypedAsymmetricPrivateKey::Rsa4096(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Rsa4096, Aes128Gcm>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Rsa4096, Aes256Gcm>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Rsa4096, XChaCha20Poly1305>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Rsa4096, ChaCha20Poly1305>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+            },
+            TypedAsymmetricPrivateKey::Kyber512(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Kyber512, Aes128Gcm>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Kyber512, Aes256Gcm>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Kyber512, XChaCha20Poly1305>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Kyber512, ChaCha20Poly1305>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+            },
+            TypedAsymmetricPrivateKey::Kyber768(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Kyber768, Aes128Gcm>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Kyber768, Aes256Gcm>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Kyber768, XChaCha20Poly1305>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Kyber768, ChaCha20Poly1305>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+            },
+            TypedAsymmetricPrivateKey::Kyber1024(sk) => match symmetric_algorithm {
+                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Kyber1024, Aes128Gcm>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Kyber1024, Aes256Gcm>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self.with_typed_key::<Kyber1024, XChaCha20Poly1305>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self.with_typed_key::<Kyber1024, ChaCha20Poly1305>(sk).await.map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
+            },
         }
-
-        macro_rules! do_dispatch_symmetric {
-            ($sk:ident, $A:ty, ()) => {
-                dispatch_symmetric_algorithm!(symmetric_algorithm, do_decrypt, $sk, $A)
-            };
-        }
-
-        dispatch_asymmetric_key_bytes!(asymmetric_algorithm, key.as_bytes(), do_dispatch_symmetric,)
     }
 
     /// Supplies the typed private key and returns a fully initialized `Decryptor`.

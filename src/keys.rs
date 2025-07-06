@@ -3,8 +3,39 @@
 //! 这个模块为加密密钥定义了字节包装器。
 use crate::error::Error;
 use seal_crypto::{prelude::*, secrecy::SecretBox, zeroize};
+use crate::common::algorithms::{AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum};
+use seal_crypto::schemes::asymmetric::{
+    post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
+    traditional::rsa::{Rsa2048, Rsa4096},
+};
+use seal_crypto::schemes::symmetric::{
+    aes_gcm::{Aes128Gcm, Aes256Gcm},
+    chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305},
+};
+use seal_crypto::prelude::{AsymmetricKeySet, SymmetricKeySet};
 
 pub mod provider;
+
+/// An enum wrapping a typed asymmetric private key.
+///
+/// 包装了类型化非对称私钥的枚举。
+pub enum TypedAsymmetricPrivateKey {
+    Rsa2048(<Rsa2048 as AsymmetricKeySet>::PrivateKey),
+    Rsa4096(<Rsa4096 as AsymmetricKeySet>::PrivateKey),
+    Kyber512(<Kyber512 as AsymmetricKeySet>::PrivateKey),
+    Kyber768(<Kyber768 as AsymmetricKeySet>::PrivateKey),
+    Kyber1024(<Kyber1024 as AsymmetricKeySet>::PrivateKey),
+}
+
+/// An enum wrapping a typed symmetric key.
+///
+/// 包装了类型化对称密钥的枚举。
+pub enum TypedSymmetricKey {
+    Aes128Gcm(<Aes128Gcm as SymmetricKeySet>::Key),
+    Aes256Gcm(<Aes256Gcm as SymmetricKeySet>::Key),
+    XChaCha20Poly1305(<XChaCha20Poly1305 as SymmetricKeySet>::Key),
+    ChaCha20Poly1305(<ChaCha20Poly1305 as SymmetricKeySet>::Key),
+}
 
 /// A byte wrapper for a symmetric encryption key.
 ///
@@ -60,6 +91,30 @@ impl SymmetricKey {
     /// 消耗密钥并返回内部字节
     pub fn into_bytes(self) -> zeroize::Zeroizing<Vec<u8>> {
         self.0
+    }
+
+    /// Converts the raw key bytes into a typed symmetric key enum.
+    ///
+    /// 将原始密钥字节转换为类型化的对称密钥枚举。
+    pub fn into_typed(self, algorithm: SymmetricAlgorithmEnum) -> Result<TypedSymmetricKey, Error> {
+        match algorithm {
+            SymmetricAlgorithmEnum::Aes128Gcm => {
+                let key = <Aes128Gcm as SymmetricKeySet>::Key::from_bytes(self.as_bytes())?;
+                Ok(TypedSymmetricKey::Aes128Gcm(key))
+            }
+            SymmetricAlgorithmEnum::Aes256Gcm => {
+                let key = <Aes256Gcm as SymmetricKeySet>::Key::from_bytes(self.as_bytes())?;
+                Ok(TypedSymmetricKey::Aes256Gcm(key))
+            }
+            SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
+                let key = <XChaCha20Poly1305 as SymmetricKeySet>::Key::from_bytes(self.as_bytes())?;
+                Ok(TypedSymmetricKey::XChaCha20Poly1305(key))
+            }
+            SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
+                let key = <ChaCha20Poly1305 as SymmetricKeySet>::Key::from_bytes(self.as_bytes())?;
+                Ok(TypedSymmetricKey::ChaCha20Poly1305(key))
+            }
+        }
     }
 
     /// Derives a new symmetric key from the current key using a specified key-based KDF.
@@ -147,6 +202,34 @@ impl AsymmetricPrivateKey {
     /// 消耗密钥并返回内部字节
     pub fn into_bytes(self) -> zeroize::Zeroizing<Vec<u8>> {
         self.0
+    }
+
+    /// Converts the raw key bytes into a typed private key enum.
+    ///
+    /// 将原始密钥字节转换为类型化的私钥枚举。
+    pub fn into_typed(self, algorithm: AsymmetricAlgorithmEnum) -> Result<TypedAsymmetricPrivateKey, Error> {
+        match algorithm {
+            AsymmetricAlgorithmEnum::Rsa2048 => {
+                let sk = <Rsa2048 as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPrivateKey::Rsa2048(sk))
+            }
+            AsymmetricAlgorithmEnum::Rsa4096 => {
+                let sk = <Rsa4096 as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPrivateKey::Rsa4096(sk))
+            }
+            AsymmetricAlgorithmEnum::Kyber512 => {
+                let sk = <Kyber512 as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPrivateKey::Kyber512(sk))
+            }
+            AsymmetricAlgorithmEnum::Kyber768 => {
+                let sk = <Kyber768 as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPrivateKey::Kyber768(sk))
+            }
+            AsymmetricAlgorithmEnum::Kyber1024 => {
+                let sk = <Kyber1024 as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPrivateKey::Kyber1024(sk))
+            }
+        }
     }
 }
 
