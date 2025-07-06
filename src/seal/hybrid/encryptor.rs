@@ -9,6 +9,7 @@ use crate::common::header::{DerivationInfo, KdfInfo, XofInfo};
 use crate::common::{DerivationSet, SignerSet};
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
 use crate::seal::hybrid::{DerivationOptions, HybridEncryptionOptions};
+use crate::seal::traits::{InMemoryEncryptor, StreamingEncryptor as StreamingEncryptorTrait};
 use seal_crypto::prelude::*;
 use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
     Dilithium2, Dilithium3, Dilithium5,
@@ -232,77 +233,125 @@ where
         self
     }
 
+    /// Configures the encryptor to use a specific asymmetric algorithm.
+    ///
+    /// This returns a new encryptor instance that is specialized for the given
+    /// algorithm, which can then be used to perform the actual encryption.
+    ///
+    /// 配置加密器以使用特定的非对称算法。
+    ///
+    /// 这将返回一个为给定算法特化的新加密器实例，
+    /// 然后可用于执行实际的加密操作。
+    pub fn with_algorithm<A: AsymmetricAlgorithm>(self) -> HybridEncryptorWithAlgorithms<A, S> {
+        HybridEncryptorWithAlgorithms {
+            inner: self,
+            _phantom_a: PhantomData,
+        }
+    }
+}
+
+/// A hybrid encryptor that has been configured with specific asymmetric and symmetric algorithms.
+///
+/// This struct provides the final encryption methods (`to_vec`, `into_writer`, etc.)
+/// without requiring further generic algorithm specification.
+///
+/// 已配置特定非对称和对称算法的混合加密器。
+///
+/// 该结构提供了最终的加密方法（`to_vec`、`into_writer`等），
+/// 无需进一步指定泛型算法。
+pub struct HybridEncryptorWithAlgorithms<A, S>
+where
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+{
+    inner: HybridEncryptor<S>,
+    _phantom_a: PhantomData<A>,
+}
+
+impl<A, S> InMemoryEncryptor for HybridEncryptorWithAlgorithms<A, S>
+where
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+{
     /// Encrypts the given plaintext in-memory.
     ///
     /// 在内存中加密给定的明文。
-    pub fn to_vec<A: AsymmetricAlgorithm>(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
-    {
-        let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
+    fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
+        let pk = A::PublicKey::from_bytes(self.inner.pk.as_bytes())?;
 
         crate::hybrid::ordinary::encrypt::<A, S>(
             &pk,
             plaintext,
-            self.kek_id,
-            self.signer,
-            self.aad.as_deref(),
-            self.derivation_config,
+            self.inner.kek_id,
+            self.inner.signer,
+            self.inner.aad.as_deref(),
+            self.inner.derivation_config,
         )
     }
 
     /// Encrypts the given plaintext in-memory using parallel processing.
     ///
     /// 使用并行处理在内存中加密给定的明文。
-    pub fn to_vec_parallel<A: AsymmetricAlgorithm>(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
-    {
-        let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
+    fn to_vec_parallel(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
+        let pk = A::PublicKey::from_bytes(self.inner.pk.as_bytes())?;
         crate::hybrid::parallel::encrypt::<A, S>(
             &pk,
             plaintext,
-            self.kek_id,
-            self.signer,
-            self.aad.as_deref(),
-            self.derivation_config,
+            self.inner.kek_id,
+            self.inner.signer,
+            self.inner.aad.as_deref(),
+            self.inner.derivation_config,
         )
     }
+}
 
-    /// Creates a streaming encryptor that writes to the given `Write` implementation.
-    ///
-    /// 创建一个流式加密器，该加密器写入给定的 `Write` 实现。
-    pub fn into_writer<A: AsymmetricAlgorithm, W: Write>(
-        self,
-        writer: W,
-    ) -> crate::Result<crate::hybrid::streaming::Encryptor<W, A, S>>
-    {
-        let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
-
-        crate::hybrid::streaming::Encryptor::new(
-            writer,
-            &pk,
-            self.kek_id,
-            self.signer,
-            self.aad.as_deref(),
-            self.derivation_config,
-        )
-    }
-
+impl<A, S> StreamingEncryptorTrait for HybridEncryptorWithAlgorithms<A, S>
+where
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+{
     /// Encrypts data from a reader and writes to a writer using parallel processing.
     ///
     /// 使用并行处理从 reader 加密数据并写入 writer。
-    pub fn pipe_parallel<A, R, W>(self, reader: R, writer: W) -> crate::Result<()>
+    fn pipe_parallel<R, W>(self, reader: R, writer: W) -> crate::Result<()>
     where
         R: Read + Send,
         W: Write,
-        A: AsymmetricAlgorithm,
     {
-        let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
+        let pk = A::PublicKey::from_bytes(self.inner.pk.as_bytes())?;
         crate::hybrid::parallel_streaming::encrypt::<A, S, R, W>(
             &pk,
             reader,
             writer,
-            self.kek_id,
-            self.signer,
-            self.aad.as_deref(),
-            self.derivation_config,
+            self.inner.kek_id,
+            self.inner.signer,
+            self.inner.aad.as_deref(),
+            self.inner.derivation_config,
+        )
+    }
+}
+
+impl<A, S> HybridEncryptorWithAlgorithms<A, S>
+where
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+{
+    /// Creates a streaming encryptor that writes to the given `Write` implementation.
+    ///
+    /// 创建一个流式加密器，该加密器写入给定的 `Write` 实现。
+    pub fn into_writer<W: Write>(
+        self,
+        writer: W,
+    ) -> crate::Result<crate::hybrid::streaming::Encryptor<W, A, S>> {
+        let pk = A::PublicKey::from_bytes(self.inner.pk.as_bytes())?;
+
+        crate::hybrid::streaming::Encryptor::new(
+            writer,
+            &pk,
+            self.inner.kek_id,
+            self.inner.signer,
+            self.inner.aad.as_deref(),
+            self.inner.derivation_config,
         )
     }
 
@@ -310,23 +359,21 @@ where
     ///
     /// [异步] 创建一个异步流式加密器。
     #[cfg(feature = "async")]
-    pub async fn into_async_writer<A, W>(
+    pub async fn into_async_writer<W>(
         self,
         writer: W,
     ) -> crate::Result<crate::hybrid::asynchronous::Encryptor<W, A, S>>
     where
         W: AsyncWrite + Unpin,
-        A: AsymmetricAlgorithm,
-        S: SymmetricAlgorithm,
     {
-        let pk = A::PublicKey::from_bytes(self.pk.as_bytes())?;
+        let pk = A::PublicKey::from_bytes(self.inner.pk.as_bytes())?;
         crate::hybrid::asynchronous::Encryptor::new(
             writer,
             pk,
-            self.kek_id,
-            self.signer,
-            self.aad.as_deref(),
-            self.derivation_config,
+            self.inner.kek_id,
+            self.inner.signer,
+            self.inner.aad.as_deref(),
+            self.inner.derivation_config,
         )
         .await
     }

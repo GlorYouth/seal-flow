@@ -112,7 +112,8 @@ fn main() -> seal_flow::error::Result<()> {
     let mut encryptor = seal
         .encrypt::<Dek>(pk_kem_wrapped, KEM_KEY_ID.to_string())
         .with_signer::<Sig>(sk_sig_wrapped, SIGNER_KEY_ID.to_string())
-        .into_writer::<Kem, _>(&mut encrypted_file)?;
+        .with_algorithm::<Kem>()
+        .into_writer(&mut encrypted_file)?;
 
     // Process the file in chunks.
     std::io::copy(&mut source_file, &mut encryptor)?;

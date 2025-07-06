@@ -44,6 +44,7 @@ pub mod prelude {
     };
     pub use crate::seal::{HybridSeal, SymmetricSeal};
     pub use crate::keys::provider::{KeyProvider, KeyProviderError};
+    pub use crate::seal::traits::*;
 }
 
 pub mod error;

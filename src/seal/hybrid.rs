@@ -499,6 +499,7 @@ mod tests {
     use seal_crypto::schemes::{
         asymmetric::traditional::rsa::Rsa2048, hash::Sha256, symmetric::aes_gcm::Aes256Gcm,
     };
+    use crate::seal::traits::*;
     use std::collections::HashMap;
     use std::io::{Cursor, Read, Write};
 
@@ -541,7 +542,8 @@ mod tests {
         let encrypted = seal
             .encrypt::<TestDek>(enc_pk_wrapped, kek_id.clone())
             .with_options(options)
-            .to_vec::<TestKem>(plaintext)?;
+            .with_algorithm::<TestKem>()
+            .to_vec(plaintext)?;
 
         // 4. Decrypt and verify
         let mut verifiers = HashMap::new();
@@ -592,7 +594,8 @@ mod tests {
         let encrypted = seal
             .encrypt::<TestDek>(enc_pk_wrapped, kek_id.clone())
             .with_options(options)
-            .to_vec::<TestKem>(plaintext)?;
+            .with_algorithm::<TestKem>()
+            .to_vec(plaintext)?;
 
         // 4. Decrypt and verify
         let pending = seal.decrypt().slice(&encrypted)?;
@@ -692,7 +695,8 @@ mod tests {
 
         let encrypted = seal
             .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
-            .to_vec::<TestKem>(plaintext)?;
+            .with_algorithm::<TestKem>()
+            .to_vec(plaintext)?;
 
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
@@ -712,7 +716,8 @@ mod tests {
 
         let encrypted = seal
             .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
-            .to_vec_parallel::<TestKem>(plaintext)?;
+            .with_algorithm::<TestKem>()
+            .to_vec_parallel(plaintext)?;
 
         let pending = seal.decrypt().slice_parallel(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
@@ -736,7 +741,8 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let mut encryptor = seal
             .encrypt::<TestDek>(pk_wrapped, TEST_KEK_ID.to_string())
-            .into_writer::<TestKem, _>(&mut encrypted_data)
+            .with_algorithm::<TestKem>()
+            .into_writer(&mut encrypted_data)
             .unwrap();
         encryptor.write_all(plaintext).unwrap();
         encryptor.finish().unwrap();
@@ -764,7 +770,8 @@ mod tests {
 
         let mut encrypted = Vec::new();
         seal.encrypt::<TestDek>(pk_wrapped, kek_id.clone())
-            .pipe_parallel::<TestKem, _, _>(Cursor::new(plaintext), &mut encrypted)?;
+            .with_algorithm::<TestKem>()
+            .pipe_parallel(Cursor::new(plaintext), &mut encrypted)?;
 
         let pending = seal.decrypt().reader_parallel(Cursor::new(&encrypted))?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
@@ -787,7 +794,8 @@ mod tests {
 
         let encrypted = seal
             .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
-            .to_vec::<TestKem>(plaintext)?;
+            .with_algorithm::<TestKem>()
+            .to_vec(plaintext)?;
 
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
@@ -810,7 +818,8 @@ mod tests {
         let encrypted = seal
             .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
             .with_aad(aad)
-            .to_vec::<TestKem>(plaintext)?;
+            .with_algorithm::<TestKem>()
+            .to_vec(plaintext)?;
 
         // Decrypt with correct AAD
         let pending = seal.decrypt().slice(&encrypted)?;
@@ -858,7 +867,8 @@ mod tests {
             .encrypt::<TestDek>(enc_pk_wrapped, kek_id)
             .with_aad(aad)
             .with_signer::<TestSigner>(sig_sk_wrapped, signer_key_id.clone())
-            .to_vec::<TestKem>(plaintext)?;
+            .with_algorithm::<TestKem>()
+            .to_vec(plaintext)?;
 
         // 4. Successful roundtrip with correct verifier and AAD
         let decrypted = seal
@@ -914,7 +924,8 @@ mod tests {
                 Some(info),
                 <TestDek as SymmetricCipher>::KEY_SIZE as u32,
             )
-            .to_vec::<TestKem>(plaintext)?;
+            .with_algorithm::<TestKem>()
+            .to_vec(plaintext)?;
 
         // 3. Decryption tests for all sync modes
 
@@ -993,7 +1004,8 @@ mod tests {
                 Some(info),
                 <TestDek as SymmetricCipher>::KEY_SIZE as u32,
             )
-            .to_vec::<TestKem>(plaintext)?;
+            .with_algorithm::<TestKem>()
+            .to_vec(plaintext)?;
 
         // 3. Decryption tests for all sync modes
 
@@ -1102,7 +1114,8 @@ mod tests {
             let mut encrypted_data = Vec::new();
             let mut encryptor = seal
                 .encrypt::<TestDek>(pk_wrapped, TEST_KEK_ID.to_string())
-                .into_async_writer::<TestKem, _>(&mut encrypted_data)
+                .with_algorithm::<TestKem>()
+                .into_async_writer(&mut encrypted_data)
                 .await
                 .unwrap();
             encryptor.write_all(plaintext).await.unwrap();
@@ -1149,7 +1162,8 @@ mod tests {
                     Some(info),
                     <TestDek as SymmetricCipher>::KEY_SIZE as u32,
                 )
-                .to_vec::<TestKem>(plaintext)?;
+                .with_algorithm::<TestKem>()
+                .to_vec(plaintext)?;
 
             // 3. Async Decryption
             let mut decryptor = seal
@@ -1194,7 +1208,8 @@ mod tests {
                     Some(info),
                     <TestDek as SymmetricCipher>::KEY_SIZE as u32,
                 )
-                .to_vec::<TestKem>(plaintext)?;
+                .with_algorithm::<TestKem>()
+                .to_vec(plaintext)?;
 
             // 3. Async Decryption
             let mut decryptor = seal
@@ -1237,7 +1252,8 @@ mod tests {
                 .encrypt::<TestDek>(enc_pk_wrapped, kek_id)
                 .with_aad(aad)
                 .with_signer::<TestSigner>(sig_sk_wrapped, signer_key_id)
-                .into_async_writer::<TestKem, _>(&mut encrypted)
+                .with_algorithm::<TestKem>()
+                .into_async_writer(&mut encrypted)
                 .await?;
             encryptor.write_all(plaintext).await?;
             encryptor.shutdown().await?;

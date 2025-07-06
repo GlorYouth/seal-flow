@@ -109,7 +109,8 @@ fn test_hybrid_workflow() {
     let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
     let encrypted = seal
         .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
-        .to_vec::<TestKem>(plaintext)
+        .with_algorithm::<TestKem>()
+        .to_vec(plaintext)
         .unwrap();
 
     // --- Decryption Side (simulated) ---
@@ -151,7 +152,8 @@ mod async_workflow_tests {
         let key_wrapped = SymmetricKey::new(key.to_bytes());
         let mut encryptor = seal
             .encrypt(key_wrapped, key_id.clone())
-            .into_async_writer::<TestDek, _>(&mut encrypted_data)
+            .with_algorithm::<TestDek>()
+            .into_async_writer(&mut encrypted_data)
             .await
             .unwrap();
         encryptor.write_all(plaintext).await.unwrap();
@@ -197,7 +199,8 @@ mod async_workflow_tests {
         let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
         let mut encryptor = seal
             .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
-            .into_async_writer::<TestKem, _>(&mut encrypted_data)
+            .with_algorithm::<TestKem>()
+            .into_async_writer(&mut encrypted_data)
             .await
             .unwrap();
         encryptor.write_all(plaintext).await.unwrap();

@@ -37,7 +37,8 @@ fn main() -> seal_flow::error::Result<()> {
         // The sender signs the data with their private signing key.
         // 发送方用自己的签名私钥对数据进行签名。
         .with_signer::<Sig>(sk_sig_wrapped, "sig-key-id".to_string())
-        .to_vec::<Kem>(plaintext)?;
+        .with_algorithm::<Kem>()
+        .to_vec(plaintext)?;
 
     // 3. Decrypt and Verify (Recipient's Side)
     // 3. 解密与验证（接收方）

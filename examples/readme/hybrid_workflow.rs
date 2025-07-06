@@ -60,7 +60,8 @@ fn main() -> seal_flow::error::Result<()> {
         // This executes the hybrid encryption.
         // 指定用于加密所生成的对称密钥的非对称算法 (Kem)。
         // 这将执行混合加密。
-        .to_vec::<Kem>(plaintext)?;
+        .with_algorithm::<Kem>()
+        .to_vec(plaintext)?;
 
     // --- 2. Decryption (Recipient's side) ---
     // --- 2. 解密（接收方） ---

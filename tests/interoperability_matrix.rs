@@ -196,15 +196,18 @@ impl HybridEncryptorMode {
         match self {
             HybridEncryptorMode::Ordinary => seal
                 .encrypt::<TestDek>(pk.clone(), kek_id)
-                .to_vec::<TestKem>(plaintext),
+                .with_algorithm::<TestKem>()
+                .to_vec(plaintext),
             HybridEncryptorMode::Parallel => seal
                 .encrypt::<TestDek>(pk.clone(), kek_id)
-                .to_vec_parallel::<TestKem>(plaintext),
+                .with_algorithm::<TestKem>()
+                .to_vec_parallel(plaintext),
             HybridEncryptorMode::Streaming => {
                 let mut encrypted_data = Vec::new();
                 let mut encryptor = seal
                     .encrypt::<TestDek>(pk.clone(), kek_id)
-                    .into_writer::<TestKem, _>(&mut encrypted_data)?;
+                    .with_algorithm::<TestKem>()
+                    .into_writer(&mut encrypted_data)?;
                 encryptor.write_all(plaintext)?;
                 encryptor.finish()?;
                 Ok(encrypted_data)
@@ -213,7 +216,8 @@ impl HybridEncryptorMode {
                 let mut encrypted_data = Vec::new();
                 let mut encryptor = seal
                     .encrypt::<TestDek>(pk.clone(), kek_id)
-                    .into_async_writer::<TestKem, _>(&mut encrypted_data)
+                    .with_algorithm::<TestKem>()
+                    .into_async_writer(&mut encrypted_data)
                     .await?;
                 encryptor.write_all(plaintext).await?;
                 encryptor.shutdown().await?;
@@ -222,7 +226,8 @@ impl HybridEncryptorMode {
             HybridEncryptorMode::ParallelStreaming => {
                 let mut encrypted_data = Vec::new();
                 seal.encrypt::<TestDek>(pk.clone(), kek_id)
-                    .pipe_parallel::<TestKem, _, _>(Cursor::new(plaintext), &mut encrypted_data)?;
+                    .with_algorithm::<TestKem>()
+                    .pipe_parallel(Cursor::new(plaintext), &mut encrypted_data)?;
                 Ok(encrypted_data)
             }
         }

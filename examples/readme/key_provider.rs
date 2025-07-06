@@ -100,7 +100,8 @@ fn run_symmetric_example() -> seal_flow::error::Result<()> {
     // 2. 加密
     let ciphertext = seal
         .encrypt(SymmetricKey::new(key.to_bytes()), key_id)
-        .to_vec::<Aes256Gcm>(plaintext)?;
+        .with_algorithm::<Aes256Gcm>()
+        .to_vec(plaintext)?;
     println!("Encryption successful.");
 
     // 3. Decrypt using the KeyProvider
@@ -155,7 +156,8 @@ fn run_hybrid_example() -> seal_flow::error::Result<()> {
     let ciphertext = seal
         .encrypt::<Dek>(AsymmetricPublicKey::new(pk_kem.to_bytes()), kem_key_id)
         .with_signer::<Sig>(AsymmetricPrivateKey::new(sk_sig.to_bytes()), sig_key_id)
-        .to_vec::<Kem>(plaintext)?;
+        .with_algorithm::<Kem>()
+        .to_vec(plaintext)?;
     println!("Encryption and signing successful.");
 
     // 3. Decrypt and Verify using the KeyProvider (Recipient's Side)

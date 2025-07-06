@@ -390,11 +390,14 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     }
 }
 
-impl<R: Read + 'static> PendingStreamingDecryptor<R> {
+impl<R: Read> PendingStreamingDecryptor<R> {
     /// Automatically resolves keys using the attached `KeyProvider` and completes decryption.
     ///
     /// 使用附加的 `KeyProvider` 自动解析密钥并完成解密。
-    pub fn resolve_and_decrypt(mut self) -> crate::Result<Box<dyn Read + 'static>> {
+    pub fn resolve_and_decrypt<'s>(mut self) -> crate::Result<Box<dyn Read + 's>>
+    where
+        R: 's,
+    {
         let provider = self
             .key_provider
             .as_ref()
@@ -414,7 +417,10 @@ impl<R: Read + 'static> PendingStreamingDecryptor<R> {
     /// Supplies a private key directly from its wrapper for decryption
     ///
     /// 提供包装好的私钥以进行解密。
-    pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Box<dyn Read + 'static>> {
+    pub fn with_key<'s>(self, key: AsymmetricPrivateKey) -> crate::Result<Box<dyn Read + 's>>
+    where
+        R: 's,
+    {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
 

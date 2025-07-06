@@ -196,6 +196,7 @@ mod tests {
     #[cfg(feature = "async")]
     use tokio::io::AsyncReadExt;
 
+    use crate::seal::traits::{InMemoryDecryptor, WithAad};
     const TEST_KEY_ID: &str = "test-key";
 
     fn get_test_data() -> &'static [u8] {

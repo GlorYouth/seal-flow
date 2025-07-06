@@ -70,7 +70,8 @@ async fn main() -> seal_flow::error::Result<()> {
     println!("--- Testing Mode: In-Memory (Ordinary) ---");
     let ciphertext1 = HybridSeal
         .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
-        .to_vec::<Kem>(plaintext)?;
+        .with_algorithm::<Kem>()
+        .to_vec(plaintext)?;
     let pending_decryptor1 = HybridSeal.decrypt().slice(&ciphertext1)?;
     let kek_id = pending_decryptor1.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
@@ -82,7 +83,8 @@ async fn main() -> seal_flow::error::Result<()> {
     println!("\n--- Testing Mode: In-Memory Parallel ---");
     let ciphertext2 = HybridSeal
         .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
-        .to_vec_parallel::<Kem>(plaintext)?;
+        .with_algorithm::<Kem>()
+        .to_vec_parallel(plaintext)?;
     let pending_decryptor2 = HybridSeal.decrypt().slice_parallel(&ciphertext2)?;
     let kek_id = pending_decryptor2.kek_id().unwrap();
     let sk_wrapped = key_store.get_private_key(kek_id).unwrap();
@@ -95,7 +97,8 @@ async fn main() -> seal_flow::error::Result<()> {
     let mut ciphertext3 = Vec::new();
     let mut encryptor = HybridSeal
         .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
-        .into_writer::<Kem, _>(&mut ciphertext3)?;
+        .with_algorithm::<Kem>()
+        .into_writer(&mut ciphertext3)?;
     encryptor.write_all(plaintext)?;
     encryptor.finish()?;
 
@@ -118,7 +121,8 @@ async fn main() -> seal_flow::error::Result<()> {
     let mut ciphertext4 = Vec::new();
     let mut encryptor = HybridSeal
         .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
-        .into_async_writer::<Kem, _>(&mut ciphertext4)
+        .with_algorithm::<Kem>()
+        .into_async_writer(&mut ciphertext4)
         .await?;
     encryptor.write_all(plaintext).await?;
     encryptor.shutdown().await?;
@@ -145,7 +149,8 @@ async fn main() -> seal_flow::error::Result<()> {
     let mut ciphertext5 = Vec::new();
     HybridSeal
         .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
-        .pipe_parallel::<Kem, _, _>(Cursor::new(plaintext), &mut ciphertext5)?;
+        .with_algorithm::<Kem>()
+        .pipe_parallel(Cursor::new(plaintext), &mut ciphertext5)?;
 
     let mut decrypted5 = Vec::new();
     let pending_decryptor5 = HybridSeal
@@ -169,7 +174,8 @@ async fn main() -> seal_flow::error::Result<()> {
     let ciphertext6 = HybridSeal
         .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .with_aad(aad)
-        .to_vec::<Kem>(plaintext)?;
+        .with_algorithm::<Kem>()
+        .to_vec(plaintext)?;
 
     // Decrypt with correct AAD
     let pending_decryptor6 = HybridSeal.decrypt().slice(&ciphertext6)?;
@@ -202,7 +208,8 @@ async fn main() -> seal_flow::error::Result<()> {
         .encrypt::<Dek>(get_pk_wrapped(), KEK_ID.to_string())
         .with_aad(aad)
         .with_signer::<Signer>(sig_sk_wrapped, SIGNER_KEY_ID.to_string())
-        .to_vec::<Kem>(plaintext)?;
+        .with_algorithm::<Kem>()
+        .to_vec(plaintext)?;
 
     // 解密 - 使用正确的签名验证密钥和AAD
     let pending_decryptor7 = HybridSeal.decrypt().slice(&ciphertext7)?;
@@ -291,7 +298,8 @@ async fn main() -> seal_flow::error::Result<()> {
     let ciphertext9 = HybridSeal
         .encrypt::<Dek>(derived_pk_wrapped, derived_key_id.to_string())
         .with_aad(b"Protected with derived keys")
-        .to_vec::<Kem>(sensitive_data)?;
+        .with_algorithm::<Kem>()
+        .to_vec(sensitive_data)?;
 
     // 5. 解密
     let pending_decryptor9 = HybridSeal.decrypt().slice(&ciphertext9)?;
@@ -368,7 +376,8 @@ async fn main() -> seal_flow::error::Result<()> {
             Some(b"kdf-info"), // Contextual info
             <DemKdf as SymmetricCipher>::KEY_SIZE as u32,
         )
-        .to_vec::<KemKdf>(kdf_plaintext)?;
+        .with_algorithm::<KemKdf>()
+        .to_vec(kdf_plaintext)?;
 
     println!(
         "Ciphertext generated. Size: {} bytes.",

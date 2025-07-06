@@ -44,7 +44,8 @@ fn benchmark_hybrid_encryption(c: &mut Criterion) {
     group.bench_function("in_memory", |b| {
         b.iter(|| {
             seal.encrypt::<TestDek>(pk.clone(), kek_id.clone())
-                .to_vec::<TestKem>(black_box(&plaintext))
+                .with_algorithm::<TestKem>()
+                .to_vec(black_box(&plaintext))
                 .unwrap();
         });
     });
@@ -58,7 +59,8 @@ fn benchmark_hybrid_encryption(c: &mut Criterion) {
         pool.install(|| {
             b.iter(|| {
                 seal.encrypt::<TestDek>(pk.clone(), kek_id.clone())
-                    .to_vec_parallel::<TestKem>(black_box(&plaintext))
+                    .with_algorithm::<TestKem>()
+                    .to_vec_parallel(black_box(&plaintext))
                     .unwrap();
             });
         });
@@ -70,7 +72,8 @@ fn benchmark_hybrid_encryption(c: &mut Criterion) {
             let mut encrypted_data = Vec::with_capacity(PLAINTEXT_SIZE + 1024);
             let mut encryptor = seal
                 .encrypt::<TestDek>(pk.clone(), kek_id.clone())
-                .into_writer::<TestKem, _>(&mut encrypted_data)
+                .with_algorithm::<TestKem>()
+                .into_writer(&mut encrypted_data)
                 .unwrap();
             encryptor.write_all(black_box(&plaintext)).unwrap();
             encryptor.finish().unwrap();
@@ -84,7 +87,8 @@ fn benchmark_hybrid_encryption(c: &mut Criterion) {
             let mut encrypted_data = Vec::with_capacity(PLAINTEXT_SIZE + 1024);
             let mut encryptor = seal
                 .encrypt::<TestDek>(pk.clone(), kek_id.clone())
-                .into_async_writer::<TestKem, _>(&mut encrypted_data)
+                .with_algorithm::<TestKem>()
+                .into_async_writer(&mut encrypted_data)
                 .await
                 .unwrap();
             encryptor.write_all(black_box(&plaintext)).await.unwrap();
@@ -102,10 +106,8 @@ fn benchmark_hybrid_encryption(c: &mut Criterion) {
             b.iter(|| {
                 let mut encrypted_data = Vec::with_capacity(PLAINTEXT_SIZE + 1024);
                 seal.encrypt::<TestDek>(pk.clone(), kek_id.clone())
-                    .pipe_parallel::<TestKem, _, _>(
-                        Cursor::new(black_box(&plaintext)),
-                        &mut encrypted_data,
-                    )
+                    .with_algorithm::<TestKem>()
+                    .pipe_parallel(Cursor::new(black_box(&plaintext)), &mut encrypted_data)
                     .unwrap();
             });
         });
@@ -123,7 +125,8 @@ fn benchmark_hybrid_decryption(c: &mut Criterion) {
     // Prepare encrypted data for each mode to be decrypted
     let in_memory_ciphertext = seal
         .encrypt::<TestDek>(pk, kek_id)
-        .to_vec::<TestKem>(&plaintext)
+        .with_algorithm::<TestKem>()
+        .to_vec(&plaintext)
         .unwrap();
 
     let mut group = c.benchmark_group("Hybrid Decryption");
