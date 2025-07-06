@@ -5,9 +5,11 @@ use std::io::{Read, Write};
 #[cfg(feature = "async")]
 use tokio::io::AsyncWrite;
 
-use crate::seal::traits::{InMemoryEncryptor, StreamingEncryptor as StreamingEncryptorTrait};
-use seal_crypto::schemes::{
-    asymmetric::post_quantum::kyber::Kyber768, symmetric::aes_gcm::Aes256Gcm,
+use crate::seal::traits::{
+    InMemoryEncryptor, IntoAsyncWriter, IntoWriter, StreamingEncryptor as StreamingEncryptorTrait,
+};
+use seal_crypto::{
+    schemes::{asymmetric::post_quantum::kyber::Kyber768, symmetric::aes_gcm::Aes256Gcm},
 };
 
 use crate::keys::AsymmetricPublicKey;
@@ -103,39 +105,31 @@ impl PqcEncryptor {
         self.inner = self.inner.with_xof(deriver, salt, info, output_len);
         self
     }
+}
 
+impl InMemoryEncryptor for PqcEncryptor {
     /// Encrypts the given plaintext in-memory using the PQC suite.
     ///
     /// 使用 PQC 套件在内存中加密给定的明文。
-    pub fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
+    fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
         self.inner.with_algorithm::<PqcKem>().to_vec(plaintext)
     }
 
     /// Encrypts the given plaintext in-memory using parallel processing with the PQC suite.
     ///
     /// 使用 PQC 套件通过并行处理在内存中加密给定的明文。
-    pub fn to_vec_parallel(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
+    fn to_vec_parallel(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
         self.inner
             .with_algorithm::<PqcKem>()
             .to_vec_parallel(plaintext)
     }
+}
 
-    /// Creates a streaming encryptor that writes to the given `Write` implementation using the PQC suite.
-    ///
-    /// 使用 PQC 套件创建一个流式加密器，该加密器写入给定的 `Write` 实现。
-    pub fn into_writer<W: Write>(
-        self,
-        writer: W,
-    ) -> crate::Result<crate::hybrid::streaming::Encryptor<W, PqcKem, PqcDek>> {
-        self.inner
-            .with_algorithm::<PqcKem>()
-            .into_writer::<W>(writer)
-    }
-
+impl StreamingEncryptorTrait for PqcEncryptor {
     /// Encrypts data from a reader and writes to a writer using parallel processing with the PQC suite.
     ///
     /// 使用 PQC 套件通过并行处理从 reader 加密数据并写入 writer。
-    pub fn pipe_parallel<R, W>(self, reader: R, writer: W) -> crate::Result<()>
+    fn pipe_parallel<R, W>(self, reader: R, writer: W) -> crate::Result<()>
     where
         R: Read + Send,
         W: Write,
@@ -144,21 +138,36 @@ impl PqcEncryptor {
             .with_algorithm::<PqcKem>()
             .pipe_parallel::<R, W>(reader, writer)
     }
+}
+
+impl IntoWriter for PqcEncryptor {
+    type Encryptor<W: Write> = crate::hybrid::streaming::Encryptor<W, PqcKem, PqcDek>;
+
+    /// Creates a streaming encryptor that writes to the given `Write` implementation using the PQC suite.
+    ///
+    /// 使用 PQC 套件创建一个流式加密器，该加密器写入给定的 `Write` 实现。
+    fn into_writer<W: Write>(
+        self,
+        writer: W,
+    ) -> crate::Result<crate::hybrid::streaming::Encryptor<W, PqcKem, PqcDek>> {
+        self.inner.with_algorithm::<PqcKem>().into_writer(writer)
+    }
+}
+
+#[cfg(feature = "async")]
+impl IntoAsyncWriter for PqcEncryptor {
+    type AsyncEncryptor<W: AsyncWrite + Unpin + Send> =
+        crate::hybrid::asynchronous::Encryptor<W, PqcKem, PqcDek>;
 
     /// Creates an asynchronous streaming encryptor that writes to the given `AsyncWrite` implementation using the PQC suite.
     ///
     /// 使用 PQC 套件创建一个异步流式加密器，该加密器写入给定的 `AsyncWrite` 实现。
-    #[cfg(feature = "async")]
-    pub async fn into_async_writer<W>(
+    fn into_async_writer<W: AsyncWrite + Unpin + Send>(
         self,
         writer: W,
-    ) -> crate::Result<crate::hybrid::asynchronous::Encryptor<W, PqcKem, PqcDek>>
-    where
-        W: AsyncWrite + Unpin,
-    {
+    ) -> impl std::future::Future<Output = crate::Result<Self::AsyncEncryptor<W>>> + Send {
         self.inner
             .with_algorithm::<PqcKem>()
-            .into_async_writer::<W>(writer)
-            .await
+            .into_async_writer(writer)
     }
 } 

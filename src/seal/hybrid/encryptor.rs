@@ -9,7 +9,9 @@ use crate::common::header::{DerivationInfo, KdfInfo, XofInfo};
 use crate::common::{DerivationSet, SignerSet};
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
 use crate::seal::hybrid::{DerivationOptions, HybridEncryptionOptions};
-use crate::seal::traits::{InMemoryEncryptor, StreamingEncryptor as StreamingEncryptorTrait};
+use crate::seal::traits::{
+    InMemoryEncryptor, IntoAsyncWriter, IntoWriter, StreamingEncryptor as StreamingEncryptorTrait,
+};
 use seal_crypto::prelude::*;
 use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
     Dilithium2, Dilithium3, Dilithium5,
@@ -331,15 +333,14 @@ where
     }
 }
 
-impl<A, S> HybridEncryptorWithAlgorithms<A, S>
+impl<A, S> IntoWriter for HybridEncryptorWithAlgorithms<A, S>
 where
     A: AsymmetricAlgorithm,
     S: SymmetricAlgorithm,
 {
-    /// Creates a streaming encryptor that writes to the given `Write` implementation.
-    ///
-    /// 创建一个流式加密器，该加密器写入给定的 `Write` 实现。
-    pub fn into_writer<W: Write>(
+    type Encryptor<W: Write> = crate::hybrid::streaming::Encryptor<W, A, S>;
+
+    fn into_writer<W: Write>(
         self,
         writer: W,
     ) -> crate::Result<crate::hybrid::streaming::Encryptor<W, A, S>> {
@@ -354,27 +355,38 @@ where
             self.inner.derivation_config,
         )
     }
+}
 
-    /// [Async] Creates an asynchronous streaming encryptor.
-    ///
-    /// [异步] 创建一个异步流式加密器。
-    #[cfg(feature = "async")]
-    pub async fn into_async_writer<W>(
+#[cfg(feature = "async")]
+impl<A, S> IntoAsyncWriter for HybridEncryptorWithAlgorithms<A, S>
+where
+    A: AsymmetricAlgorithm,
+    S: SymmetricAlgorithm,
+{
+    type AsyncEncryptor<W: AsyncWrite + Unpin + Send> =
+        crate::hybrid::asynchronous::Encryptor<W, A, S>;
+
+    fn into_async_writer<W: AsyncWrite + Unpin + Send>(
         self,
         writer: W,
-    ) -> crate::Result<crate::hybrid::asynchronous::Encryptor<W, A, S>>
-    where
-        W: AsyncWrite + Unpin,
-    {
-        let pk = A::PublicKey::from_bytes(self.inner.pk.as_bytes())?;
-        crate::hybrid::asynchronous::Encryptor::new(
-            writer,
-            pk,
-            self.inner.kek_id,
-            self.inner.signer,
-            self.inner.aad.as_deref(),
-            self.inner.derivation_config,
-        )
-        .await
+    ) -> impl std::future::Future<Output = crate::Result<Self::AsyncEncryptor<W>>> + Send {
+        let pk_bytes = self.inner.pk;
+        let kek_id = self.inner.kek_id;
+        let signer = self.inner.signer;
+        let aad = self.inner.aad;
+        let derivation_config = self.inner.derivation_config;
+
+        async move {
+            let pk = A::PublicKey::from_bytes(pk_bytes.as_bytes())?;
+            crate::hybrid::asynchronous::Encryptor::new(
+                writer,
+                pk,
+                kek_id,
+                signer,
+                aad.as_deref(),
+                derivation_config,
+            )
+            .await
+        }
     }
 }

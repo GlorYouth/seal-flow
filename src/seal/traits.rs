@@ -9,6 +9,8 @@ use crate::error::Result;
 use std::io::{Read, Write};
 #[cfg(feature = "async")]
 use tokio::io::AsyncRead;
+#[cfg(feature = "async")]
+use tokio::io::AsyncWrite;
 
 /// A common trait for all pending decryptors, providing access to header information.
 ///
@@ -144,4 +146,38 @@ pub trait StreamingEncryptor: Sized {
     ///
     /// 使用并行处理从 reader 加密数据并写入 writer。
     fn pipe_parallel<R: Read + Send, W: Write>(self, reader: R, writer: W) -> Result<()>;
+}
+
+/// A trait for creating a synchronous streaming encryptor.
+///
+/// 用于创建同步流式加密器的 trait。
+pub trait IntoWriter: Sized {
+    /// The concrete `Write` encryptor type produced.
+    ///
+    /// 生成的具体 `Write` 加密器类型。
+    type Encryptor<W: Write>: Write;
+
+    /// Creates a streaming encryptor that wraps the given `Write` implementation.
+    ///
+    /// 创建一个包装了给定 `Write` 实现的流式加密器。
+    fn into_writer<W: Write>(self, writer: W) -> Result<Self::Encryptor<W>>;
+}
+
+/// A trait for creating an asynchronous streaming encryptor.
+///
+/// 用于创建异步流式加密器的 trait。
+#[cfg(feature = "async")]
+pub trait IntoAsyncWriter: Sized {
+    /// The concrete `AsyncWrite` encryptor type produced.
+    ///
+    /// 生成的具体 `AsyncWrite` 加密器类型。
+    type AsyncEncryptor<W: AsyncWrite + Unpin + Send>: AsyncWrite;
+
+    /// Creates an asynchronous streaming encryptor that wraps the given `AsyncWrite` implementation.
+    ///
+    /// 创建一个包装了给定 `AsyncWrite` 实现的异步流式加密器。
+    fn into_async_writer<W: AsyncWrite + Unpin + Send>(
+        self,
+        writer: W,
+    ) -> impl std::future::Future<Output = Result<Self::AsyncEncryptor<W>>> + Send;
 }

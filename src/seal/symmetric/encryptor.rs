@@ -1,6 +1,8 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::keys::SymmetricKey;
-use crate::seal::traits::{InMemoryEncryptor, StreamingEncryptor as StreamingEncryptorTrait};
+use crate::seal::traits::{
+    InMemoryEncryptor, IntoAsyncWriter, IntoWriter, StreamingEncryptor as StreamingEncryptorTrait,
+};
 use seal_crypto::prelude::Key;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
@@ -178,11 +180,9 @@ impl<S: SymmetricAlgorithm> StreamingEncryptorTrait for SymmetricEncryptorWithAl
     }
 }
 
-impl<S: SymmetricAlgorithm> SymmetricEncryptorWithAlgorithm<S> {
-    /// Creates a streaming encryptor that writes to the given `Write` implementation.
-    ///
-    /// 创建一个流式加密器，写入给定的 `Write` 实现。
-    pub fn into_writer<W: Write>(
+impl<S: SymmetricAlgorithm> IntoWriter for SymmetricEncryptorWithAlgorithm<S> {
+    type Encryptor<W: Write> = crate::symmetric::streaming::Encryptor<W, S>;
+    fn into_writer<W: Write>(
         self,
         writer: W,
     ) -> crate::Result<crate::symmetric::streaming::Encryptor<W, S>> {
@@ -193,21 +193,27 @@ impl<S: SymmetricAlgorithm> SymmetricEncryptorWithAlgorithm<S> {
             self.inner.aad.as_deref(),
         )
     }
+}
 
-    /// [Async] Creates an asynchronous streaming encryptor.
-    ///
-    /// [异步] 创建一个异步流式加密器。
-    #[cfg(feature = "async")]
-    pub async fn into_async_writer<W: AsyncWrite + Unpin>(
+#[cfg(feature = "async")]
+impl<S: SymmetricAlgorithm> IntoAsyncWriter for SymmetricEncryptorWithAlgorithm<S> {
+    type AsyncEncryptor<W: AsyncWrite + Unpin + Send> = crate::symmetric::asynchronous::Encryptor<W, S>;
+    fn into_async_writer<W: AsyncWrite + Unpin + Send>(
         self,
         writer: W,
-    ) -> crate::Result<crate::symmetric::asynchronous::Encryptor<W, S>> {
-        crate::symmetric::asynchronous::Encryptor::new(
-            writer,
-            Key::from_bytes(self.inner.key.as_bytes())?,
-            self.inner.key_id,
-            self.inner.aad.as_deref(),
-        )
-        .await
+    ) -> impl std::future::Future<Output = crate::Result<Self::AsyncEncryptor<W>>> + Send {
+        let key_bytes = self.inner.key;
+        let key_id = self.inner.key_id;
+        let aad = self.inner.aad;
+
+        async move {
+            crate::symmetric::asynchronous::Encryptor::new(
+                writer,
+                Key::from_bytes(key_bytes.as_bytes())?,
+                key_id,
+                aad.as_deref(),
+            )
+            .await
+        }
     }
 }
