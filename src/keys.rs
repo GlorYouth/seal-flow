@@ -7,6 +7,8 @@ use crate::common::algorithms::{
     AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SignatureAlgorithm as SignatureAlgorithmEnum,
     SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use seal_crypto::schemes::asymmetric::{
     post_quantum::{
         dilithium::{Dilithium2, Dilithium3, Dilithium5},
@@ -29,6 +31,7 @@ pub(crate) mod provider;
 /// An enum wrapping a typed asymmetric key pair.
 ///
 /// 包装了类型化非对称密钥对的枚举。
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TypedAsymmetricKeyPair {
     Rsa2048Sha256((<Rsa2048<Sha256> as AsymmetricKeySet>::PublicKey, <Rsa2048<Sha256> as AsymmetricKeySet>::PrivateKey)),
     Rsa4096Sha256((<Rsa4096<Sha256> as AsymmetricKeySet>::PublicKey, <Rsa4096<Sha256> as AsymmetricKeySet>::PrivateKey)),
@@ -83,6 +86,7 @@ impl TypedAsymmetricKeyPair {
 /// An enum wrapping a typed signature key pair.
 ///
 /// 包装了类型化签名密钥对的枚举。
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TypedSignatureKeyPair {
     Dilithium2((<Dilithium2 as AsymmetricKeySet>::PublicKey, <Dilithium2 as AsymmetricKeySet>::PrivateKey)),
     Dilithium3((<Dilithium3 as AsymmetricKeySet>::PublicKey, <Dilithium3 as AsymmetricKeySet>::PrivateKey)),
@@ -137,6 +141,7 @@ impl TypedSignatureKeyPair {
 /// An enum wrapping a typed asymmetric private key.
 ///
 /// 包装了类型化非对称私钥的枚举。
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TypedAsymmetricPrivateKey {
     Rsa2048Sha256(<Rsa2048<Sha256> as AsymmetricKeySet>::PrivateKey),
     Rsa4096Sha256(<Rsa4096<Sha256> as AsymmetricKeySet>::PrivateKey),
@@ -148,6 +153,7 @@ pub enum TypedAsymmetricPrivateKey {
 /// An enum wrapping a typed symmetric key.
 ///
 /// 包装了类型化对称密钥的枚举。
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TypedSymmetricKey {
     Aes128Gcm(<Aes128Gcm as SymmetricKeySet>::Key),
     Aes256Gcm(<Aes256Gcm as SymmetricKeySet>::Key),
@@ -163,8 +169,9 @@ pub enum TypedSymmetricKey {
 /// 对称加密密钥的字节包装器。
 ///
 /// 这个结构体存储原始密钥字节，可以在需要时转换为特定算法的密钥。
-/// 这在简化密钥管理的同时保持了灵活性。
+/// 这在简化密钥管理的同时保持了灵活性的。
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SymmetricKey(pub zeroize::Zeroizing<Vec<u8>>);
 
 impl SymmetricKey {
@@ -298,6 +305,7 @@ impl SymmetricKey {
 ///
 /// 非对称私钥的字节包装器。
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct AsymmetricPrivateKey(pub zeroize::Zeroizing<Vec<u8>>);
 
 impl AsymmetricPrivateKey {
@@ -355,6 +363,7 @@ impl AsymmetricPrivateKey {
 ///
 /// 非对称公钥的字节包装器。
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct AsymmetricPublicKey(pub zeroize::Zeroizing<Vec<u8>>);
 
 impl AsymmetricPublicKey {
@@ -384,6 +393,7 @@ impl AsymmetricPublicKey {
 ///
 /// 签名公钥的字节包装器。
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SignaturePublicKey(pub zeroize::Zeroizing<Vec<u8>>);
 
 impl SignaturePublicKey {

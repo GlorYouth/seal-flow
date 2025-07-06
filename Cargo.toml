@@ -32,6 +32,9 @@ tokio = { version = "1.46.0", features = ["io-util", "macros", "rt-multi-thread"
 futures = { version = "0.3", optional = true }
 pin-project-lite = "0.2.16"
 
+# --- 可选依赖 ---
+serde = { version = "1.0", features = ["derive"], optional = true }
+
 [dev-dependencies]
 criterion = { version = "0.6.0", features = ["async_tokio"] }
 num_cpus = "1.16.0"
@@ -41,6 +44,7 @@ num_cpus = "1.16.0"
 default = ["async"]
 # 单独的 feature gate 用于启用异步 API
 async = ["dep:tokio", "dep:futures"]
+serde = ["dep:serde", "seal-crypto/serde"]
 
 [[test]]
 name = "interoperability_matrix"
