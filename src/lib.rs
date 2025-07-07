@@ -45,6 +45,13 @@ pub mod prelude {
     pub use crate::seal::{HybridSeal, SymmetricSeal};
     pub use crate::keys::provider::{KeyProvider, KeyProviderError};
     pub use crate::seal::traits::*;
+    pub use crate::common::algorithms::{
+        AsymmetricAlgorithm as AsymmetricAlgorithmEnum,
+        SymmetricAlgorithm as SymmetricAlgorithmEnum,
+        SignatureAlgorithm as SignatureAlgorithmEnum,
+        KdfAlgorithm as KdfAlgorithmEnum,
+        XofAlgorithm as XofAlgorithmEnum,
+    };
 }
 
 pub mod error;

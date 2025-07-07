@@ -81,6 +81,19 @@ impl TypedAsymmetricKeyPair {
         };
         AsymmetricPrivateKey::new(bytes)
     }
+
+    /// Returns the algorithm of the key pair.
+    ///
+    /// 返回密钥对的算法。
+    pub fn get_algorithm(&self) -> AsymmetricAlgorithmEnum {
+        match self {
+            Self::Rsa2048Sha256(_) => AsymmetricAlgorithmEnum::Rsa2048Sha256,
+            Self::Rsa4096Sha256(_) => AsymmetricAlgorithmEnum::Rsa4096Sha256,
+            Self::Kyber512(_) => AsymmetricAlgorithmEnum::Kyber512,
+            Self::Kyber768(_) => AsymmetricAlgorithmEnum::Kyber768,
+            Self::Kyber1024(_) => AsymmetricAlgorithmEnum::Kyber1024,
+        }
+    }
 }
 
 /// An enum wrapping a typed signature key pair.
@@ -135,6 +148,19 @@ impl TypedSignatureKeyPair {
             Self::EcdsaP256((_, sk)) => sk.to_bytes(),
         };
         AsymmetricPrivateKey::new(bytes)
+    }
+
+    /// Returns the algorithm of the key pair.
+    ///
+    /// 返回密钥对的算法。
+    pub fn get_algorithm(&self) -> SignatureAlgorithmEnum {
+        match self {
+            Self::Dilithium2(_) => SignatureAlgorithmEnum::Dilithium2,
+            Self::Dilithium3(_) => SignatureAlgorithmEnum::Dilithium3,
+            Self::Dilithium5(_) => SignatureAlgorithmEnum::Dilithium5,
+            Self::Ed25519(_) => SignatureAlgorithmEnum::Ed25519,
+            Self::EcdsaP256(_) => SignatureAlgorithmEnum::EcdsaP256,
+        }
     }
 }
 
