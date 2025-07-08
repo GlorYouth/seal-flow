@@ -142,7 +142,10 @@ impl<R: Read> PendingDecryptor<R> {
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
 
-        let shared_secret = A::decapsulate(sk, &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?)?;
+        let shared_secret = A::decapsulate(
+            sk,
+            &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?,
+        )?;
 
         let dek = if let Some(info) = derivation_info {
             info.derive_key(&shared_secret)?

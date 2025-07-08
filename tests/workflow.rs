@@ -4,8 +4,8 @@
 //! to look up keys based on the ID peeked from the ciphertext header.
 
 use seal_flow::algorithms::asymmetric::Rsa2048;
-use seal_flow::algorithms::symmetric::Aes256Gcm as TestDek;
 use seal_flow::algorithms::hash::Sha256;
+use seal_flow::algorithms::symmetric::Aes256Gcm as TestDek;
 use seal_flow::{
     prelude::*,
     seal::{hybrid::HybridSeal, symmetric::SymmetricSeal},

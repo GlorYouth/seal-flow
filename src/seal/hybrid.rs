@@ -484,8 +484,9 @@ impl HybridSeal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
     use crate::error::EnvironmentError;
+    use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
+    use crate::seal::traits::*;
     use crate::Error;
     use seal_crypto::prelude::*;
     use seal_crypto::schemes::asymmetric::post_quantum::dilithium::Dilithium2;
@@ -495,7 +496,6 @@ mod tests {
     use seal_crypto::schemes::{
         asymmetric::traditional::rsa::Rsa2048, hash::Sha256, symmetric::aes_gcm::Aes256Gcm,
     };
-    use crate::seal::traits::*;
     use std::collections::HashMap;
     use std::io::{Cursor, Read, Write};
 
@@ -526,13 +526,11 @@ mod tests {
         let signer_key_id = "test-generic-options-signer-id".to_string();
         let seal = HybridSeal::new();
 
-        let options = HybridEncryptionOptions::new()
-            .with_aad(aad)
-            .with_signer(
-                sig_sk_wrapped,
-                signer_key_id.clone(),
-                crate::common::algorithms::SignatureAlgorithm::Ed25519,
-            );
+        let options = HybridEncryptionOptions::new().with_aad(aad).with_signer(
+            sig_sk_wrapped,
+            signer_key_id.clone(),
+            crate::common::algorithms::SignatureAlgorithm::Ed25519,
+        );
 
         // 3. Encrypt using generic encryptor with options
         let encrypted = seal
@@ -559,7 +557,7 @@ mod tests {
 
         let decrypted = pending
             .with_aad(aad)
-            .with_verification_key(verification_key.clone())    
+            .with_verification_key(verification_key.clone())
             .with_typed_key::<TestKem, TestDek>(&enc_sk)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
@@ -619,13 +617,11 @@ mod tests {
         let signer_key_id = "test-pqc-options-signer-id".to_string();
         let seal = HybridSeal::new();
 
-        let options = HybridEncryptionOptions::new()
-            .with_aad(aad)
-            .with_signer(
-                sig_sk_wrapped,
-                signer_key_id.clone(),
-                crate::common::algorithms::SignatureAlgorithm::Dilithium2,
-            );
+        let options = HybridEncryptionOptions::new().with_aad(aad).with_signer(
+            sig_sk_wrapped,
+            signer_key_id.clone(),
+            crate::common::algorithms::SignatureAlgorithm::Dilithium2,
+        );
 
         // 3. Encrypt using the PQC suite with options
         let encrypted = seal

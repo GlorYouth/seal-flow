@@ -37,22 +37,20 @@ pub use seal_crypto as crypto;
 
 pub mod prelude {
     //! A "prelude" for users of the `seal-flow` crate.
-    pub use seal_crypto::prelude::*;
+    pub use crate::common::algorithms::{
+        AsymmetricAlgorithm as AsymmetricAlgorithmEnum, KdfAlgorithm as KdfAlgorithmEnum,
+        SignatureAlgorithm as SignatureAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
+        XofAlgorithm as XofAlgorithmEnum,
+    };
     pub use crate::common::PendingImpl;
+    pub use crate::keys::provider::{EncryptionKeyProvider, KeyProvider, KeyProviderError};
     pub use crate::keys::{
         AsymmetricPrivateKey, AsymmetricPublicKey, SignaturePublicKey, SymmetricKey,
     };
-    pub use crate::seal::{HybridSeal, SymmetricSeal};
-    pub use crate::seal::hybrid::{HybridEncryptionOptions, encryptor::HybridEncryptorBuilder};
-    pub use crate::keys::provider::{KeyProvider, EncryptionKeyProvider, KeyProviderError};
+    pub use crate::seal::hybrid::{encryptor::HybridEncryptorBuilder, HybridEncryptionOptions};
     pub use crate::seal::traits::*;
-    pub use crate::common::algorithms::{
-        AsymmetricAlgorithm as AsymmetricAlgorithmEnum,
-        SymmetricAlgorithm as SymmetricAlgorithmEnum,
-        SignatureAlgorithm as SignatureAlgorithmEnum,
-        KdfAlgorithm as KdfAlgorithmEnum,
-        XofAlgorithm as XofAlgorithmEnum,
-    };
+    pub use crate::seal::{HybridSeal, SymmetricSeal};
+    pub use seal_crypto::prelude::*;
 }
 
 pub mod error;
@@ -93,7 +91,4 @@ mod symmetric;
 pub use seal_crypto::{secrecy, zeroize};
 
 #[cfg(feature = "async")]
-pub use {
-    ::tokio,
-    ::futures,
-};
+pub use {::futures, ::tokio};

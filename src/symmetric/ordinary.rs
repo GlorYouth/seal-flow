@@ -74,10 +74,7 @@ pub fn decrypt_body<S: SymmetricAlgorithm>(
     header: &Header,
     ciphertext_body: &[u8],
     aad: Option<&[u8]>,
-) -> Result<Vec<u8>>
-where
-    S::Key: Send + Sync,
-{
+) -> Result<Vec<u8>> {
     let (chunk_size, base_nonce) = match &header.payload {
         HeaderPayload::Symmetric {
             stream_info: Some(info),

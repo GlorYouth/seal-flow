@@ -57,8 +57,10 @@ impl SymmetricEncryptor {
     /// Encrypts the given plaintext in-memory using parallel processing.
     ///
     /// 使用并行处理在内存中加密给定的明文。
-    pub fn to_vec_parallel<S: SymmetricAlgorithm>(self, plaintext: &[u8]) -> crate::Result<Vec<u8>>
-{
+    pub fn to_vec_parallel<S: SymmetricAlgorithm>(
+        self,
+        plaintext: &[u8],
+    ) -> crate::Result<Vec<u8>> {
         crate::symmetric::parallel::encrypt::<S>(
             Key::from_bytes(self.key.as_bytes())?,
             plaintext,
@@ -74,7 +76,8 @@ impl SymmetricEncryptor {
         self,
         writer: W,
     ) -> crate::Result<crate::symmetric::streaming::Encryptor<W, S>> {
-        crate::symmetric::streaming::Encryptor::new(writer,
+        crate::symmetric::streaming::Encryptor::new(
+            writer,
             Key::from_bytes(self.key.as_bytes())?,
             self.key_id,
             self.aad.as_deref(),
@@ -88,8 +91,7 @@ impl SymmetricEncryptor {
     pub async fn into_async_writer<S: SymmetricAlgorithm, W: AsyncWrite + Unpin>(
         self,
         writer: W,
-    ) -> crate::Result<crate::symmetric::asynchronous::Encryptor<W, S>>
-    {
+    ) -> crate::Result<crate::symmetric::asynchronous::Encryptor<W, S>> {
         crate::symmetric::asynchronous::Encryptor::new(
             writer,
             Key::from_bytes(self.key.as_bytes())?,
@@ -197,7 +199,8 @@ impl<S: SymmetricAlgorithm> IntoWriter for SymmetricEncryptorWithAlgorithm<S> {
 
 #[cfg(feature = "async")]
 impl<S: SymmetricAlgorithm> IntoAsyncWriter for SymmetricEncryptorWithAlgorithm<S> {
-    type AsyncEncryptor<W: AsyncWrite + Unpin + Send> = crate::symmetric::asynchronous::Encryptor<W, S>;
+    type AsyncEncryptor<W: AsyncWrite + Unpin + Send> =
+        crate::symmetric::asynchronous::Encryptor<W, S>;
     fn into_async_writer<W: AsyncWrite + Unpin + Send>(
         self,
         writer: W,

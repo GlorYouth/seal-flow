@@ -138,7 +138,10 @@ where
         _ => return Err(Error::Format(FormatError::InvalidHeader)),
     };
 
-    let shared_secret = A::decapsulate(sk, &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?)?;
+    let shared_secret = A::decapsulate(
+        sk,
+        &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?,
+    )?;
 
     // Derive key if a deriver function is specified
     // 如果指定了派生器，则派生密钥
@@ -163,8 +166,8 @@ mod tests {
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-    use std::io::Cursor;
     use seal_crypto::zeroize::Zeroizing;
+    use std::io::Cursor;
 
     fn get_test_data(size: usize) -> Vec<u8> {
         (0..size).map(|i| (i % 256) as u8).collect()

@@ -1,14 +1,12 @@
 //! This module defines byte wrappers for cryptographic keys.
 //!
 //! 这个模块为加密密钥定义了字节包装器。
-use crate::error::Error;
-use seal_crypto::{prelude::*, secrecy::SecretBox, zeroize};
 use crate::common::algorithms::{
     AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SignatureAlgorithm as SignatureAlgorithmEnum,
     SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use crate::error::Error;
+use seal_crypto::prelude::{AsymmetricKeySet, KeyGenerator, SymmetricKeySet};
 use seal_crypto::schemes::asymmetric::{
     post_quantum::{
         dilithium::{Dilithium2, Dilithium3, Dilithium5},
@@ -20,11 +18,13 @@ use seal_crypto::schemes::asymmetric::{
     },
 };
 use seal_crypto::schemes::hash::Sha256;
-use seal_crypto::prelude::{AsymmetricKeySet, SymmetricKeySet, KeyGenerator};
 use seal_crypto::schemes::symmetric::{
     aes_gcm::{Aes128Gcm, Aes256Gcm},
     chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305},
 };
+use seal_crypto::{prelude::*, secrecy::SecretBox, zeroize};
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 pub(crate) mod provider;
 
@@ -33,11 +33,36 @@ pub(crate) mod provider;
 /// 包装了类型化非对称密钥对的枚举。
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TypedAsymmetricKeyPair {
-    Rsa2048Sha256((<Rsa2048<Sha256> as AsymmetricKeySet>::PublicKey, <Rsa2048<Sha256> as AsymmetricKeySet>::PrivateKey)),
-    Rsa4096Sha256((<Rsa4096<Sha256> as AsymmetricKeySet>::PublicKey, <Rsa4096<Sha256> as AsymmetricKeySet>::PrivateKey)),
-    Kyber512((<Kyber512 as AsymmetricKeySet>::PublicKey, <Kyber512 as AsymmetricKeySet>::PrivateKey)),
-    Kyber768((<Kyber768 as AsymmetricKeySet>::PublicKey, <Kyber768 as AsymmetricKeySet>::PrivateKey)),
-    Kyber1024((<Kyber1024 as AsymmetricKeySet>::PublicKey, <Kyber1024 as AsymmetricKeySet>::PrivateKey)),
+    Rsa2048Sha256(
+        (
+            <Rsa2048<Sha256> as AsymmetricKeySet>::PublicKey,
+            <Rsa2048<Sha256> as AsymmetricKeySet>::PrivateKey,
+        ),
+    ),
+    Rsa4096Sha256(
+        (
+            <Rsa4096<Sha256> as AsymmetricKeySet>::PublicKey,
+            <Rsa4096<Sha256> as AsymmetricKeySet>::PrivateKey,
+        ),
+    ),
+    Kyber512(
+        (
+            <Kyber512 as AsymmetricKeySet>::PublicKey,
+            <Kyber512 as AsymmetricKeySet>::PrivateKey,
+        ),
+    ),
+    Kyber768(
+        (
+            <Kyber768 as AsymmetricKeySet>::PublicKey,
+            <Kyber768 as AsymmetricKeySet>::PrivateKey,
+        ),
+    ),
+    Kyber1024(
+        (
+            <Kyber1024 as AsymmetricKeySet>::PublicKey,
+            <Kyber1024 as AsymmetricKeySet>::PrivateKey,
+        ),
+    ),
 }
 
 impl TypedAsymmetricKeyPair {
@@ -46,11 +71,21 @@ impl TypedAsymmetricKeyPair {
     /// 为指定的算法生成一个新的密钥对。
     pub fn generate(algorithm: AsymmetricAlgorithmEnum) -> Result<Self, Error> {
         match algorithm {
-            AsymmetricAlgorithmEnum::Rsa2048Sha256 => Ok(Rsa2048::<Sha256>::generate_keypair().map(Self::Rsa2048Sha256)?),
-            AsymmetricAlgorithmEnum::Rsa4096Sha256 => Ok(Rsa4096::<Sha256>::generate_keypair().map(Self::Rsa4096Sha256)?),
-            AsymmetricAlgorithmEnum::Kyber512 => Ok(Kyber512::generate_keypair().map(Self::Kyber512)?),
-            AsymmetricAlgorithmEnum::Kyber768 => Ok(Kyber768::generate_keypair().map(Self::Kyber768)?),
-            AsymmetricAlgorithmEnum::Kyber1024 => Ok(Kyber1024::generate_keypair().map(Self::Kyber1024)?),
+            AsymmetricAlgorithmEnum::Rsa2048Sha256 => {
+                Ok(Rsa2048::<Sha256>::generate_keypair().map(Self::Rsa2048Sha256)?)
+            }
+            AsymmetricAlgorithmEnum::Rsa4096Sha256 => {
+                Ok(Rsa4096::<Sha256>::generate_keypair().map(Self::Rsa4096Sha256)?)
+            }
+            AsymmetricAlgorithmEnum::Kyber512 => {
+                Ok(Kyber512::generate_keypair().map(Self::Kyber512)?)
+            }
+            AsymmetricAlgorithmEnum::Kyber768 => {
+                Ok(Kyber768::generate_keypair().map(Self::Kyber768)?)
+            }
+            AsymmetricAlgorithmEnum::Kyber1024 => {
+                Ok(Kyber1024::generate_keypair().map(Self::Kyber1024)?)
+            }
         }
     }
 
@@ -101,11 +136,36 @@ impl TypedAsymmetricKeyPair {
 /// 包装了类型化签名密钥对的枚举。
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TypedSignatureKeyPair {
-    Dilithium2((<Dilithium2 as AsymmetricKeySet>::PublicKey, <Dilithium2 as AsymmetricKeySet>::PrivateKey)),
-    Dilithium3((<Dilithium3 as AsymmetricKeySet>::PublicKey, <Dilithium3 as AsymmetricKeySet>::PrivateKey)),
-    Dilithium5((<Dilithium5 as AsymmetricKeySet>::PublicKey, <Dilithium5 as AsymmetricKeySet>::PrivateKey)),
-    Ed25519((<Ed25519 as AsymmetricKeySet>::PublicKey, <Ed25519 as AsymmetricKeySet>::PrivateKey)),
-    EcdsaP256((<EcdsaP256 as AsymmetricKeySet>::PublicKey, <EcdsaP256 as AsymmetricKeySet>::PrivateKey)),
+    Dilithium2(
+        (
+            <Dilithium2 as AsymmetricKeySet>::PublicKey,
+            <Dilithium2 as AsymmetricKeySet>::PrivateKey,
+        ),
+    ),
+    Dilithium3(
+        (
+            <Dilithium3 as AsymmetricKeySet>::PublicKey,
+            <Dilithium3 as AsymmetricKeySet>::PrivateKey,
+        ),
+    ),
+    Dilithium5(
+        (
+            <Dilithium5 as AsymmetricKeySet>::PublicKey,
+            <Dilithium5 as AsymmetricKeySet>::PrivateKey,
+        ),
+    ),
+    Ed25519(
+        (
+            <Ed25519 as AsymmetricKeySet>::PublicKey,
+            <Ed25519 as AsymmetricKeySet>::PrivateKey,
+        ),
+    ),
+    EcdsaP256(
+        (
+            <EcdsaP256 as AsymmetricKeySet>::PublicKey,
+            <EcdsaP256 as AsymmetricKeySet>::PrivateKey,
+        ),
+    ),
 }
 
 impl TypedSignatureKeyPair {
@@ -114,11 +174,19 @@ impl TypedSignatureKeyPair {
     /// 为指定的算法生成一个新的密钥对。
     pub fn generate(algorithm: SignatureAlgorithmEnum) -> Result<Self, Error> {
         match algorithm {
-            SignatureAlgorithmEnum::Dilithium2 => Ok(Dilithium2::generate_keypair().map(Self::Dilithium2)?),
-            SignatureAlgorithmEnum::Dilithium3 => Ok(Dilithium3::generate_keypair().map(Self::Dilithium3)?),
-            SignatureAlgorithmEnum::Dilithium5 => Ok(Dilithium5::generate_keypair().map(Self::Dilithium5)?),
+            SignatureAlgorithmEnum::Dilithium2 => {
+                Ok(Dilithium2::generate_keypair().map(Self::Dilithium2)?)
+            }
+            SignatureAlgorithmEnum::Dilithium3 => {
+                Ok(Dilithium3::generate_keypair().map(Self::Dilithium3)?)
+            }
+            SignatureAlgorithmEnum::Dilithium5 => {
+                Ok(Dilithium5::generate_keypair().map(Self::Dilithium5)?)
+            }
             SignatureAlgorithmEnum::Ed25519 => Ok(Ed25519::generate_keypair().map(Self::Ed25519)?),
-            SignatureAlgorithmEnum::EcdsaP256 => Ok(EcdsaP256::generate_keypair().map(Self::EcdsaP256)?),
+            SignatureAlgorithmEnum::EcdsaP256 => {
+                Ok(EcdsaP256::generate_keypair().map(Self::EcdsaP256)?)
+            }
         }
     }
 
@@ -359,14 +427,19 @@ impl AsymmetricPrivateKey {
     /// Converts the raw key bytes into a typed private key enum.
     ///
     /// 将原始密钥字节转换为类型化的私钥枚举。
-    pub fn into_typed(self, algorithm: AsymmetricAlgorithmEnum) -> Result<TypedAsymmetricPrivateKey, Error> {
+    pub fn into_typed(
+        self,
+        algorithm: AsymmetricAlgorithmEnum,
+    ) -> Result<TypedAsymmetricPrivateKey, Error> {
         match algorithm {
             AsymmetricAlgorithmEnum::Rsa2048Sha256 => {
-                let sk = <Rsa2048<Sha256> as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
+                let sk =
+                    <Rsa2048<Sha256> as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
                 Ok(TypedAsymmetricPrivateKey::Rsa2048Sha256(sk))
             }
             AsymmetricAlgorithmEnum::Rsa4096Sha256 => {
-                let sk = <Rsa4096<Sha256> as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
+                let sk =
+                    <Rsa4096<Sha256> as AsymmetricKeySet>::PrivateKey::from_bytes(self.as_bytes())?;
                 Ok(TypedAsymmetricPrivateKey::Rsa4096Sha256(sk))
             }
             AsymmetricAlgorithmEnum::Kyber512 => {

@@ -87,7 +87,6 @@ pub fn decrypt_parallel<S>(
 ) -> Result<Vec<u8>>
 where
     S: SymmetricAlgorithm,
-    S::Key: Send + Sync,
 {
     let chunk_size = chunk_size_u32 as usize;
     let tag_len = S::TAG_SIZE;

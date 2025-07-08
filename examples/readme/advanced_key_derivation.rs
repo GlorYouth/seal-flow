@@ -1,8 +1,8 @@
-use seal_flow::algorithms::kdf::HkdfSha256;
 use seal_flow::algorithms::kdf::passwd::Pbkdf2Sha256;
+use seal_flow::algorithms::kdf::HkdfSha256;
 use seal_flow::algorithms::xof::Shake256;
-use seal_flow::secrecy::SecretBox;
 use seal_flow::prelude::*;
+use seal_flow::secrecy::SecretBox;
 
 fn main() -> seal_flow::error::Result<()> {
     println!("--- Use Case 1: Key Rotation with HKDF ---");

@@ -68,7 +68,12 @@ where
             .await?;
         writer.write_all(&header_bytes).await?;
 
-        let inner = EncryptorImpl::new(writer, Key::from_bytes(dek.as_slice())?, base_nonce, aad.as_deref());
+        let inner = EncryptorImpl::new(
+            writer,
+            Key::from_bytes(dek.as_slice())?,
+            base_nonce,
+            aad.as_deref(),
+        );
 
         Ok(Self {
             inner,
@@ -147,7 +152,10 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
         };
 
         let dek = tokio::task::spawn_blocking(move || -> Result<_> {
-            let shared_secret = A::decapsulate(&sk.into(), &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?)?;
+            let shared_secret = A::decapsulate(
+                &sk.into(),
+                &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?,
+            )?;
             if let Some(info) = derivation_info {
                 info.derive_key(&shared_secret)
             } else {

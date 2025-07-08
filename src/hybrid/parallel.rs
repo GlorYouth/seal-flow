@@ -123,7 +123,10 @@ where
         _ => return Err(Error::Format(FormatError::InvalidHeader)),
     };
 
-    let shared_secret = A::decapsulate(sk, &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?)?;
+    let shared_secret = A::decapsulate(
+        sk,
+        &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?,
+    )?;
 
     // 3. Derive key if derivation info is present.
     // 3. 如果存在派生信息，则派生密钥。

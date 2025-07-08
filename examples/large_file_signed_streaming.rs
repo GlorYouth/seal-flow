@@ -9,8 +9,8 @@ use std::sync::Arc;
 use seal_flow::algorithms::asymmetric::Kyber768;
 use seal_flow::algorithms::signature::Ed25519;
 use seal_flow::algorithms::symmetric::Aes256Gcm;
-use seal_flow::prelude::*;
 use seal_flow::error::KeyManagementError;
+use seal_flow::prelude::*;
 
 // --- Algorithm Configuration ---
 // KEM: A post-quantum safe algorithm for key encapsulation.
@@ -45,17 +45,31 @@ impl KeyProvider for FileKeyProvider {
     fn get_symmetric_key(&self, _key_id: &str) -> Result<SymmetricKey, KeyProviderError> {
         unimplemented!("Not used in this hybrid example")
     }
-    fn get_asymmetric_private_key(&self, key_id: &str) -> Result<AsymmetricPrivateKey, KeyProviderError> {
+    fn get_asymmetric_private_key(
+        &self,
+        key_id: &str,
+    ) -> Result<AsymmetricPrivateKey, KeyProviderError> {
         self.asymmetric_private_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(key_id.to_string())))
+            .ok_or_else(|| {
+                KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(
+                    key_id.to_string(),
+                ))
+            })
     }
-    fn get_signature_public_key(&self, key_id: &str) -> Result<SignaturePublicKey, KeyProviderError> {
+    fn get_signature_public_key(
+        &self,
+        key_id: &str,
+    ) -> Result<SignaturePublicKey, KeyProviderError> {
         self.signature_public_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(key_id.to_string())))
+            .ok_or_else(|| {
+                KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(
+                    key_id.to_string(),
+                ))
+            })
     }
 }
 
@@ -88,11 +102,17 @@ fn main() -> seal_flow::error::Result<()> {
 
     // The recipient generates a KEM key pair and stores the private key.
     let (pk_kem, sk_kem) = Kem::generate_keypair()?;
-    key_provider.add_asymmetric_private_key(KEM_KEY_ID.to_string(), AsymmetricPrivateKey::new(sk_kem.to_bytes()));
+    key_provider.add_asymmetric_private_key(
+        KEM_KEY_ID.to_string(),
+        AsymmetricPrivateKey::new(sk_kem.to_bytes()),
+    );
 
     // The sender generates a signing key pair. The recipient only needs the public key for verification.
     let (pk_sig, sk_sig) = Sig::generate_keypair()?;
-    key_provider.add_signature_public_key(SIGNER_KEY_ID.to_string(), SignaturePublicKey::new(pk_sig.to_bytes()));
+    key_provider.add_signature_public_key(
+        SIGNER_KEY_ID.to_string(),
+        SignaturePublicKey::new(pk_sig.to_bytes()),
+    );
 
     // Simulate a large source file (e.g., 5 MB).
     let source_file_mb = 5;
@@ -138,7 +158,7 @@ fn main() -> seal_flow::error::Result<()> {
         .decrypt()
         .with_key_provider(Arc::new(key_provider))
         .reader(encrypted_file)?;
-    
+
     // The `resolve_and_decrypt` method handles everything:
     // - Finds the signer key ID in the header.
     // - Asks the provider for the public key.
@@ -159,4 +179,4 @@ fn main() -> seal_flow::error::Result<()> {
     println!("File content size matches. Workflow successful!");
 
     Ok(())
-} 
+}

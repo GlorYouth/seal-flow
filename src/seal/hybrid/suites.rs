@@ -12,8 +12,8 @@ use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
 use crate::seal::traits::{
     InMemoryEncryptor, IntoAsyncWriter, IntoWriter, StreamingEncryptor as StreamingEncryptorTrait,
 };
-use seal_crypto::{
-    schemes::{asymmetric::post_quantum::kyber::Kyber768, symmetric::aes_gcm::Aes256Gcm},
+use seal_crypto::schemes::{
+    asymmetric::post_quantum::kyber::Kyber768, symmetric::aes_gcm::Aes256Gcm,
 };
 
 use super::encryptor::{HybridEncryptor, HybridEncryptorBuilder};
@@ -121,7 +121,7 @@ impl PqcEncryptor {
         output_len: u32,
     ) -> Self
     where
-        Kdf: crate::algorithms::traits::KdfAlgorithm + Send + Sync + 'static,
+        Kdf: crate::algorithms::traits::KdfAlgorithm + 'static,
     {
         self.inner = self.inner.with_kdf(deriver, salt, info, output_len);
         self
@@ -138,7 +138,7 @@ impl PqcEncryptor {
         output_len: u32,
     ) -> Self
     where
-        Xof: crate::algorithms::traits::XofAlgorithm + Send + Sync + 'static,
+        Xof: crate::algorithms::traits::XofAlgorithm,
     {
         self.inner = self.inner.with_xof(deriver, salt, info, output_len);
         self
@@ -155,7 +155,9 @@ impl PqcEncryptor {
     where
         SignerAlgo: SignatureAlgorithm,
     {
-        self.inner = self.inner.with_signer::<SignerAlgo>(signing_key, signer_key_id);
+        self.inner = self
+            .inner
+            .with_signer::<SignerAlgo>(signing_key, signer_key_id);
         self
     }
 
@@ -235,4 +237,4 @@ impl IntoAsyncWriter for PqcEncryptor {
             .with_algorithm::<PqcKem>()
             .into_async_writer(writer)
     }
-} 
+}

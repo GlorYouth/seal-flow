@@ -2,9 +2,9 @@
 //! the decryption workflow.
 //！本示例演示了如何使用 `KeyProvider` trait 来简化解密工作流。
 
-use seal_flow::algorithms::signature::Ed25519;
 use seal_flow::algorithms::asymmetric::Rsa2048;
 use seal_flow::algorithms::hash::Sha256;
+use seal_flow::algorithms::signature::Ed25519;
 use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::error::KeyManagementError;
 use seal_flow::prelude::*;
@@ -31,21 +31,12 @@ impl InMemoryKeyProvider {
     }
 
     /// Helper method to add an asymmetric private key.
-    fn add_asymmetric_private_key(
-        &mut self,
-        key_id: String,
-        key: impl Into<AsymmetricPrivateKey>,
-    ) {
-        self.asymmetric_private_keys
-            .insert(key_id, key.into());
+    fn add_asymmetric_private_key(&mut self, key_id: String, key: impl Into<AsymmetricPrivateKey>) {
+        self.asymmetric_private_keys.insert(key_id, key.into());
     }
 
     /// Helper method to add a signature public key.
-    fn add_signature_public_key(
-        &mut self,
-        key_id: String,
-        key: impl Into<SignaturePublicKey>,
-    ) {
+    fn add_signature_public_key(&mut self, key_id: String, key: impl Into<SignaturePublicKey>) {
         self.signature_public_keys.insert(key_id, key.into());
     }
 }
@@ -53,26 +44,41 @@ impl InMemoryKeyProvider {
 impl KeyProvider for InMemoryKeyProvider {
     /// Looks up a symmetric key by its ID.
     fn get_symmetric_key(&self, key_id: &str) -> Result<SymmetricKey, KeyProviderError> {
-        self.symmetric_keys
-            .get(key_id)
-            .cloned()
-            .ok_or_else(|| KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(key_id.to_string())))
+        self.symmetric_keys.get(key_id).cloned().ok_or_else(|| {
+            KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(
+                key_id.to_string(),
+            ))
+        })
     }
 
     /// Looks up an asymmetric private key by its ID.
-    fn get_asymmetric_private_key(&self, key_id: &str) -> Result<AsymmetricPrivateKey, KeyProviderError> {
+    fn get_asymmetric_private_key(
+        &self,
+        key_id: &str,
+    ) -> Result<AsymmetricPrivateKey, KeyProviderError> {
         self.asymmetric_private_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(key_id.to_string())))
+            .ok_or_else(|| {
+                KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(
+                    key_id.to_string(),
+                ))
+            })
     }
 
     /// Looks up a signature verification public key by its ID.
-    fn get_signature_public_key(&self, key_id: &str) -> Result<SignaturePublicKey, KeyProviderError> {
+    fn get_signature_public_key(
+        &self,
+        key_id: &str,
+    ) -> Result<SignaturePublicKey, KeyProviderError> {
         self.signature_public_keys
             .get(key_id)
             .cloned()
-            .ok_or_else(|| KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(key_id.to_string())))
+            .ok_or_else(|| {
+                KeyProviderError::KeyManagementError(KeyManagementError::KeyNotFound(
+                    key_id.to_string(),
+                ))
+            })
     }
 }
 
@@ -141,13 +147,19 @@ fn run_hybrid_example() -> seal_flow::error::Result<()> {
     // 为接收方生成并存储 KEM 密钥。
     let (pk_kem, sk_kem) = Kem::generate_keypair()?;
     let kem_key_id = "hybrid-kem-key-01".to_string();
-    provider.add_asymmetric_private_key(kem_key_id.clone(), AsymmetricPrivateKey::new(sk_kem.to_bytes()));
+    provider.add_asymmetric_private_key(
+        kem_key_id.clone(),
+        AsymmetricPrivateKey::new(sk_kem.to_bytes()),
+    );
 
     // Generate and store signing keys for the sender. The provider only needs the public key for verification.
     // 为发送方生成并存储签名密钥。验证时，provider 只需要公钥。
     let (pk_sig, sk_sig) = Sig::generate_keypair()?;
     let sig_key_id = "hybrid-sig-key-01".to_string();
-    provider.add_signature_public_key(sig_key_id.clone(), SignaturePublicKey::new(pk_sig.to_bytes()));
+    provider.add_signature_public_key(
+        sig_key_id.clone(),
+        SignaturePublicKey::new(pk_sig.to_bytes()),
+    );
 
     let plaintext = b"This hybrid message is signed and will be decrypted via KeyProvider.";
 
@@ -186,4 +198,4 @@ fn run_hybrid_example() -> seal_flow::error::Result<()> {
     println!("Decryption and signature verification successful! The KeyProvider workflow works for hybrid encryption.");
 
     Ok(())
-} 
+}

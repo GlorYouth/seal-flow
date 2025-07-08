@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use seal_flow::algorithms::signature::Ed25519;
 use seal_flow::algorithms::asymmetric::Rsa2048;
 use seal_flow::algorithms::hash::Sha256;
+use seal_flow::algorithms::signature::Ed25519;
 use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::prelude::*;
+use std::collections::HashMap;
 
 // Define the asymmetric algorithm for Key Encapsulation (KEM).
 // 定义用于密钥封装 (KEM) 的非对称算法。
@@ -28,14 +28,20 @@ impl KeyProvider for InMemoryKeyProvider {
         unimplemented!()
     }
 
-    fn get_asymmetric_private_key(&self, key_id: &str) -> Result<AsymmetricPrivateKey, KeyProviderError> {
+    fn get_asymmetric_private_key(
+        &self,
+        key_id: &str,
+    ) -> Result<AsymmetricPrivateKey, KeyProviderError> {
         self.asymmetric_private_keys
             .get(key_id)
             .cloned()
             .ok_or_else(|| KeyProviderError::KeyNotFound(key_id.to_string()))
     }
 
-    fn get_signature_public_key(&self, key_id: &str) -> Result<SignaturePublicKey, KeyProviderError> {
+    fn get_signature_public_key(
+        &self,
+        key_id: &str,
+    ) -> Result<SignaturePublicKey, KeyProviderError> {
         self.signature_public_keys
             .get(key_id)
             .cloned()
@@ -44,14 +50,20 @@ impl KeyProvider for InMemoryKeyProvider {
 }
 
 impl EncryptionKeyProvider for InMemoryKeyProvider {
-    fn get_asymmetric_public_key(&self, key_id: &str) -> Result<AsymmetricPublicKey, KeyProviderError> {
+    fn get_asymmetric_public_key(
+        &self,
+        key_id: &str,
+    ) -> Result<AsymmetricPublicKey, KeyProviderError> {
         self.asymmetric_public_keys
             .get(key_id)
             .cloned()
             .ok_or_else(|| KeyProviderError::KeyNotFound(key_id.to_string()))
     }
 
-    fn get_signing_private_key(&self, key_id: &str) -> Result<AsymmetricPrivateKey, KeyProviderError> {
+    fn get_signing_private_key(
+        &self,
+        key_id: &str,
+    ) -> Result<AsymmetricPrivateKey, KeyProviderError> {
         self.asymmetric_private_keys
             .get(key_id)
             .cloned()
@@ -73,15 +85,27 @@ fn main() -> seal_flow::error::Result<()> {
         asymmetric_public_keys: HashMap::new(),
         signature_public_keys: HashMap::new(),
     };
-    key_provider.asymmetric_public_keys.insert(kem_key_id.to_string(), AsymmetricPublicKey::new(pk_kem.to_bytes()));
-    key_provider.asymmetric_private_keys.insert(kem_key_id.to_string(), AsymmetricPrivateKey::new(sk_kem.to_bytes()));
-    key_provider.asymmetric_private_keys.insert(sig_key_id.to_string(), AsymmetricPrivateKey::new(sk_sig.to_bytes()));
-    key_provider.signature_public_keys.insert(sig_key_id.to_string(), SignaturePublicKey::new(pk_sig.to_bytes()));
+    key_provider.asymmetric_public_keys.insert(
+        kem_key_id.to_string(),
+        AsymmetricPublicKey::new(pk_kem.to_bytes()),
+    );
+    key_provider.asymmetric_private_keys.insert(
+        kem_key_id.to_string(),
+        AsymmetricPrivateKey::new(sk_kem.to_bytes()),
+    );
+    key_provider.asymmetric_private_keys.insert(
+        sig_key_id.to_string(),
+        AsymmetricPrivateKey::new(sk_sig.to_bytes()),
+    );
+    key_provider.signature_public_keys.insert(
+        sig_key_id.to_string(),
+        SignaturePublicKey::new(pk_sig.to_bytes()),
+    );
 
     let key_provider = std::sync::Arc::new(key_provider);
 
     let plaintext = b"this data will be signed and encrypted";
-    
+
     // The high-level API factory is stateless and reusable.
     // 高级 API 工厂是无状态且可重用的。
     let seal = HybridSeal::new();
@@ -103,7 +127,7 @@ fn main() -> seal_flow::error::Result<()> {
         .with_key_provider(key_provider)
         .slice(&ciphertext)?
         .resolve_and_decrypt()?;
-    
+
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully signed, encrypted, decrypted, and verified data using KeyProvider!");
     Ok(())

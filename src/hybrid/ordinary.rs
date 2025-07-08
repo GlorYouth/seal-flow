@@ -2,13 +2,13 @@
 //!
 //! 普通（单线程、内存中）混合加密和解密。
 
-use seal_crypto::prelude::Key;
 use super::common::create_header;
 use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::impls::ordinary::{decrypt_in_memory, encrypt_in_memory};
+use seal_crypto::prelude::Key;
 
 /// Performs hybrid encryption on in-memory data.
 ///
@@ -130,7 +130,10 @@ where
 
     // 2. KEM Decapsulate to recover the shared secret.
     // 2. KEM 解封装以恢复共享密钥。
-    let shared_secret = A::decapsulate(sk, &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?)?;
+    let shared_secret = A::decapsulate(
+        sk,
+        &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?,
+    )?;
 
     // 3. Derive key if derivation info is present.
     // 3. 如果存在派生信息，则派生密钥。

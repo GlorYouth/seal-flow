@@ -1,5 +1,5 @@
-use seal_flow::prelude::SymmetricKeyGenerator;
 use seal_flow::algorithms::symmetric::Aes256Gcm;
+use seal_flow::prelude::SymmetricKeyGenerator;
 use seal_flow::prelude::*;
 use std::collections::HashMap;
 

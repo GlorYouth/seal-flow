@@ -229,12 +229,7 @@ where
 
         let deriver_fn = Box::new(move |ikm: &[u8]| {
             deriver
-                .derive(
-                    ikm,
-                    salt.as_deref(),
-                    info.as_deref(),
-                    output_len as usize,
-                )
+                .derive(ikm, salt.as_deref(), info.as_deref(), output_len as usize)
                 .map(|dk| Zeroizing::new(dk.as_bytes().to_vec()))
                 .map_err(|e| e.into())
         });
@@ -270,11 +265,7 @@ where
         };
 
         let deriver_fn = Box::new(move |ikm: &[u8]| {
-            let mut reader = deriver.reader(
-                ikm,
-                salt.as_deref(),
-                info.as_deref(),
-            )?;
+            let mut reader = deriver.reader(ikm, salt.as_deref(), info.as_deref())?;
             let mut dek_bytes = vec![0u8; output_len as usize];
             reader.read(&mut dek_bytes);
             Ok(Zeroizing::new(dek_bytes))

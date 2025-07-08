@@ -33,14 +33,20 @@ pub trait KeyProvider {
     ///
     /// 通过 ID 查找非对称私钥。
     /// 用于混合解密中的密钥解包。
-    fn get_asymmetric_private_key(&self, key_id: &str) -> Result<AsymmetricPrivateKey, KeyProviderError>;
+    fn get_asymmetric_private_key(
+        &self,
+        key_id: &str,
+    ) -> Result<AsymmetricPrivateKey, KeyProviderError>;
 
     /// Looks up a signature verification public key by its ID.
     /// Used for verifying metadata signatures during hybrid decryption.
     ///
     /// 通过 ID 查找签名验证公钥。
     /// 用于在混合解密期间验证元数据签名。
-    fn get_signature_public_key(&self, key_id: &str) -> Result<SignaturePublicKey, KeyProviderError>;
+    fn get_signature_public_key(
+        &self,
+        key_id: &str,
+    ) -> Result<SignaturePublicKey, KeyProviderError>;
 }
 
 /// A trait for dynamically looking up cryptographic keys by their ID for encryption.
@@ -71,4 +77,4 @@ pub trait EncryptionKeyProvider {
         &self,
         key_id: &str,
     ) -> Result<AsymmetricPrivateKey, KeyProviderError>;
-} 
+}

@@ -1,7 +1,7 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::Header;
 use crate::common::PendingImpl;
-use crate::error::{KeyManagementError};
+use crate::error::KeyManagementError;
 use crate::keys::provider::KeyProvider;
 use crate::keys::{SymmetricKey, TypedSymmetricKey};
 use crate::seal::traits::{
@@ -135,10 +135,7 @@ impl SymmetricDecryptorBuilder {
     pub fn slice<'a>(self, ciphertext: &'a [u8]) -> crate::Result<PendingInMemoryDecryptor<'a>> {
         let mid_level_pending =
             crate::symmetric::ordinary::PendingDecryptor::from_ciphertext(ciphertext)?;
-        Ok(PendingDecryptor::new(
-            mid_level_pending,
-            self.key_provider,
-        ))
+        Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
     /// Configures parallel decryption from an in-memory byte slice.
@@ -150,10 +147,7 @@ impl SymmetricDecryptorBuilder {
     ) -> crate::Result<PendingInMemoryParallelDecryptor<'a>> {
         let mid_level_pending =
             crate::symmetric::parallel::PendingDecryptor::from_ciphertext(ciphertext)?;
-        Ok(PendingDecryptor::new(
-            mid_level_pending,
-            self.key_provider,
-        ))
+        Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
     /// Configures decryption from a synchronous `Read` stream.
@@ -161,10 +155,7 @@ impl SymmetricDecryptorBuilder {
     /// 从同步 `Read` 流配置解密。
     pub fn reader<R: Read>(self, reader: R) -> crate::Result<PendingStreamingDecryptor<R>> {
         let mid_level_pending = crate::symmetric::streaming::PendingDecryptor::from_reader(reader)?;
-        Ok(PendingDecryptor::new(
-            mid_level_pending,
-            self.key_provider,
-        ))
+        Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
     /// Configures parallel decryption from a synchronous `Read` stream.
@@ -176,10 +167,7 @@ impl SymmetricDecryptorBuilder {
     ) -> crate::Result<PendingParallelStreamingDecryptor<R>> {
         let mid_level_pending =
             crate::symmetric::parallel_streaming::PendingDecryptor::from_reader(reader)?;
-        Ok(PendingDecryptor::new(
-            mid_level_pending,
-            self.key_provider,
-        ))
+        Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
     /// Begins an asynchronous streaming decryption operation.
@@ -192,10 +180,7 @@ impl SymmetricDecryptorBuilder {
     ) -> crate::Result<PendingAsyncStreamingDecryptor<R>> {
         let mid_level_pending =
             crate::symmetric::asynchronous::PendingDecryptor::from_reader(reader).await?;
-        Ok(PendingDecryptor::new(
-            mid_level_pending,
-            self.key_provider,
-        ))
+        Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 }
 
@@ -221,9 +206,7 @@ impl<'a> InMemoryDecryptor for PendingInMemoryDecryptor<'a> {
             .key_provider
             .as_ref()
             .ok_or(KeyManagementError::ProviderMissing)?;
-        let key_id = self
-            .key_id()
-            .ok_or(KeyManagementError::KeyIdMissing)?;
+        let key_id = self.key_id().ok_or(KeyManagementError::KeyIdMissing)?;
         let key = provider.get_symmetric_key(key_id)?;
         self.with_key(key)
     }
@@ -269,9 +252,7 @@ impl<'a> InMemoryDecryptor for PendingInMemoryParallelDecryptor<'a> {
             .key_provider
             .as_ref()
             .ok_or(KeyManagementError::ProviderMissing)?;
-        let key_id = self
-            .key_id()
-            .ok_or(KeyManagementError::KeyIdMissing)?;
+        let key_id = self.key_id().ok_or(KeyManagementError::KeyIdMissing)?;
         let key = provider.get_symmetric_key(key_id)?;
         self.with_key(key)
     }
@@ -320,9 +301,7 @@ impl<R: Read> StreamingDecryptor for PendingStreamingDecryptor<R> {
             .key_provider
             .as_ref()
             .ok_or(KeyManagementError::ProviderMissing)?;
-        let key_id = self
-            .key_id()
-            .ok_or(KeyManagementError::KeyIdMissing)?;
+        let key_id = self.key_id().ok_or(KeyManagementError::KeyIdMissing)?;
         let key = provider.get_symmetric_key(key_id)?;
         self.with_key(key)
     }
@@ -380,9 +359,7 @@ where
             .key_provider
             .as_ref()
             .ok_or(KeyManagementError::ProviderMissing)?;
-        let key_id = self
-            .key_id()
-            .ok_or(KeyManagementError::KeyIdMissing)?;
+        let key_id = self.key_id().ok_or(KeyManagementError::KeyIdMissing)?;
         let key = provider.get_symmetric_key(key_id)?;
         self.with_key_to_writer(key, writer)
     }
@@ -443,9 +420,7 @@ impl<R: AsyncRead + Unpin> AsyncStreamingDecryptor for PendingAsyncStreamingDecr
             .key_provider
             .as_ref()
             .ok_or(KeyManagementError::ProviderMissing)?;
-        let key_id = self
-            .key_id()
-            .ok_or(KeyManagementError::KeyIdMissing)?;
+        let key_id = self.key_id().ok_or(KeyManagementError::KeyIdMissing)?;
         let key = provider.get_symmetric_key(key_id)?;
         self.with_key(key)
     }

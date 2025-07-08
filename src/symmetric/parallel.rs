@@ -88,10 +88,7 @@ impl<'a> PendingDecryptor<'a> {
         self,
         key: S::Key,
         aad: Option<&[u8]>,
-    ) -> Result<Vec<u8>>
-    where
-        S::Key: Send + Sync,
-    {
+    ) -> Result<Vec<u8>> {
         decrypt_body::<S>(key, &self.header, self.ciphertext_body, aad)
     }
 }
@@ -106,8 +103,8 @@ impl<'a> PendingImpl for PendingDecryptor<'a> {
 mod tests {
     use super::*;
     use crate::common::DEFAULT_CHUNK_SIZE;
-    use crate::error::Error as FlowError;
     use crate::error::CryptoError;
+    use crate::error::Error as FlowError;
     use seal_crypto::prelude::SymmetricKeyGenerator;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 
