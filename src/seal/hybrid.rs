@@ -164,9 +164,8 @@ use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::algorithms::{KdfAlgorithm, SignatureAlgorithm, XofAlgorithm};
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
 use decryptor::HybridDecryptorBuilder;
-use encryptor::HybridEncryptor;
-use std::marker::PhantomData;
-use suites::PqcEncryptor;
+use encryptor::{HybridEncryptor, HybridEncryptorBuilder};
+use suites::PqcEncryptorBuilder;
 
 pub mod decryptor;
 pub mod encryptor;
@@ -439,18 +438,15 @@ impl HybridSeal {
     ///
     /// 这将返回一个 `HybridEncryptor` 上下文对象。然后，您可以链式调用以配置高级选项
     /// 或调用执行方法（如 `.to_vec()`）来执行加密。
+    pub fn encrypt_builder<S: SymmetricAlgorithm>(&self) -> HybridEncryptorBuilder<S> {
+        HybridEncryptorBuilder::new()
+    }
+
     pub fn encrypt<S>(&self, pk: AsymmetricPublicKey, kek_id: String) -> HybridEncryptor<S>
     where
         S: SymmetricAlgorithm,
     {
-        HybridEncryptor {
-            pk,
-            kek_id,
-            aad: None,
-            signer: None,
-            derivation_config: None,
-            _phantom: PhantomData,
-        }
+        HybridEncryptorBuilder::<S>::new().with_recipient(pk, kek_id)
     }
 
     /// Begins a hybrid encryption operation using a recommended Post-Quantum Cryptography (PQC) suite.
@@ -462,8 +458,8 @@ impl HybridSeal {
     ///
     /// 这提供了一个简化的 API，使用 `Kyber768` 进行密钥封装，
     /// 使用 `Aes256Gcm` 进行数据封装，这是为后量子安全推荐的组合。
-    pub fn encrypt_pqc_suite(&self, pk: AsymmetricPublicKey, kek_id: String) -> PqcEncryptor {
-        PqcEncryptor::new(pk, kek_id)
+    pub fn encrypt_pqc_suite(&self) -> PqcEncryptorBuilder {
+        PqcEncryptorBuilder::new()
     }
 
     /// Begins a hybrid decryption operation.
@@ -633,7 +629,8 @@ mod tests {
 
         // 3. Encrypt using the PQC suite with options
         let encrypted = seal
-            .encrypt_pqc_suite(enc_pk_wrapped, kek_id.clone())
+            .encrypt_pqc_suite()
+            .with_recipient(enc_pk_wrapped, kek_id.clone())
             .with_options(options)
             .to_vec(plaintext)?;
 
@@ -673,7 +670,8 @@ mod tests {
 
         // Encrypt using the PQC suite
         let encrypted = seal
-            .encrypt_pqc_suite(pk_wrapped, kek_id.clone())
+            .encrypt_pqc_suite()
+            .with_recipient(pk_wrapped, kek_id.clone())
             .to_vec(plaintext)?;
 
         // Decrypt using the generic decryptor
@@ -1076,7 +1074,8 @@ mod tests {
 
         // 3. Encrypt using PQC suite with KDF
         let encrypted = seal
-            .encrypt_pqc_suite(enc_pk_wrapped, kek_id.clone())
+            .encrypt_pqc_suite()
+            .with_recipient(enc_pk_wrapped, kek_id.clone())
             .with_kdf(
                 seal_crypto::schemes::kdf::hkdf::HkdfSha256::default(),
                 Some(salt.to_vec()),

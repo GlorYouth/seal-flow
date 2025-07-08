@@ -220,7 +220,7 @@ async fn main() -> seal_flow::error::Result<()> {
 
     let decrypted7 = pending_decryptor7
         .with_aad(aad)
-        .with_verification_key(verification_key)?
+        .with_verification_key(verification_key)
         .with_key(sk_wrapped)?;
 
     assert_eq!(plaintext, &decrypted7[..]);

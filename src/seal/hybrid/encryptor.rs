@@ -7,6 +7,8 @@ use crate::common::algorithms::{
 };
 use crate::common::header::{DerivationInfo, KdfInfo, XofInfo};
 use crate::common::{DerivationSet, SignerSet};
+use crate::error::KeyManagementError;
+use crate::keys::provider::EncryptionKeyProvider;
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
 use crate::seal::hybrid::{DerivationOptions, HybridEncryptionOptions};
 use crate::seal::traits::{
@@ -22,7 +24,86 @@ use seal_crypto::schemes::xof::shake::{Shake128, Shake256};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
+use std::sync::Arc;
 use tokio::io::AsyncWrite;
+
+/// A builder for hybrid encryption operations.
+///
+/// This builder allows for flexible configuration of the encryption process,
+/// including the use of a key provider.
+///
+/// 混合加密操作的构建器。
+///
+/// 该构建器允许灵活配置加密过程，包括使用密钥提供程序。
+#[derive(Default)]
+pub struct HybridEncryptorBuilder<S: SymmetricAlgorithm> {
+    key_provider: Option<Arc<dyn EncryptionKeyProvider>>,
+    _phantom: PhantomData<S>,
+}
+
+impl<S: SymmetricAlgorithm> HybridEncryptorBuilder<S> {
+    /// Creates a new `HybridEncryptorBuilder`.
+    ///
+    /// 创建一个新的 `HybridEncryptorBuilder`。
+    pub fn new() -> Self {
+        Self {
+            key_provider: None,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Attaches an `EncryptionKeyProvider` to the builder.
+    ///
+    /// This allows the encryptor to resolve recipient keys and signing keys
+    /// using key IDs.
+    ///
+    /// 将一个 `EncryptionKeyProvider` 附加到构建器上。
+    ///
+    /// 这允许加密器使用密钥 ID 来解析接收方密钥和签名密钥。
+    pub fn with_key_provider(mut self, provider: Arc<dyn EncryptionKeyProvider>) -> Self {
+        self.key_provider = Some(provider);
+        self
+    }
+
+    /// Configures the encryptor with a recipient's public key provided directly.
+    ///
+    /// 使用直接提供的接收方公钥配置加密器。
+    pub fn with_recipient(self, pk: AsymmetricPublicKey, kek_id: String) -> HybridEncryptor<S> {
+        HybridEncryptor {
+            pk,
+            kek_id,
+            aad: None,
+            signer: None,
+            derivation_config: None,
+            _phantom: PhantomData,
+            key_provider: self.key_provider,
+        }
+    }
+
+    /// Configures the encryptor with a recipient's key ID.
+    ///
+    /// The public key will be resolved using the attached `EncryptionKeyProvider`.
+    ///
+    /// 使用接收方的密钥 ID 配置加密器。
+    ///
+    /// 将使用附加的 `EncryptionKeyProvider` 解析公钥。
+    pub fn with_recipient_id(self, kek_id: &str) -> crate::Result<HybridEncryptor<S>> {
+        let provider = self
+            .key_provider
+            .as_ref()
+            .ok_or(KeyManagementError::ProviderMissing)?;
+        let pk = provider.get_asymmetric_public_key(kek_id)?;
+        Ok(HybridEncryptor {
+            pk,
+            kek_id: kek_id.to_string(),
+            aad: None,
+            signer: None,
+            derivation_config: None,
+            _phantom: PhantomData,
+            key_provider: self.key_provider,
+        })
+    }
+}
 
 /// A context for hybrid encryption operations, allowing selection of execution mode.
 ///
@@ -37,6 +118,7 @@ where
     pub(crate) signer: Option<SignerSet>,
     pub(crate) derivation_config: Option<DerivationSet>,
     pub(crate) _phantom: PhantomData<S>,
+    key_provider: Option<Arc<dyn EncryptionKeyProvider>>,
 }
 
 impl<S> HybridEncryptor<S>
@@ -203,6 +285,35 @@ where
             deriver_fn,
         });
         self
+    }
+
+    /// Signs the encryption metadata (header) using a key resolved from the `EncryptionKeyProvider`.
+    ///
+    /// 使用从 `EncryptionKeyProvider` 解析的密钥对加密元数据（标头）进行签名。
+    pub fn with_signer_id<SignerAlgo>(mut self, signer_key_id: &str) -> crate::Result<Self>
+    where
+        SignerAlgo: SignatureAlgorithm,
+    {
+        let provider = self
+            .key_provider
+            .as_ref()
+            .ok_or(KeyManagementError::ProviderMissing)?;
+        let signing_key = provider.get_signing_private_key(signer_key_id)?;
+        self.signer = Some(SignerSet {
+            signer_key_id: signer_key_id.to_string(),
+            signer_algorithm: SignerAlgo::ALGORITHM,
+            signer: Box::new(move |message, aad| {
+                let sk = SignerAlgo::PrivateKey::from_bytes(signing_key.as_bytes())?;
+                let mut data_to_sign = message.to_vec();
+                if let Some(aad_data) = aad {
+                    data_to_sign.extend_from_slice(aad_data);
+                }
+                SignerAlgo::sign(&sk, &data_to_sign)
+                    .map(|s| s.0)
+                    .map_err(|e| e.into())
+            }),
+        });
+        Ok(self)
     }
 
     /// Signs the encryption metadata (header) with the given private key.

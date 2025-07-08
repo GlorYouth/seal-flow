@@ -1,4 +1,4 @@
-use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey, SymmetricKey};
+use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey, SignaturePublicKey, SymmetricKey};
 
 #[derive(Debug, thiserror::Error)]
 pub enum KeyProviderError {
@@ -41,4 +41,34 @@ pub trait KeyProvider {
     /// 通过 ID 查找签名验证公钥。
     /// 用于在混合解密期间验证元数据签名。
     fn get_signature_public_key(&self, key_id: &str) -> Result<SignaturePublicKey, KeyProviderError>;
+}
+
+/// A trait for dynamically looking up cryptographic keys by their ID for encryption.
+///
+/// Users can implement this for their own key management systems to integrate
+/// seamlessly with the Encryptor.
+///
+/// 一个通过 ID 动态查找加密密钥以进行加密的 trait。
+///
+/// 用户可以为自己的密钥管理系统实现此 trait，以便与加密器无缝集成。
+pub trait EncryptionKeyProvider {
+    /// Looks up an asymmetric public key by its ID.
+    /// Used for hybrid encryption (recipient's KEM key).
+    ///
+    /// 通过 ID 查找非对称公钥。
+    /// 用于混合加密（接收方的 KEM 密钥）。
+    fn get_asymmetric_public_key(
+        &self,
+        key_id: &str,
+    ) -> Result<AsymmetricPublicKey, KeyProviderError>;
+
+    /// Looks up an asymmetric private key by its ID.
+    /// Used for signing in hybrid encryption (sender's signing key).
+    ///
+    /// 通过 ID 查找非对称私钥。
+    /// 用于混合加密中的签名（发送方的签名密钥）。
+    fn get_signing_private_key(
+        &self,
+        key_id: &str,
+    ) -> Result<AsymmetricPrivateKey, KeyProviderError>;
 } 

@@ -2,9 +2,13 @@
 //!
 //! 该模块为混合加密提供了预先配置、易于使用的算法套件。
 use std::io::{Read, Write};
+use std::sync::Arc;
 #[cfg(feature = "async")]
 use tokio::io::AsyncWrite;
 
+use crate::algorithms::traits::SignatureAlgorithm;
+use crate::keys::provider::EncryptionKeyProvider;
+use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
 use crate::seal::traits::{
     InMemoryEncryptor, IntoAsyncWriter, IntoWriter, StreamingEncryptor as StreamingEncryptorTrait,
 };
@@ -12,8 +16,7 @@ use seal_crypto::{
     schemes::{asymmetric::post_quantum::kyber::Kyber768, symmetric::aes_gcm::Aes256Gcm},
 };
 
-use crate::keys::AsymmetricPublicKey;
-use super::encryptor::HybridEncryptor;
+use super::encryptor::{HybridEncryptor, HybridEncryptorBuilder};
 use super::HybridEncryptionOptions;
 
 /// The recommended Key Encapsulation Mechanism for the Post-Quantum Cryptography (PQC) suite.
@@ -24,6 +27,57 @@ pub type PqcKem = Kyber768;
 ///
 /// 后量子密码学 (PQC) 套件推荐的数据封装机制。
 pub type PqcDek = Aes256Gcm;
+
+/// A builder for the PQC suite encryptor.
+///
+/// This builder provides a simplified API for creating a PQC-suite-based
+/// encryptor, allowing for configuration via a key provider or direct keying.
+///
+/// PQC 套件加密器的构建器。
+///
+/// 此构建器提供了一个简化的 API，用于创建基于 PQC 套件的加密器，
+/// 允许通过密钥提供程序或直接提供密钥进行配置。
+pub struct PqcEncryptorBuilder {
+    inner: HybridEncryptorBuilder<PqcDek>,
+}
+
+impl PqcEncryptorBuilder {
+    /// Creates a new PQC encryptor builder.
+    ///
+    /// 创建一个新的 PQC 加密器构建器。
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: HybridEncryptorBuilder::new(),
+        }
+    }
+
+    /// Attaches an `EncryptionKeyProvider` to the builder.
+    ///
+    /// 将一个 `EncryptionKeyProvider` 附加到构建器上。
+    pub fn with_key_provider(self, provider: Arc<dyn EncryptionKeyProvider>) -> Self {
+        Self {
+            inner: self.inner.with_key_provider(provider),
+        }
+    }
+
+    /// Configures the encryptor with a recipient's public key provided directly.
+    ///
+    /// 使用直接提供的接收方公钥配置加密器。
+    pub fn with_recipient(self, pk: AsymmetricPublicKey, kek_id: String) -> PqcEncryptor {
+        PqcEncryptor {
+            inner: self.inner.with_recipient(pk, kek_id),
+        }
+    }
+
+    /// Configures the encryptor with a recipient's key ID.
+    ///
+    /// 使用接收方的密钥 ID 配置加密器。
+    pub fn with_recipient_id(self, kek_id: &str) -> crate::Result<PqcEncryptor> {
+        self.inner
+            .with_recipient_id(kek_id)
+            .map(|encryptor| PqcEncryptor { inner: encryptor })
+    }
+}
 
 /// An encryptor specifically configured for the recommended Post-Quantum Cryptography (PQC) suite.
 ///
@@ -40,22 +94,6 @@ pub struct PqcEncryptor {
 }
 
 impl PqcEncryptor {
-    /// Creates a new PQC encryptor. This is typically called from `HybridSeal::encrypt_pqc_suite`.
-    ///
-    /// 创建一个新的 PQC 加密器。通常从 `HybridSeal::encrypt_pqc_suite` 调用。
-    pub(crate) fn new(pk: AsymmetricPublicKey, kek_id: String) -> Self {
-        Self {
-            inner: HybridEncryptor {
-                pk,
-                kek_id,
-                aad: None,
-                signer: None,
-                derivation_config: None,
-                _phantom: std::marker::PhantomData,
-            },
-        }
-    }
-
     /// Applies a set of pre-configured options to the encryptor.
     ///
     /// 将一组预先配置的选项应用于加密器。
@@ -104,6 +142,33 @@ impl PqcEncryptor {
     {
         self.inner = self.inner.with_xof(deriver, salt, info, output_len);
         self
+    }
+
+    /// Signs the encryption metadata (header) with the given private key.
+    ///
+    /// 使用给定的私钥对加密元数据（标头）进行签名。
+    pub fn with_signer<SignerAlgo>(
+        mut self,
+        signing_key: AsymmetricPrivateKey,
+        signer_key_id: String,
+    ) -> Self
+    where
+        SignerAlgo: SignatureAlgorithm,
+    {
+        self.inner = self.inner.with_signer::<SignerAlgo>(signing_key, signer_key_id);
+        self
+    }
+
+    /// Signs the encryption metadata (header) using a key resolved from the `EncryptionKeyProvider`.
+    ///
+    /// 使用从 `EncryptionKeyProvider` 解析的密钥对加密元数据（标头）进行签名。
+    pub fn with_signer_id<SignerAlgo>(self, signer_key_id: &str) -> crate::Result<Self>
+    where
+        SignerAlgo: SignatureAlgorithm,
+    {
+        self.inner
+            .with_signer_id::<SignerAlgo>(signer_key_id)
+            .map(|encryptor| Self { inner: encryptor })
     }
 }
 
