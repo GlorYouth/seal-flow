@@ -563,7 +563,7 @@ mod tests {
 
         let decrypted = pending
             .with_aad(aad)
-            .with_verification_key(verification_key.clone())?
+            .with_verification_key(verification_key.clone())    
             .with_typed_key::<TestKem, TestDek>(&enc_sk)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
@@ -656,7 +656,7 @@ mod tests {
 
         let decrypted = pending
             .with_aad(aad)
-            .with_verification_key(verification_key.clone())?
+            .with_verification_key(verification_key.clone())
             .with_typed_key::<suites::PqcKem, suites::PqcDek>(&enc_sk)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
@@ -875,7 +875,7 @@ mod tests {
             .decrypt()
             .slice(&encrypted)?
             .with_aad(aad)
-            .with_verification_key(verification_key.clone())?
+            .with_verification_key(verification_key.clone())
             .with_typed_key::<TestKem, TestDek>(&enc_sk)?;
         assert_eq!(decrypted.as_slice(), plaintext);
 
@@ -884,7 +884,7 @@ mod tests {
             .decrypt()
             .slice(&encrypted)?
             .with_aad(b"wrong aad")
-            .with_verification_key(verification_key.clone())?
+            .with_verification_key(verification_key.clone())
             .with_typed_key::<TestKem, TestDek>(&enc_sk);
         assert!(res.is_err(), "Decryption should fail with wrong AAD");
         assert!(matches!(res.err(), Some(Error::Crypto(_))));
@@ -893,7 +893,7 @@ mod tests {
         let res2 = seal
             .decrypt()
             .slice(&encrypted)?
-            .with_verification_key(verification_key)?
+            .with_verification_key(verification_key)
             .with_typed_key::<TestKem, TestDek>(&enc_sk);
         assert!(res2.is_err(), "Decryption should fail with no AAD");
 
@@ -1264,7 +1264,7 @@ mod tests {
                 .async_reader(Cursor::new(&encrypted))
                 .await?
                 .with_aad(aad)
-                .with_verification_key(verification_key.clone())?
+                .with_verification_key(verification_key.clone())
                 .with_typed_key::<TestKem, TestDek>(enc_sk.clone())
                 .await?;
             let mut decrypted_ok = Vec::new();
@@ -1277,7 +1277,7 @@ mod tests {
                 .async_reader(Cursor::new(&encrypted))
                 .await?
                 .with_aad(b"wrong-aad")
-                .with_verification_key(verification_key)?
+                .with_verification_key(verification_key)
                 .with_typed_key::<TestKem, TestDek>(enc_sk.clone())
                 .await;
             assert!(res.is_err());

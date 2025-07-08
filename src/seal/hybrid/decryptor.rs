@@ -7,6 +7,7 @@ use crate::common::PendingImpl;
 use crate::error::{FormatError, KeyManagementError};
 use crate::keys::provider::KeyProvider;
 use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey, TypedAsymmetricPrivateKey};
+use crate::seal::traits::{WithAad, WithVerificationKey};
 use seal_crypto::schemes::asymmetric::{
     post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
     traditional::rsa::{Rsa2048, Rsa4096},
@@ -29,6 +30,20 @@ pub struct PendingDecryptor<T> {
     aad: Option<Vec<u8>>,
     verification_key: Option<SignaturePublicKey>,
     key_provider: Option<Arc<dyn KeyProvider>>,
+}
+
+impl<T: PendingImpl> WithAad for PendingDecryptor<T> {
+    fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
+        self.aad = Some(aad.into());
+        self
+    }
+}
+
+impl<T: PendingImpl> WithVerificationKey for PendingDecryptor<T> {
+    fn with_verification_key(mut self, verification_key: SignaturePublicKey) -> Self {
+        self.verification_key = Some(verification_key);
+        self
+    }
 }
 
 impl<T: PendingImpl> PendingDecryptor<T> {
@@ -70,20 +85,15 @@ impl<T: PendingImpl> PendingDecryptor<T> {
     ///
     /// 为此解密操作设置关联数据 (AAD)。
     /// AAD 必须与加密时提供的值匹配。
-    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
-        self.aad = Some(aad.into());
-        self
+    pub fn with_aad(self, aad: impl Into<Vec<u8>>) -> Self {
+        <Self as WithAad>::with_aad(self, aad)
     }
 
     /// Supplies a verification key from raw bytes
     ///
     /// 提供原始字节形式的验证密钥。
-    pub fn with_verification_key(
-        mut self,
-        verification_key: SignaturePublicKey,
-    ) -> crate::Result<Self> {
-        self.verification_key = Some(verification_key);
-        Ok(self)
+    pub fn with_verification_key(self, verification_key: SignaturePublicKey) -> Self {
+        <Self as WithVerificationKey>::with_verification_key(self, verification_key)
     }
 }
 

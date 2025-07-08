@@ -6,6 +6,7 @@
 
 use crate::common::header::Header;
 use crate::error::Result;
+use crate::keys::SignaturePublicKey;
 use std::io::{Read, Write};
 #[cfg(feature = "async")]
 use tokio::io::AsyncRead;
@@ -25,11 +26,21 @@ pub trait PendingDecryptor {
 /// A trait for decryptors that can be configured with Associated Authenticated Data (AAD).
 ///
 /// 用于可以通过关联验证数据 (AAD) 进行配置的解密器的 trait。
-pub trait WithAad<T> {
+pub trait WithAad {
     /// Sets the Associated Data (AAD) for this decryption operation.
     ///
     /// 为此解密操作设置关联数据 (AAD)。
-    fn with_aad(self, aad: impl Into<Vec<u8>>) -> T;
+    fn with_aad(self, aad: impl Into<Vec<u8>>) -> Self;
+}
+
+/// A trait for decryptors that can be configured with a verification key.
+///
+/// 用于可以通过验证密钥进行配置的解密器的 trait。
+pub trait WithVerificationKey {
+    /// Supplies a verification key.
+    ///
+    /// 提供验证密钥。
+    fn with_verification_key(self, verification_key: SignaturePublicKey) -> Self;
 }
 
 /// A trait for in-memory decryption operations.

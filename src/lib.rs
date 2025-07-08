@@ -43,6 +43,7 @@ pub mod prelude {
         AsymmetricPrivateKey, AsymmetricPublicKey, SignaturePublicKey, SymmetricKey,
     };
     pub use crate::seal::{HybridSeal, SymmetricSeal};
+    pub use crate::seal::hybrid::HybridEncryptionOptions;
     pub use crate::keys::provider::{KeyProvider, KeyProviderError};
     pub use crate::seal::traits::*;
     pub use crate::common::algorithms::{

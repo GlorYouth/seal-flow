@@ -55,7 +55,7 @@ impl<T: PendingImpl> PendingDecryptorTrait for PendingDecryptor<T> {
     }
 }
 
-impl<T: PendingImpl> WithAad<Self> for PendingDecryptor<T> {
+impl<T: PendingImpl> WithAad for PendingDecryptor<T> {
     /// Sets the Associated Data (AAD) for this decryption operation.
     /// The AAD must match the value provided during encryption.
     ///
