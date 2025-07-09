@@ -4,6 +4,7 @@ use bincode::{Decode, Encode};
 ///
 /// 对称加密算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SymmetricAlgorithm {
     Aes128Gcm,
     Aes256Gcm,
@@ -15,6 +16,7 @@ pub enum SymmetricAlgorithm {
 ///
 /// 非对称加密算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum AsymmetricAlgorithm {
     Rsa2048Sha256,
     Rsa4096Sha256,
@@ -23,10 +25,13 @@ pub enum AsymmetricAlgorithm {
     Kyber1024,
 }
 
+
+
 /// Digital signature algorithm enum.
 ///
 /// 数字签名算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SignatureAlgorithm {
     Dilithium2,
     Dilithium3,
@@ -39,6 +44,7 @@ pub enum SignatureAlgorithm {
 ///
 /// 密钥派生函数 (KDF) 算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum KdfAlgorithm {
     HkdfSha256,
     HkdfSha384,
@@ -49,6 +55,7 @@ pub enum KdfAlgorithm {
 ///
 /// 可扩展输出函数 (XOF) 算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Decode, Encode)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum XofAlgorithm {
     Shake128,
     Shake256,
