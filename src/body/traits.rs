@@ -7,8 +7,21 @@ use crate::keys::TypedSymmetricKey;
 use std::io::{Read, Write};
 
 pub trait OrdinaryBodyProcessor {
-    fn encrypt_in_memory(&self, key: TypedSymmetricKey, nonce: &[u8; 12], header_bytes: Vec<u8>, plaintext: &[u8], aad: Option<&[u8]>) -> Result<Vec<u8>>;
-    fn decrypt_in_memory(&self, key: TypedSymmetricKey, nonce: &[u8; 12], ciphertext: &[u8], aad: Option<&[u8]>) -> Result<Vec<u8>>;
+    fn encrypt_in_memory(
+        &self,
+        key: TypedSymmetricKey,
+        nonce: &[u8; 12],
+        header_bytes: Vec<u8>,
+        plaintext: &[u8],
+        aad: Option<&[u8]>,
+    ) -> Result<Vec<u8>>;
+    fn decrypt_in_memory(
+        &self,
+        key: TypedSymmetricKey,
+        nonce: &[u8; 12],
+        ciphertext: &[u8],
+        aad: Option<&[u8]>,
+    ) -> Result<Vec<u8>>;
 }
 
 pub trait StreamingBodyProcessor {
@@ -30,8 +43,21 @@ pub trait StreamingBodyProcessor {
 }
 
 pub trait ParallelBodyProcessor {
-    fn encrypt_parallel(&self, key: TypedSymmetricKey, base_nonce: &[u8; 12], header_bytes: Vec<u8>, plaintext: &[u8], aad: Option<&[u8]>) -> Result<Vec<u8>>;
-    fn decrypt_parallel(&self, key: TypedSymmetricKey, base_nonce: &[u8; 12], ciphertext: &[u8], aad: Option<&[u8]>) -> Result<Vec<u8>>;
+    fn encrypt_parallel(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: &[u8; 12],
+        header_bytes: Vec<u8>,
+        plaintext: &[u8],
+        aad: Option<&[u8]>,
+    ) -> Result<Vec<u8>>;
+    fn decrypt_parallel(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: &[u8; 12],
+        ciphertext: &[u8],
+        aad: Option<&[u8]>,
+    ) -> Result<Vec<u8>>;
 }
 
 pub trait ParallelStreamingBodyProcessor {

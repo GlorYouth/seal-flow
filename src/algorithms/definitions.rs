@@ -74,7 +74,8 @@ macro_rules! impl_symmetric_algorithm {
                     $key_variant(key) => key,
                     _ => return Err(Error::Format(FormatError::InvalidKeyType)),
                 };
-                <$algo>::decrypt_to_buffer(&key, nonce, ciphertext, output, aad).map_err(Error::from)
+                <$algo>::decrypt_to_buffer(&key, nonce, ciphertext, output, aad)
+                    .map_err(Error::from)
             }
 
             fn clone_box(&self) -> Box<dyn SymmetricAlgorithm> {
@@ -103,11 +104,11 @@ macro_rules! impl_symmetric_algorithm {
 pub mod symmetric {
     use super::*;
     use crate::keys::TypedSymmetricKey;
+    use seal_crypto::prelude::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor};
     pub use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};
     pub use seal_crypto::schemes::symmetric::chacha20_poly1305::{
         ChaCha20Poly1305, XChaCha20Poly1305,
     };
-    use seal_crypto::prelude::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor};
 
     impl_symmetric_algorithm!(
         Aes128GcmWrapper,
@@ -193,7 +194,9 @@ macro_rules! impl_asymmetric_algorithm {
 // --- Asymmetric Algorithms ---
 pub mod asymmetric {
     use super::*;
-    use crate::keys::{TypedAsymmetricKeyPair, TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey};
+    use crate::keys::{
+        TypedAsymmetricKeyPair, TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey,
+    };
     use seal_crypto::prelude::{Kem, KeyGenerator};
     pub use seal_crypto::schemes::asymmetric::post_quantum::kyber::{
         Kyber1024, Kyber512, Kyber768,
@@ -239,7 +242,9 @@ pub mod asymmetric {
 }
 
 pub mod hybrid {
-    use crate::algorithms::traits::{AsymmetricAlgorithm, HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm};
+    use crate::algorithms::traits::{
+        AsymmetricAlgorithm, HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm,
+    };
     use crate::keys::{TypedAsymmetricKeyPair, TypedSymmetricKey};
     use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey};
     use crate::zeroize::Zeroizing;
@@ -251,8 +256,14 @@ pub mod hybrid {
     }
 
     impl HybridAlgorithm {
-        pub fn new(asymmetric_algorithm: Box<dyn AsymmetricAlgorithm>, symmetric_algorithm: Box<dyn SymmetricAlgorithm>) -> Self {
-            Self { asymmetric_algorithm, symmetric_algorithm }
+        pub fn new(
+            asymmetric_algorithm: Box<dyn AsymmetricAlgorithm>,
+            symmetric_algorithm: Box<dyn SymmetricAlgorithm>,
+        ) -> Self {
+            Self {
+                asymmetric_algorithm,
+                symmetric_algorithm,
+            }
         }
     }
 
@@ -275,12 +286,20 @@ pub mod hybrid {
             self.asymmetric_algorithm.algorithm()
         }
 
-        fn encapsulate_key(&self, public_key: &TypedAsymmetricPublicKey) -> crate::Result<(Zeroizing<Vec<u8>>, Vec<u8>)> {
+        fn encapsulate_key(
+            &self,
+            public_key: &TypedAsymmetricPublicKey,
+        ) -> crate::Result<(Zeroizing<Vec<u8>>, Vec<u8>)> {
             self.asymmetric_algorithm.encapsulate_key(public_key)
         }
 
-        fn decapsulate_key(&self, private_key: &TypedAsymmetricPrivateKey, encapsulated_key: &Zeroizing<Vec<u8>>) -> crate::Result<Zeroizing<Vec<u8>>> {
-            self.asymmetric_algorithm.decapsulate_key(private_key, encapsulated_key)
+        fn decapsulate_key(
+            &self,
+            private_key: &TypedAsymmetricPrivateKey,
+            encapsulated_key: &Zeroizing<Vec<u8>>,
+        ) -> crate::Result<Zeroizing<Vec<u8>>> {
+            self.asymmetric_algorithm
+                .decapsulate_key(private_key, encapsulated_key)
         }
 
         fn clone_box(&self) -> Box<dyn AsymmetricAlgorithm> {
@@ -297,20 +316,49 @@ pub mod hybrid {
             self.symmetric_algorithm.algorithm()
         }
 
-        fn encrypt(&self, key: TypedSymmetricKey, nonce: &[u8], plaintext: &[u8], aad: Option<&[u8]>) -> crate::Result<Vec<u8>> {
+        fn encrypt(
+            &self,
+            key: TypedSymmetricKey,
+            nonce: &[u8],
+            plaintext: &[u8],
+            aad: Option<&[u8]>,
+        ) -> crate::Result<Vec<u8>> {
             self.symmetric_algorithm.encrypt(key, nonce, plaintext, aad)
         }
 
-        fn encrypt_to_buffer(&self, key: TypedSymmetricKey, nonce: &[u8], plaintext: &[u8], output: &mut [u8], aad: Option<&[u8]>) -> crate::Result<usize> {
-            self.symmetric_algorithm.encrypt_to_buffer(key, nonce, plaintext, output, aad)
+        fn encrypt_to_buffer(
+            &self,
+            key: TypedSymmetricKey,
+            nonce: &[u8],
+            plaintext: &[u8],
+            output: &mut [u8],
+            aad: Option<&[u8]>,
+        ) -> crate::Result<usize> {
+            self.symmetric_algorithm
+                .encrypt_to_buffer(key, nonce, plaintext, output, aad)
         }
 
-        fn decrypt(&self, key: TypedSymmetricKey, nonce: &[u8], aad: Option<&[u8]>, ciphertext: &[u8]) -> crate::Result<Vec<u8>> {
-            self.symmetric_algorithm.decrypt(key, nonce, aad, ciphertext)
+        fn decrypt(
+            &self,
+            key: TypedSymmetricKey,
+            nonce: &[u8],
+            aad: Option<&[u8]>,
+            ciphertext: &[u8],
+        ) -> crate::Result<Vec<u8>> {
+            self.symmetric_algorithm
+                .decrypt(key, nonce, aad, ciphertext)
         }
 
-        fn decrypt_to_buffer(&self, key: TypedSymmetricKey, nonce: &[u8], ciphertext: &[u8], output: &mut [u8], aad: Option<&[u8]>) -> crate::Result<usize> {
-            self.symmetric_algorithm.decrypt_to_buffer(key, nonce, ciphertext, output, aad)
+        fn decrypt_to_buffer(
+            &self,
+            key: TypedSymmetricKey,
+            nonce: &[u8],
+            ciphertext: &[u8],
+            output: &mut [u8],
+            aad: Option<&[u8]>,
+        ) -> crate::Result<usize> {
+            self.symmetric_algorithm
+                .decrypt_to_buffer(key, nonce, ciphertext, output, aad)
         }
 
         fn clone_box(&self) -> Box<dyn SymmetricAlgorithm> {
@@ -328,10 +376,8 @@ pub mod hybrid {
         fn tag_size(&self) -> usize {
             self.symmetric_algorithm.tag_size()
         }
-
     }
 }
-
 
 // --- Signature Algorithms ---
 pub mod signature {

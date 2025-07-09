@@ -191,12 +191,7 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
 
         let encrypted = processor
-            .encrypt_parallel(
-                key.clone(),
-                "test_key_id_1".to_string(),
-                plaintext,
-                None,
-            )
+            .encrypt_parallel(key.clone(), "test_key_id_1".to_string(), plaintext, None)
             .unwrap();
 
         let result = processor.decrypt_parallel(key.clone(), &encrypted, None);
@@ -223,9 +218,7 @@ mod tests {
         assert_eq!(header.payload.key_id(), Some("test_key_id"));
 
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted_body = pending
-            .into_plaintext(&wrapper, key.clone(), None)
-            .unwrap();
+        let decrypted_body = pending.into_plaintext(&wrapper, key.clone(), None).unwrap();
 
         assert_eq!(plaintext, decrypted_body.as_slice());
     }

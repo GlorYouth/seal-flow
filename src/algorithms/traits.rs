@@ -2,11 +2,11 @@
 //!
 //! 定义用于类型安全算法规范的核心 trait。
 
-use crate::{common, keys::TypedAsymmetricKeyPair};
 use crate::error::Result;
+use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+use crate::{common, keys::TypedAsymmetricKeyPair};
 use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
-use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 
 macro_rules! impl_trait_for_box {
     ($trait:ident {
@@ -27,7 +27,6 @@ macro_rules! impl_trait_for_box {
         }
     };
 }
-
 
 /// Represents a concrete symmetric encryption algorithm.
 /// This is an object-safe trait that erases the concrete algorithm type.
@@ -134,12 +133,19 @@ pub trait AsymmetricAlgorithm: Send + Sync + 'static {
     /// Encapsulates a key.
     ///
     /// 封装一个密钥。
-    fn encapsulate_key(&self, public_key: &TypedAsymmetricPublicKey) -> Result<(Zeroizing<Vec<u8>>, Vec<u8>)>;
+    fn encapsulate_key(
+        &self,
+        public_key: &TypedAsymmetricPublicKey,
+    ) -> Result<(Zeroizing<Vec<u8>>, Vec<u8>)>;
 
     /// Decapsulates a key.
     ///
     /// 解封装一个密钥。
-    fn decapsulate_key(&self, private_key: &TypedAsymmetricPrivateKey, encapsulated_key: &Zeroizing<Vec<u8>>) -> Result<Zeroizing<Vec<u8>>>;
+    fn decapsulate_key(
+        &self,
+        private_key: &TypedAsymmetricPrivateKey,
+        encapsulated_key: &Zeroizing<Vec<u8>>,
+    ) -> Result<Zeroizing<Vec<u8>>>;
 
     fn generate_keypair(&self) -> Result<TypedAsymmetricKeyPair>;
 
@@ -181,8 +187,7 @@ impl AsymmetricAlgorithm for Box<dyn HybridAlgorithm> {
         private_key: &TypedAsymmetricPrivateKey,
         encapsulated_key: &Zeroizing<Vec<u8>>,
     ) -> Result<Zeroizing<Vec<u8>>> {
-        self.as_ref()
-            .decapsulate_key(private_key, encapsulated_key)
+        self.as_ref().decapsulate_key(private_key, encapsulated_key)
     }
     fn generate_keypair(&self) -> Result<TypedAsymmetricKeyPair> {
         self.as_ref().generate_keypair()

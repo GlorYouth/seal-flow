@@ -43,8 +43,7 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
         let total_body_size = if plaintext.is_empty() {
             0
         } else {
-            (num_chunks.saturating_sub(1)) * (chunk_size + tag_size)
-                + (last_chunk_len + tag_size)
+            (num_chunks.saturating_sub(1)) * (chunk_size + tag_size) + (last_chunk_len + tag_size)
         };
         let mut final_output = Vec::with_capacity(4 + header_bytes.len() + total_body_size);
         final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());

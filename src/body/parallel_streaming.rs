@@ -105,7 +105,13 @@ where
                     out_buffer.resize(capacity, 0);
 
                     let result = algo_clone
-                        .encrypt_to_buffer(key.clone(), &nonce, &in_buffer, &mut out_buffer, aad_val)
+                        .encrypt_to_buffer(
+                            key.clone(),
+                            &nonce,
+                            &in_buffer,
+                            &mut out_buffer,
+                            aad_val,
+                        )
                         .map(|bytes_written| {
                             out_buffer.truncate(bytes_written);
                             out_buffer
@@ -255,7 +261,7 @@ where
         // --- Thread 2: Parallel Decryptor ---
         // --- 线程 2: 并行解密器 ---
         let dec_chunk_tx_clone = dec_chunk_tx.clone();
-            let algo_clone = algorithm.clone();
+        let algo_clone = algorithm.clone();
         let aad_clone = Arc::clone(&aad_arc);
         let in_pool = Arc::clone(&pool);
         let out_pool = Arc::new(BufferPool::new(chunk_size as usize));
@@ -275,7 +281,13 @@ where
                     out_buffer.resize(capacity, 0);
 
                     let result = algo_clone
-                        .decrypt_to_buffer(key.clone(), &nonce, &in_buffer, &mut out_buffer, aad_val)
+                        .decrypt_to_buffer(
+                            key.clone(),
+                            &nonce,
+                            &in_buffer,
+                            &mut out_buffer,
+                            aad_val,
+                        )
                         .map(|bytes_written| {
                             out_buffer.truncate(bytes_written);
                             out_buffer

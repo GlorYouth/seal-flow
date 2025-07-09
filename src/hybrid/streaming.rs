@@ -2,15 +2,13 @@
 //!
 //! 同步、流式混合加密和解密实现。
 use super::common::create_header;
-use crate::algorithms::traits::{
-    HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm,
-};
+use super::traits::HybridStreamingProcessor;
+use crate::algorithms::traits::{HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm};
 use crate::body::traits::StreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
-use super::traits::HybridStreamingProcessor;
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 
@@ -52,21 +50,20 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridStreamingProcessor for H {
         aad: Option<&'a [u8]>,
     ) -> Result<Box<dyn Read + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
-        let (encapsulated_key, _chunk_size, base_nonce, derivation_info) =
-            match header.payload {
-                HeaderPayload::Hybrid {
-                    encrypted_dek,
-                    stream_info: Some(info),
-                    derivation_info,
-                    ..
-                } => (
-                    Zeroizing::new(encrypted_dek.clone()),
-                    info.chunk_size,
-                    info.base_nonce,
-                    derivation_info,
-                ),
-                _ => return Err(Error::Format(FormatError::InvalidHeader)),
-            };
+        let (encapsulated_key, _chunk_size, base_nonce, derivation_info) = match header.payload {
+            HeaderPayload::Hybrid {
+                encrypted_dek,
+                stream_info: Some(info),
+                derivation_info,
+                ..
+            } => (
+                Zeroizing::new(encrypted_dek.clone()),
+                info.chunk_size,
+                info.base_nonce,
+                derivation_info,
+            ),
+            _ => return Err(Error::Format(FormatError::InvalidHeader)),
+        };
 
         let shared_secret = self
             .asymmetric_algorithm()
@@ -118,21 +115,21 @@ impl<R: Read> PendingDecryptor<R> {
     {
         let reader = Box::new(self.reader);
 
-        let (encapsulated_key, _chunk_size, base_nonce, derivation_info) =
-            match self.header.payload {
-                HeaderPayload::Hybrid {
-                    encrypted_dek,
-                    stream_info: Some(info),
-                    derivation_info,
-                    ..
-                } => (
-                    Zeroizing::new(encrypted_dek.clone()),
-                    info.chunk_size,
-                    info.base_nonce,
-                    derivation_info,
-                ),
-                _ => return Err(Error::Format(FormatError::InvalidHeader)),
-            };
+        let (encapsulated_key, _chunk_size, base_nonce, derivation_info) = match self.header.payload
+        {
+            HeaderPayload::Hybrid {
+                encrypted_dek,
+                stream_info: Some(info),
+                derivation_info,
+                ..
+            } => (
+                Zeroizing::new(encrypted_dek.clone()),
+                info.chunk_size,
+                info.base_nonce,
+                derivation_info,
+            ),
+            _ => return Err(Error::Format(FormatError::InvalidHeader)),
+        };
 
         let shared_secret = algorithm
             .asymmetric_algorithm()
@@ -144,8 +141,10 @@ impl<R: Read> PendingDecryptor<R> {
             shared_secret
         };
 
-        let dek =
-            TypedSymmetricKey::from_bytes(dek.as_slice(), algorithm.symmetric_algorithm().algorithm())?;
+        let dek = TypedSymmetricKey::from_bytes(
+            dek.as_slice(),
+            algorithm.symmetric_algorithm().algorithm(),
+        )?;
 
         let algo = algorithm.symmetric_algorithm();
         StreamingBodyProcessor::decrypt_from_stream(&algo, dek, base_nonce, reader, aad)
@@ -322,9 +321,7 @@ mod tests {
         }
 
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let mut decryptor = pending
-            .into_decryptor(algorithm, &sk, None)
-            .unwrap();
+        let mut decryptor = pending.into_decryptor(algorithm, &sk, None).unwrap();
 
         let result = decryptor.read_to_end(&mut Vec::new());
         assert!(result.is_err());

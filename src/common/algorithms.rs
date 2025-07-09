@@ -25,8 +25,6 @@ pub enum AsymmetricAlgorithm {
     Kyber1024,
 }
 
-
-
 /// Digital signature algorithm enum.
 ///
 /// 数字签名算法枚举。

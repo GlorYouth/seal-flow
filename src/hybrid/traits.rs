@@ -4,8 +4,8 @@
 
 use crate::common::{DerivationSet, SignerSet};
 use crate::error::Result;
-use crate::keys::TypedAsymmetricPublicKey;
 use crate::keys::TypedAsymmetricPrivateKey;
+use crate::keys::TypedAsymmetricPublicKey;
 use std::io::{Read, Write};
 
 /// Trait for ordinary (in-memory) hybrid encryption.

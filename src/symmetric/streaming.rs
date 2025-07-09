@@ -67,13 +67,7 @@ impl<R: Read> PendingDecryptor<R> {
             } => info.base_nonce,
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
-        let inner = DecryptorImpl::new(
-            self.reader,
-            algorithm.clone_box(),
-            key,
-            base_nonce,
-            aad,
-        );
+        let inner = DecryptorImpl::new(self.reader, algorithm.clone_box(), key, base_nonce, aad);
         Ok(Decryptor { inner })
     }
 }
@@ -179,9 +173,14 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::new(&mut encrypted_data, &wrapper, key.clone(), key_id.clone(), aad)
-                .unwrap();
+        let mut encryptor = Encryptor::new(
+            &mut encrypted_data,
+            &wrapper,
+            key.clone(),
+            key_id.clone(),
+            aad,
+        )
+        .unwrap();
         encryptor.write(plaintext).unwrap();
         encryptor.finish().unwrap();
 
@@ -295,8 +294,14 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         // Encrypt
         let mut encrypted_data = Vec::new();
-        let mut encryptor =
-            Encryptor::new(&mut encrypted_data, &wrapper1, key.clone(), "key1".to_string(), None).unwrap();
+        let mut encryptor = Encryptor::new(
+            &mut encrypted_data,
+            &wrapper1,
+            key.clone(),
+            "key1".to_string(),
+            None,
+        )
+        .unwrap();
         encryptor.write(plaintext).unwrap();
         encryptor.finish().unwrap();
 

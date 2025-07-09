@@ -3,18 +3,15 @@
 //! 实现并行流式混合加解密方案。
 
 use super::common::create_header;
-use crate::algorithms::traits::{
-    HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm,
-};
+use super::traits::HybridParallelStreamingProcessor;
+use crate::algorithms::traits::HybridAlgorithm as HybridAlgorithmTrait;
 use crate::body::traits::ParallelStreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
-use super::traits::HybridParallelStreamingProcessor;
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
-use std::sync::Arc;
 
 impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelStreamingProcessor for H {
     fn encrypt_pipeline<'a>(
@@ -45,7 +42,9 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelStreamingProcessor for H {
         writer.write_all(&header_bytes)?;
 
         let algo = self.symmetric_algorithm().clone_box();
-        ParallelStreamingBodyProcessor::encrypt_pipeline(&algo, dek, base_nonce, reader, writer, aad)
+        ParallelStreamingBodyProcessor::encrypt_pipeline(
+            &algo, dek, base_nonce, reader, writer, aad,
+        )
     }
 
     fn decrypt_pipeline<'a>(
@@ -84,7 +83,9 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelStreamingProcessor for H {
             TypedSymmetricKey::from_bytes(dek.as_slice(), self.symmetric_algorithm().algorithm())?;
 
         let algo = self.symmetric_algorithm().clone_box();
-        ParallelStreamingBodyProcessor::decrypt_pipeline(&algo, dek, base_nonce, reader, writer, aad)
+        ParallelStreamingBodyProcessor::decrypt_pipeline(
+            &algo, dek, base_nonce, reader, writer, aad,
+        )
     }
 }
 
@@ -159,11 +160,15 @@ where
             shared_secret
         };
 
-        let dek =
-            TypedSymmetricKey::from_bytes(dek.as_slice(), algorithm.symmetric_algorithm().algorithm())?;
+        let dek = TypedSymmetricKey::from_bytes(
+            dek.as_slice(),
+            algorithm.symmetric_algorithm().algorithm(),
+        )?;
 
         let algo = algorithm.symmetric_algorithm().clone_box();
-        ParallelStreamingBodyProcessor::decrypt_pipeline(&algo, dek, base_nonce, reader, writer, aad)
+        ParallelStreamingBodyProcessor::decrypt_pipeline(
+            &algo, dek, base_nonce, reader, writer, aad,
+        )
     }
 }
 
@@ -188,7 +193,6 @@ mod tests {
     use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
     use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
-    use seal_crypto::zeroize::Zeroizing;
     use std::io::Cursor;
 
     fn get_test_data(size: usize) -> Vec<u8> {
@@ -380,8 +384,12 @@ mod tests {
         // Decrypt with no AAD fails
         let mut decrypted_data_fail2 = Vec::new();
         let pending_fail2 = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result2 =
-            pending_fail2.decrypt_to_writer(get_test_algorithm(), &sk, &mut decrypted_data_fail2, None);
+        let result2 = pending_fail2.decrypt_to_writer(
+            get_test_algorithm(),
+            &sk,
+            &mut decrypted_data_fail2,
+            None,
+        );
         assert!(result2.is_err());
     }
 

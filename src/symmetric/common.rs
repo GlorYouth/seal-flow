@@ -31,4 +31,3 @@ pub fn create_header<S: SymmetricAlgorithm>(
     };
     Ok((header, base_nonce))
 }
-

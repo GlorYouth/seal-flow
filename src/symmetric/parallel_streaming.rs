@@ -77,8 +77,8 @@ impl<'a, S: SymmetricAlgorithm> ParallelStreaming<'a, S> {
     }
 }
 
-impl<'a, S: SymmetricAlgorithm + Send + Sync + 'a>
-    SymmetricParallelStreamingProcessor for ParallelStreaming<'a, S>
+impl<'a, S: SymmetricAlgorithm + Send + Sync + 'a> SymmetricParallelStreamingProcessor
+    for ParallelStreaming<'a, S>
 {
     fn encrypt_pipeline<'b>(
         &self,
@@ -107,7 +107,6 @@ impl<'a, S: SymmetricAlgorithm + Send + Sync + 'a>
         pending.decrypt_to_writer(self.algorithm.clone(), key, writer, aad)
     }
 }
-
 
 #[cfg(test)]
 mod tests {

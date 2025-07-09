@@ -78,8 +78,8 @@ pub mod flows {
     pub use crate::common::header;
 }
 
-pub(crate) mod common;
 pub(crate) mod body;
+pub(crate) mod common;
 
 pub mod algorithms;
 pub use error::{Error, Result};

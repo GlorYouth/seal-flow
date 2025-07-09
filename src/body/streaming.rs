@@ -40,8 +40,7 @@ impl<W: Write> EncryptorImpl<W> {
         base_nonce: [u8; 12],
         aad: Option<&[u8]>,
     ) -> Result<Self> {
-        let encrypted_chunk_buffer =
-            vec![0u8; DEFAULT_CHUNK_SIZE as usize + algorithm.tag_size()];
+        let encrypted_chunk_buffer = vec![0u8; DEFAULT_CHUNK_SIZE as usize + algorithm.tag_size()];
         Ok(Self {
             writer,
             algorithm,
@@ -65,14 +64,16 @@ impl<W: Write> EncryptorImpl<W> {
     pub fn finish(mut self) -> Result<()> {
         if !self.buffer.is_empty() {
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
-            let bytes_written = self.algorithm.encrypt_to_buffer(
-                self.key.clone(),
-                &nonce,
-                &self.buffer,
-                &mut self.encrypted_chunk_buffer,
-                self.aad.as_deref(),
-            )
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let bytes_written = self
+                .algorithm
+                .encrypt_to_buffer(
+                    self.key.clone(),
+                    &nonce,
+                    &self.buffer,
+                    &mut self.encrypted_chunk_buffer,
+                    self.aad.as_deref(),
+                )
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer
                 .write_all(&self.encrypted_chunk_buffer[..bytes_written])?;
             self.chunk_counter += 1;
@@ -96,14 +97,16 @@ impl<W: Write> Write for EncryptorImpl<W> {
             if self.buffer.len() == self.chunk_size {
                 let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-                let bytes_written = self.algorithm.encrypt_to_buffer(
-                    self.key.clone(),
-                    &nonce,
-                    &self.buffer,
-                    &mut self.encrypted_chunk_buffer,
-                    self.aad.as_deref(),
-                )
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                let bytes_written = self
+                    .algorithm
+                    .encrypt_to_buffer(
+                        self.key.clone(),
+                        &nonce,
+                        &self.buffer,
+                        &mut self.encrypted_chunk_buffer,
+                        self.aad.as_deref(),
+                    )
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
                 self.writer
                     .write_all(&self.encrypted_chunk_buffer[..bytes_written])?;
                 self.chunk_counter += 1;
@@ -115,14 +118,16 @@ impl<W: Write> Write for EncryptorImpl<W> {
             let chunk = &input[..self.chunk_size];
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-            let bytes_written = self.algorithm.encrypt_to_buffer(
-                self.key.clone(),
-                &nonce,
-                chunk,
-                &mut self.encrypted_chunk_buffer,
-                self.aad.as_deref(),
-            )
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let bytes_written = self
+                .algorithm
+                .encrypt_to_buffer(
+                    self.key.clone(),
+                    &nonce,
+                    chunk,
+                    &mut self.encrypted_chunk_buffer,
+                    self.aad.as_deref(),
+                )
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             self.writer
                 .write_all(&self.encrypted_chunk_buffer[..bytes_written])?;
 
@@ -224,14 +229,16 @@ impl<R: Read> Read for DecryptorImpl<R> {
         decrypted_buf.clear();
         decrypted_buf.resize(self.encrypted_chunk_size, 0);
 
-        let bytes_written = self.algorithm.decrypt_to_buffer(
-            self.key.clone(),
-            &nonce,
-            &self.encrypted_chunk_buffer[..total_bytes_read],
-            decrypted_buf,
-            self.aad.as_deref(),
-        )
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let bytes_written = self
+            .algorithm
+            .decrypt_to_buffer(
+                self.key.clone(),
+                &nonce,
+                &self.encrypted_chunk_buffer[..total_bytes_read],
+                decrypted_buf,
+                self.aad.as_deref(),
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         decrypted_buf.truncate(bytes_written);
         self.buffer.set_position(0);
@@ -264,7 +271,6 @@ impl StreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
         Ok(Box::new(decryptor))
     }
 }
-
 
 impl StreamingBodyProcessor for &dyn SymmetricAlgorithm {
     fn encrypt_to_stream<'a>(

@@ -9,10 +9,10 @@
 #![cfg(feature = "async")]
 
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::keys::TypedSymmetricKey;
 use crate::common::buffer::BufferPool;
 use crate::common::{derive_nonce, OrderedChunk, CHANNEL_BOUND, DEFAULT_CHUNK_SIZE};
 use crate::error::{Error, Result};
+use crate::keys::TypedSymmetricKey;
 use bytes::BytesMut;
 use futures::stream::{FuturesUnordered, StreamExt};
 use pin_project_lite::pin_project;
@@ -627,7 +627,8 @@ impl AsynchronousBodyProcessor for Box<dyn SymmetricAlgorithm> {
         writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
         aad: Option<&'a [u8]>,
     ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>> {
-        let encryptor = EncryptorImpl::new(writer, Arc::new(key), self.clone().into(), base_nonce, aad);
+        let encryptor =
+            EncryptorImpl::new(writer, Arc::new(key), self.clone().into(), base_nonce, aad);
         Ok(Box::new(encryptor))
     }
 
@@ -638,9 +639,8 @@ impl AsynchronousBodyProcessor for Box<dyn SymmetricAlgorithm> {
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
         aad: Option<&'a [u8]>,
     ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>> {
-        let decryptor = DecryptorImpl::new(reader, Arc::new(key), self.clone().into(), base_nonce, aad);
+        let decryptor =
+            DecryptorImpl::new(reader, Arc::new(key), self.clone().into(), base_nonce, aad);
         Ok(Box::new(decryptor))
     }
 }
-
-

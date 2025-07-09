@@ -50,8 +50,13 @@ impl<W: AsyncWrite + Unpin> Encryptor<W> {
             .await?;
         writer.write_all(&header_bytes).await?;
 
-        let inner =
-            EncryptorImpl::new(writer, key.into(), algorithm.clone_box().into(), base_nonce, aad);
+        let inner = EncryptorImpl::new(
+            writer,
+            key.into(),
+            algorithm.clone_box().into(),
+            base_nonce,
+            aad,
+        );
 
         Ok(Self { inner })
     }
@@ -103,8 +108,13 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
 
-        let inner =
-            DecryptorImpl::new(self.reader, key.into(), algorithm.clone_box().into(), base_nonce, aad);
+        let inner = DecryptorImpl::new(
+            self.reader,
+            key.into(),
+            algorithm.clone_box().into(),
+            base_nonce,
+            aad,
+        );
         Ok(Decryptor { inner })
     }
 }
@@ -174,8 +184,8 @@ impl<'a, S: SymmetricAlgorithm + Send + Sync> SymmetricAsynchronousProcessor
 mod tests {
     use super::*;
     use crate::algorithms::definitions::symmetric::Aes256GcmWrapper;
-    use crate::keys::TypedSymmetricKey;
     use crate::common::DEFAULT_CHUNK_SIZE;
+    use crate::keys::TypedSymmetricKey;
     use seal_crypto::prelude::SymmetricKeyGenerator;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::io::Cursor;
@@ -247,7 +257,10 @@ mod tests {
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
-        decrypt_stream.read_to_end(&mut decrypted_data).await.unwrap();
+        decrypt_stream
+            .read_to_end(&mut decrypted_data)
+            .await
+            .unwrap();
 
         assert_eq!(plaintext, decrypted_data.as_slice());
     }
@@ -323,7 +336,12 @@ mod tests {
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
-                .encrypt_async(key1, "key1".to_string(), Box::new(&mut encrypted_data), None)
+                .encrypt_async(
+                    key1,
+                    "key1".to_string(),
+                    Box::new(&mut encrypted_data),
+                    None,
+                )
                 .await
                 .unwrap();
             encryptor.write_all(plaintext).await.unwrap();

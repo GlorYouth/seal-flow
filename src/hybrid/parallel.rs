@@ -3,15 +3,13 @@
 //! 实现并行、内存中的混合加密和解密。
 
 use super::common::create_header;
-use crate::algorithms::traits::{
-    AsymmetricAlgorithm, HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm,
-};
+use super::traits::HybridParallelProcessor;
+use crate::algorithms::traits::HybridAlgorithm as HybridAlgorithmTrait;
 use crate::body::traits::ParallelBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
-use super::traits::HybridParallelProcessor;
 use seal_crypto::zeroize::Zeroizing;
 
 impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelProcessor for H {
@@ -42,13 +40,8 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelProcessor for H {
         // 3. Serialize the header and prepare for encryption
         let header_bytes = header.encode_to_vec()?;
 
-        self.symmetric_algorithm().encrypt_parallel(
-            dek,
-            &base_nonce,
-            header_bytes,
-            plaintext,
-            aad,
-        )
+        self.symmetric_algorithm()
+            .encrypt_parallel(dek, &base_nonce, header_bytes, plaintext, aad)
     }
 
     fn decrypt_parallel(
@@ -58,21 +51,20 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelProcessor for H {
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
-        let (encapsulated_key, _chunk_size, base_nonce, derivation_info) =
-            match &header.payload {
-                HeaderPayload::Hybrid {
-                    encrypted_dek,
-                    stream_info: Some(info),
-                    derivation_info,
-                    ..
-                } => (
-                    Zeroizing::new(encrypted_dek.clone()),
-                    info.chunk_size,
-                    info.base_nonce,
-                    derivation_info.clone(),
-                ),
-                _ => return Err(Error::Format(FormatError::InvalidHeader)),
-            };
+        let (encapsulated_key, _chunk_size, base_nonce, derivation_info) = match &header.payload {
+            HeaderPayload::Hybrid {
+                encrypted_dek,
+                stream_info: Some(info),
+                derivation_info,
+                ..
+            } => (
+                Zeroizing::new(encrypted_dek.clone()),
+                info.chunk_size,
+                info.base_nonce,
+                derivation_info.clone(),
+            ),
+            _ => return Err(Error::Format(FormatError::InvalidHeader)),
+        };
 
         let shared_secret = self
             .asymmetric_algorithm()
@@ -92,7 +84,6 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelProcessor for H {
             .decrypt_parallel(dek, &base_nonce, ciphertext_body, aad)
     }
 }
-
 
 /// A pending decryptor for in-memory hybrid-encrypted data that will be
 /// processed in parallel.
@@ -147,8 +138,9 @@ mod tests {
     use crate::algorithms::definitions::{
         asymmetric::Rsa2048Sha256Wrapper, hybrid::HybridAlgorithm, symmetric::Aes256GcmWrapper,
     };
+    use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
-    use crate::common::{DerivationSet};
+    use crate::common::DerivationSet;
     use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey};
     use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
@@ -228,7 +220,9 @@ mod tests {
 
         // Test convenience function
         let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext(algorithm.clone(), &sk, None).unwrap();
+        let decrypted = pending
+            .into_plaintext(algorithm.clone(), &sk, None)
+            .unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Tamper with the ciphertext body

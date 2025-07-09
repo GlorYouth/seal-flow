@@ -92,21 +92,26 @@ impl TypedAsymmetricKeyPair {
 
     pub fn into_keypair(self) -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {
         match self {
-            Self::Rsa2048Sha256((pk, sk)) => {
-                (TypedAsymmetricPublicKey::Rsa2048Sha256(pk), TypedAsymmetricPrivateKey::Rsa2048Sha256(sk))
-            },
-            Self::Rsa4096Sha256((pk, sk)) => {
-                (TypedAsymmetricPublicKey::Rsa4096Sha256(pk), TypedAsymmetricPrivateKey::Rsa4096Sha256(sk))
-            },
-            Self::Kyber512((pk, sk)) => {
-                (TypedAsymmetricPublicKey::Kyber512(pk), TypedAsymmetricPrivateKey::Kyber512(sk))
-            },
-            Self::Kyber768((pk, sk)) => {
-                (TypedAsymmetricPublicKey::Kyber768(pk), TypedAsymmetricPrivateKey::Kyber768(sk))
-            },
-            Self::Kyber1024((pk, sk)) => {
-                (TypedAsymmetricPublicKey::Kyber1024(pk), TypedAsymmetricPrivateKey::Kyber1024(sk))
-            },
+            Self::Rsa2048Sha256((pk, sk)) => (
+                TypedAsymmetricPublicKey::Rsa2048Sha256(pk),
+                TypedAsymmetricPrivateKey::Rsa2048Sha256(sk),
+            ),
+            Self::Rsa4096Sha256((pk, sk)) => (
+                TypedAsymmetricPublicKey::Rsa4096Sha256(pk),
+                TypedAsymmetricPrivateKey::Rsa4096Sha256(sk),
+            ),
+            Self::Kyber512((pk, sk)) => (
+                TypedAsymmetricPublicKey::Kyber512(pk),
+                TypedAsymmetricPrivateKey::Kyber512(sk),
+            ),
+            Self::Kyber768((pk, sk)) => (
+                TypedAsymmetricPublicKey::Kyber768(pk),
+                TypedAsymmetricPrivateKey::Kyber768(sk),
+            ),
+            Self::Kyber1024((pk, sk)) => (
+                TypedAsymmetricPublicKey::Kyber1024(pk),
+                TypedAsymmetricPrivateKey::Kyber1024(sk),
+            ),
         }
     }
 
@@ -295,18 +300,18 @@ pub enum TypedSymmetricKey {
 impl TypedSymmetricKey {
     pub fn from_bytes(bytes: &[u8], algorithm: SymmetricAlgorithmEnum) -> Result<Self, Error> {
         match algorithm {
-            SymmetricAlgorithmEnum::Aes128Gcm => {
-                Ok(Self::Aes128Gcm(<Aes128Gcm as SymmetricKeySet>::Key::from_bytes(bytes)?))
-            }
-            SymmetricAlgorithmEnum::Aes256Gcm => {
-                Ok(Self::Aes256Gcm(<Aes256Gcm as SymmetricKeySet>::Key::from_bytes(bytes)?))
-            }
-            SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                Ok(Self::XChaCha20Poly1305(<XChaCha20Poly1305 as SymmetricKeySet>::Key::from_bytes(bytes)?))
-            }
-            SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                Ok(Self::ChaCha20Poly1305(<ChaCha20Poly1305 as SymmetricKeySet>::Key::from_bytes(bytes)?))
-            }
+            SymmetricAlgorithmEnum::Aes128Gcm => Ok(Self::Aes128Gcm(
+                <Aes128Gcm as SymmetricKeySet>::Key::from_bytes(bytes)?,
+            )),
+            SymmetricAlgorithmEnum::Aes256Gcm => Ok(Self::Aes256Gcm(
+                <Aes256Gcm as SymmetricKeySet>::Key::from_bytes(bytes)?,
+            )),
+            SymmetricAlgorithmEnum::XChaCha20Poly1305 => Ok(Self::XChaCha20Poly1305(
+                <XChaCha20Poly1305 as SymmetricKeySet>::Key::from_bytes(bytes)?,
+            )),
+            SymmetricAlgorithmEnum::ChaCha20Poly1305 => Ok(Self::ChaCha20Poly1305(
+                <ChaCha20Poly1305 as SymmetricKeySet>::Key::from_bytes(bytes)?,
+            )),
         }
     }
 
@@ -319,7 +324,6 @@ impl TypedSymmetricKey {
         }
     }
 }
-
 
 impl AsRef<[u8]> for TypedSymmetricKey {
     fn as_ref(&self) -> &[u8] {

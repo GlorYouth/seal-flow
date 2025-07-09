@@ -4,11 +4,9 @@
 #![cfg(feature = "async")]
 
 use super::common::create_header;
-use crate::algorithms::traits::{
-    AsymmetricAlgorithm, HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm,
-};
+use crate::algorithms::traits::{HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm};
 use crate::body::asynchronous::{DecryptorImpl, EncryptorImpl};
-use crate::common::header::{DerivationInfo, Header, HeaderPayload};
+use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::traits::HybridAsynchronousProcessor;
@@ -211,10 +209,8 @@ where
             shared_secret
         };
 
-        let dek = TypedSymmetricKey::from_bytes(
-            dek.as_ref(),
-            self.symmetric_algorithm().algorithm(),
-        )?;
+        let dek =
+            TypedSymmetricKey::from_bytes(dek.as_ref(), self.symmetric_algorithm().algorithm())?;
 
         let header_bytes = header.encode_to_vec()?;
         // This is a blocking call within a non-async function.
@@ -233,13 +229,7 @@ where
         })?;
 
         let algo = Arc::from(self.symmetric_algorithm().clone_box());
-        Ok(Box::new(Encryptor::new(
-            writer,
-            dek,
-            algo,
-            base_nonce,
-            aad,
-        )))
+        Ok(Box::new(Encryptor::new(writer, dek, algo, base_nonce, aad)))
     }
 
     fn decrypt_async<'a>(
@@ -251,7 +241,8 @@ where
         // We must block here to read the header and prepare the decryptor,
         // because the trait is not async.
         let pending = futures::executor::block_on(PendingDecryptor::from_reader(reader))?;
-        let decryptor = pending.into_decryptor(HybridAlgorithmTrait::clone_box(self), private_key, aad)?;
+        let decryptor =
+            pending.into_decryptor(HybridAlgorithmTrait::clone_box(self), private_key, aad)?;
         Ok(Box::new(decryptor))
     }
 }
@@ -305,8 +296,16 @@ mod tests {
             let mut encrypted_data = Vec::new();
             {
                 let writer = Box::new(&mut encrypted_data);
-                let mut encryptor =
-                    algo_clone.encrypt_async(&pk_clone, writer, kek_id_clone, None, aad_clone.as_deref(), None).unwrap();
+                let mut encryptor = algo_clone
+                    .encrypt_async(
+                        &pk_clone,
+                        writer,
+                        kek_id_clone,
+                        None,
+                        aad_clone.as_deref(),
+                        None,
+                    )
+                    .unwrap();
 
                 futures::executor::block_on(async {
                     encryptor.write_all(&plaintext_vec).await.unwrap();
@@ -379,8 +378,9 @@ mod tests {
             let mut encrypted_data = Vec::new();
             {
                 let writer = Box::new(&mut encrypted_data);
-                let mut encryptor =
-                    algo_clone.encrypt_async(&pk_clone, writer, kek_id, None, None, None).unwrap();
+                let mut encryptor = algo_clone
+                    .encrypt_async(&pk_clone, writer, kek_id, None, None, None)
+                    .unwrap();
 
                 futures::executor::block_on(async {
                     encryptor.write_all(&plaintext_vec).await.unwrap();
@@ -427,8 +427,9 @@ mod tests {
             let mut encrypted_data = Vec::new();
             {
                 let writer = Box::new(&mut encrypted_data);
-                let mut encryptor =
-                    algo_clone.encrypt_async(&pk_clone, writer, kek_id, None, None, None).unwrap();
+                let mut encryptor = algo_clone
+                    .encrypt_async(&pk_clone, writer, kek_id, None, None, None)
+                    .unwrap();
 
                 futures::executor::block_on(async {
                     encryptor.write_all(&plaintext_vec).await.unwrap();

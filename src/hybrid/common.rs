@@ -78,7 +78,8 @@ pub fn create_header<H: HybridAlgorithm + ?Sized>(
         payload,
     };
 
-    let shared_secret = TypedSymmetricKey::from_bytes(&shared_secret, algorithm.symmetric_algorithm().algorithm())?;
+    let shared_secret =
+        TypedSymmetricKey::from_bytes(&shared_secret, algorithm.symmetric_algorithm().algorithm())?;
 
     Ok((header, base_nonce, shared_secret))
 }

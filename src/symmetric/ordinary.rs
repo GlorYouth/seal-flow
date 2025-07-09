@@ -7,8 +7,8 @@ use crate::body::traits::OrdinaryBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::PendingImpl;
 use crate::error::{Error, FormatError, Result};
-use crate::symmetric::common::create_header;
 use crate::keys::TypedSymmetricKey;
+use crate::symmetric::common::create_header;
 use crate::symmetric::traits::SymmetricOrdinaryProcessor;
 
 /// A pending decryptor for in-memory data, waiting for a key.
@@ -94,8 +94,8 @@ impl<'a, S: SymmetricAlgorithm + OrdinaryBodyProcessor> SymmetricOrdinaryProcess
 mod tests {
     use super::*;
     use crate::algorithms::definitions::symmetric::Aes256GcmWrapper;
-    use crate::keys::TypedSymmetricKey;
     use crate::common::DEFAULT_CHUNK_SIZE;
+    use crate::keys::TypedSymmetricKey;
     use seal_crypto::prelude::SymmetricKeyGenerator;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 
@@ -157,12 +157,7 @@ mod tests {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let encrypted = processor
-            .encrypt_in_memory(
-                key.clone(),
-                "test_key_id".to_string(),
-                &plaintext,
-                None,
-            )
+            .encrypt_in_memory(key.clone(), "test_key_id".to_string(), &plaintext, None)
             .unwrap();
         let decrypted = processor
             .decrypt_in_memory(key.clone(), &encrypted, None)
