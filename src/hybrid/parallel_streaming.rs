@@ -3,50 +3,89 @@
 //! 实现并行流式混合加解密方案。
 
 use super::common::create_header;
-use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
+use crate::algorithms::traits::{
+    HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm,
+};
+use crate::body::traits::ParallelStreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, PendingImpl, SignerSet};
 use crate::error::{Error, FormatError, Result};
-use crate::impls::parallel_streaming::{decrypt_pipeline, encrypt_pipeline};
-use seal_crypto::prelude::Key;
+use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+use super::traits::HybridParallelStreamingProcessor;
+use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
+use std::sync::Arc;
 
-/// Encrypts data from a reader and writes to a writer using a parallel streaming approach.
-///
-/// 使用并行流式方法从 reader 加密数据并写入 writer。
-pub fn encrypt<'a, A, S, R, W>(
-    pk: &'a A::PublicKey,
-    reader: R,
-    mut writer: W,
-    kek_id: String,
-    signer: Option<SignerSet>,
-    aad: Option<&'a [u8]>,
-    derivation_config: Option<DerivationSet>,
-) -> Result<()>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-    R: Read + Send,
-    W: Write,
-{
-    let (info, deriver_fn) = derivation_config
-        .map(|d| (d.derivation_info, d.deriver_fn))
-        .unzip();
+impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelStreamingProcessor for H {
+    fn encrypt_pipeline<'a>(
+        &self,
+        public_key: &TypedAsymmetricPublicKey,
+        reader: Box<dyn Read + Send + 'a>,
+        mut writer: Box<dyn Write + Send + 'a>,
+        kek_id: String,
+        signer: Option<SignerSet>,
+        aad: Option<&'a [u8]>,
+        derivation_config: Option<DerivationSet>,
+    ) -> Result<()> {
+        let (info, deriver_fn) = derivation_config
+            .map(|d| (d.derivation_info, d.deriver_fn))
+            .unzip();
 
-    let (header, base_nonce, shared_secret) = create_header::<A, S>(pk, kek_id, signer, aad, info)?;
+        let (header, base_nonce, shared_secret) =
+            create_header(self, public_key, kek_id, signer, aad, info)?;
 
-    let dek = if let Some(f) = deriver_fn {
-        f(&shared_secret)?
-    } else {
-        shared_secret
-    };
+        let dek = if let Some(f) = deriver_fn {
+            f(&shared_secret)?
+        } else {
+            shared_secret
+        };
 
-    let header_bytes = header.encode_to_vec()?;
-    writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
-    writer.write_all(&header_bytes)?;
+        let header_bytes = header.encode_to_vec()?;
+        writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
+        writer.write_all(&header_bytes)?;
 
-    let key: S::Key = S::Key::from_bytes(dek.as_slice())?;
-    encrypt_pipeline::<S, R, W>(key, base_nonce, reader, writer, aad)
+        let algo = self.symmetric_algorithm().clone_box();
+        ParallelStreamingBodyProcessor::encrypt_pipeline(&algo, dek, base_nonce, reader, writer, aad)
+    }
+
+    fn decrypt_pipeline<'a>(
+        &self,
+        private_key: &TypedAsymmetricPrivateKey,
+        mut reader: Box<dyn Read + Send + 'a>,
+        writer: Box<dyn Write + Send + 'a>,
+        aad: Option<&'a [u8]>,
+    ) -> Result<()> {
+        let header = Header::decode_from_prefixed_reader(&mut reader)?;
+        let (encapsulated_key, base_nonce, derivation_info) = match &header.payload {
+            HeaderPayload::Hybrid {
+                stream_info: Some(info),
+                encrypted_dek,
+                derivation_info,
+                ..
+            } => (
+                Zeroizing::new(encrypted_dek.clone()),
+                info.base_nonce,
+                derivation_info.clone(),
+            ),
+            _ => return Err(Error::Format(FormatError::InvalidHeader)),
+        };
+
+        let shared_secret = self
+            .asymmetric_algorithm()
+            .decapsulate_key(private_key, &encapsulated_key)?;
+
+        let dek = if let Some(info) = derivation_info {
+            info.derive_key(&shared_secret)?
+        } else {
+            shared_secret
+        };
+
+        let dek =
+            TypedSymmetricKey::from_bytes(dek.as_slice(), self.symmetric_algorithm().algorithm())?;
+
+        let algo = self.symmetric_algorithm().clone_box();
+        ParallelStreamingBodyProcessor::decrypt_pipeline(&algo, dek, base_nonce, reader, writer, aad)
+    }
 }
 
 /// A pending decryptor for a parallel hybrid stream, waiting for the private key.
@@ -56,8 +95,6 @@ where
 /// before supplying the appropriate private key to proceed with decryption.
 ///
 /// 一个用于并行混合流的待定解密器，等待私钥。
-///
-/// 从流中成功读取标头后，进入此状态，允许用户在提供适当的私钥以继续解密之前检查标头（例如，查找 `kek_id`）。
 pub struct PendingDecryptor<R>
 where
     R: Read + Send,
@@ -83,18 +120,50 @@ where
     ///
     /// 消费待定解密器，使用提供的私钥解密流，
     /// 并将明文写入 writer。
-    pub fn decrypt_to_writer<A, S, W>(
+    pub fn decrypt_to_writer<'a, W>(
         self,
-        sk: &A::PrivateKey,
+        algorithm: impl HybridAlgorithmTrait,
+        sk: &TypedAsymmetricPrivateKey,
         writer: W,
-        aad: Option<&[u8]>,
+        aad: Option<&'a [u8]>,
     ) -> Result<()>
     where
-        A: AsymmetricAlgorithm,
-        S: SymmetricAlgorithm,
-        W: Write,
+        W: Write + Send + 'a,
+        R: 'a,
     {
-        decrypt_body_stream::<A, S, _, W>(sk, &self.header, self.reader, writer, aad)
+        let reader = Box::new(self.reader);
+        let writer = Box::new(writer);
+        let (encapsulated_key, base_nonce, derivation_info) = match &self.header.payload {
+            HeaderPayload::Hybrid {
+                stream_info: Some(info),
+                encrypted_dek,
+                derivation_info,
+                ..
+            } => (
+                Zeroizing::new(encrypted_dek.clone()),
+                info.base_nonce,
+                derivation_info.clone(),
+            ),
+            _ => return Err(Error::Format(FormatError::InvalidHeader)),
+        };
+
+        let shared_secret = algorithm
+            .asymmetric_algorithm()
+            .decapsulate_key(sk, &encapsulated_key)?;
+
+        // Derive key if a deriver function is specified
+        // 如果指定了派生器，则派生密钥
+        let dek = if let Some(info) = derivation_info {
+            info.derive_key(&shared_secret)?
+        } else {
+            shared_secret
+        };
+
+        let dek =
+            TypedSymmetricKey::from_bytes(dek.as_slice(), algorithm.symmetric_algorithm().algorithm())?;
+
+        let algo = algorithm.symmetric_algorithm().clone_box();
+        ParallelStreamingBodyProcessor::decrypt_pipeline(&algo, dek, base_nonce, reader, writer, aad)
     }
 }
 
@@ -107,65 +176,18 @@ where
     }
 }
 
-/// Decrypts a data stream body and writes to a writer using a parallel streaming approach.
-///
-/// 使用并行流式方法解密数据流体并写入 writer。
-pub fn decrypt_body_stream<A, S, R, W>(
-    sk: &A::PrivateKey,
-    header: &Header,
-    reader: R,
-    writer: W,
-    aad: Option<&[u8]>,
-) -> Result<()>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-    R: Read + Send,
-    W: Write,
-{
-    let (chunk_size, base_nonce, encapsulated_key, derivation_info) = match &header.payload {
-        HeaderPayload::Hybrid {
-            stream_info: Some(info),
-            encrypted_dek,
-            derivation_info,
-            ..
-        } => (
-            info.chunk_size,
-            info.base_nonce,
-            encrypted_dek.clone(),
-            derivation_info.clone(),
-        ),
-        _ => return Err(Error::Format(FormatError::InvalidHeader)),
-    };
-
-    let shared_secret = A::decapsulate(
-        sk,
-        &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?,
-    )?;
-
-    // Derive key if a deriver function is specified
-    // 如果指定了派生器，则派生密钥
-    let dek = if let Some(info) = derivation_info {
-        info.derive_key(&shared_secret)?
-    } else {
-        shared_secret
-    };
-
-    let key_material: S::Key = Key::from_bytes(dek.as_slice())?;
-
-    decrypt_pipeline::<S, R, W>(key_material, base_nonce, chunk_size, reader, writer, aad)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algorithms::definitions::{
+        asymmetric::Rsa2048Sha256Wrapper, hybrid::HybridAlgorithm, symmetric::Aes256GcmWrapper,
+    };
+    use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
     use crate::common::DerivationSet;
-    use seal_crypto::prelude::{KeyBasedDerivation, KeyGenerator};
-    use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
-    use seal_crypto::schemes::hash::Sha256;
+    use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+    use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
-    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use seal_crypto::zeroize::Zeroizing;
     use std::io::Cursor;
 
@@ -173,17 +195,35 @@ mod tests {
         (0..size).map(|i| (i % 256) as u8).collect()
     }
 
+    fn get_test_algorithm() -> HybridAlgorithm {
+        HybridAlgorithm::new(
+            Box::new(Rsa2048Sha256Wrapper::new()),
+            Box::new(Aes256GcmWrapper::new()),
+        )
+    }
+
+    fn generate_test_keys() -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {
+        Rsa2048Sha256Wrapper::new()
+            .generate_keypair()
+            .unwrap()
+            .into_keypair()
+    }
+
     #[test]
     fn test_hybrid_parallel_streaming_roundtrip() {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let algorithm = get_test_algorithm();
+        let (pk, sk) = generate_test_keys();
         let kek_id = "test-kek-id".to_string();
         let plaintext = get_test_data(1024 * 1024); // 1 MiB
 
         let mut encrypted_data = Vec::new();
-        encrypt::<Rsa2048<Sha256>, Aes256Gcm, _, _>(
+        let reader = Box::new(Cursor::new(&plaintext));
+        let writer = Box::new(&mut encrypted_data);
+        HybridParallelStreamingProcessor::encrypt_pipeline(
+            &algorithm,
             &pk,
-            Cursor::new(&plaintext),
-            &mut encrypted_data,
+            reader,
+            writer,
             kek_id.clone(),
             None,
             None,
@@ -195,7 +235,7 @@ mod tests {
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending
-            .decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk, &mut decrypted_data, None)
+            .decrypt_to_writer(algorithm, &sk, &mut decrypted_data, None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -203,15 +243,19 @@ mod tests {
 
     #[test]
     fn test_empty_input() {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let algorithm = get_test_algorithm();
+        let (pk, sk) = generate_test_keys();
         let kek_id = "test-kek-id".to_string();
         let plaintext = get_test_data(0);
 
         let mut encrypted_data = Vec::new();
-        encrypt::<Rsa2048<Sha256>, Aes256Gcm, _, _>(
+        let reader = Box::new(Cursor::new(&plaintext));
+        let writer = Box::new(&mut encrypted_data);
+        HybridParallelStreamingProcessor::encrypt_pipeline(
+            &algorithm,
             &pk,
-            Cursor::new(&plaintext),
-            &mut encrypted_data,
+            reader,
+            writer,
             kek_id.clone(),
             None,
             None,
@@ -223,7 +267,7 @@ mod tests {
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending
-            .decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk, &mut decrypted_data, None)
+            .decrypt_to_writer(algorithm, &sk, &mut decrypted_data, None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -231,15 +275,19 @@ mod tests {
 
     #[test]
     fn test_tampered_ciphertext_fails() {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let algorithm = get_test_algorithm();
+        let (pk, sk) = generate_test_keys();
         let kek_id = "test-kek-id".to_string();
         let plaintext = get_test_data(1024);
 
         let mut encrypted_data = Vec::new();
-        encrypt::<Rsa2048<Sha256>, Aes256Gcm, _, _>(
+        let reader = Box::new(Cursor::new(&plaintext));
+        let writer = Box::new(&mut encrypted_data);
+        HybridParallelStreamingProcessor::encrypt_pipeline(
+            &algorithm,
             &pk,
-            Cursor::new(&plaintext),
-            &mut encrypted_data,
+            reader,
+            writer,
             kek_id.clone(),
             None,
             None,
@@ -253,27 +301,27 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(
-            &sk,
-            &mut decrypted_data,
-            None,
-        );
+        let result = pending.decrypt_to_writer(algorithm, &sk, &mut decrypted_data, None);
 
         assert!(result.is_err());
     }
 
     #[test]
     fn test_wrong_private_key_fails() {
-        let (pk, _) = Rsa2048::<Sha256>::generate_keypair().unwrap();
-        let (_, sk2) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let algorithm = get_test_algorithm();
+        let (pk, _) = generate_test_keys();
+        let (_, sk2) = generate_test_keys();
         let kek_id = "test-kek-id".to_string();
         let plaintext = get_test_data(1024);
 
         let mut encrypted_data = Vec::new();
-        encrypt::<Rsa2048<Sha256>, Aes256Gcm, _, _>(
+        let reader = Box::new(Cursor::new(&plaintext));
+        let writer = Box::new(&mut encrypted_data);
+        HybridParallelStreamingProcessor::encrypt_pipeline(
+            &algorithm,
             &pk,
-            Cursor::new(&plaintext),
-            &mut encrypted_data,
+            reader,
+            writer,
             kek_id.clone(),
             None,
             None,
@@ -283,25 +331,25 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(
-            &sk2,
-            &mut decrypted_data,
-            None,
-        );
+        let result = pending.decrypt_to_writer(algorithm, &sk2, &mut decrypted_data, None);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_aad_roundtrip() {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let algorithm = get_test_algorithm();
+        let (pk, sk) = generate_test_keys();
         let plaintext = get_test_data(1024 * 256); // 256 KiB
         let aad = b"parallel streaming aad";
 
         let mut encrypted_data = Vec::new();
-        encrypt::<Rsa2048<Sha256>, Aes256Gcm, _, _>(
+        let reader = Box::new(Cursor::new(&plaintext));
+        let writer = Box::new(&mut encrypted_data);
+        HybridParallelStreamingProcessor::encrypt_pipeline(
+            &algorithm,
             &pk,
-            Cursor::new(&plaintext),
-            &mut encrypted_data,
+            reader,
+            writer,
             "test_kek_id_aad".to_string(),
             None,
             Some(aad),
@@ -314,14 +362,15 @@ mod tests {
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some("test_kek_id_aad"));
         pending
-            .decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk, &mut decrypted_data, Some(aad))
+            .decrypt_to_writer(algorithm, &sk, &mut decrypted_data, Some(aad))
             .unwrap();
         assert_eq!(plaintext, decrypted_data);
 
         // Decrypt with wrong AAD fails
         let mut decrypted_data_fail = Vec::new();
         let pending_fail = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending_fail.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(
+        let result = pending_fail.decrypt_to_writer(
+            get_test_algorithm(),
             &sk,
             &mut decrypted_data_fail,
             Some(b"wrong aad"),
@@ -331,17 +380,15 @@ mod tests {
         // Decrypt with no AAD fails
         let mut decrypted_data_fail2 = Vec::new();
         let pending_fail2 = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result2 = pending_fail2.decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(
-            &sk,
-            &mut decrypted_data_fail2,
-            None,
-        );
+        let result2 =
+            pending_fail2.decrypt_to_writer(get_test_algorithm(), &sk, &mut decrypted_data_fail2, None);
         assert!(result2.is_err());
     }
 
     #[test]
     fn test_hybrid_parallel_streaming_roundtrip_with_kdf() {
-        let (pk, sk) = Rsa2048::<Sha256>::generate_keypair().unwrap();
+        let algorithm = get_test_algorithm();
+        let (pk, sk) = generate_test_keys();
         let kek_id = "test-kek-id-kdf".to_string();
         let plaintext = get_test_data(1024 * 1024); // 1 MiB
 
@@ -357,18 +404,19 @@ mod tests {
         };
 
         let deriver = HkdfSha256::default();
-        let kdf_fn = Box::new(move |ikm: &[u8]| {
-            deriver
-                .derive(ikm, Some(salt), Some(info), output_len as usize)
-                .map(|dk| Zeroizing::new(dk.as_bytes().to_vec()))
-                .map_err(|e| e.into())
+        let kdf_fn = Box::new(move |ikm: &TypedSymmetricKey| {
+            let dk = deriver.derive(ikm.as_ref(), Some(salt), Some(info), output_len as usize)?;
+            TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm())
         });
 
         let mut encrypted_data = Vec::new();
-        encrypt::<Rsa2048<Sha256>, Aes256Gcm, _, _>(
+        let reader = Box::new(Cursor::new(&plaintext));
+        let writer = Box::new(&mut encrypted_data);
+        HybridParallelStreamingProcessor::encrypt_pipeline(
+            &algorithm,
             &pk,
-            Cursor::new(&plaintext),
-            &mut encrypted_data,
+            reader,
+            writer,
             kek_id.clone(),
             None,
             None,
@@ -383,7 +431,7 @@ mod tests {
         let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending
-            .decrypt_to_writer::<Rsa2048<Sha256>, Aes256Gcm, _>(&sk, &mut decrypted_data, None)
+            .decrypt_to_writer(algorithm, &sk, &mut decrypted_data, None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);

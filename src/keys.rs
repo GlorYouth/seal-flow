@@ -32,6 +32,7 @@ pub(crate) mod provider;
 ///
 /// 包装了类型化非对称密钥对的枚举。
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
 pub enum TypedAsymmetricKeyPair {
     Rsa2048Sha256(
         (
@@ -89,6 +90,26 @@ impl TypedAsymmetricKeyPair {
         }
     }
 
+    pub fn into_keypair(self) -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {
+        match self {
+            Self::Rsa2048Sha256((pk, sk)) => {
+                (TypedAsymmetricPublicKey::Rsa2048Sha256(pk), TypedAsymmetricPrivateKey::Rsa2048Sha256(sk))
+            },
+            Self::Rsa4096Sha256((pk, sk)) => {
+                (TypedAsymmetricPublicKey::Rsa4096Sha256(pk), TypedAsymmetricPrivateKey::Rsa4096Sha256(sk))
+            },
+            Self::Kyber512((pk, sk)) => {
+                (TypedAsymmetricPublicKey::Kyber512(pk), TypedAsymmetricPrivateKey::Kyber512(sk))
+            },
+            Self::Kyber768((pk, sk)) => {
+                (TypedAsymmetricPublicKey::Kyber768(pk), TypedAsymmetricPrivateKey::Kyber768(sk))
+            },
+            Self::Kyber1024((pk, sk)) => {
+                (TypedAsymmetricPublicKey::Kyber1024(pk), TypedAsymmetricPrivateKey::Kyber1024(sk))
+            },
+        }
+    }
+
     /// Returns the public key as a generic byte wrapper.
     ///
     /// 以通用字节包装器形式返回公钥。
@@ -135,6 +156,7 @@ impl TypedAsymmetricKeyPair {
 ///
 /// 包装了类型化签名密钥对的枚举。
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
 pub enum TypedSignatureKeyPair {
     Dilithium2(
         (
@@ -236,6 +258,20 @@ impl TypedSignatureKeyPair {
 ///
 /// 包装了类型化非对称私钥的枚举。
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
+pub enum TypedAsymmetricPublicKey {
+    Rsa2048Sha256(<Rsa2048<Sha256> as AsymmetricKeySet>::PublicKey),
+    Rsa4096Sha256(<Rsa4096<Sha256> as AsymmetricKeySet>::PublicKey),
+    Kyber512(<Kyber512 as AsymmetricKeySet>::PublicKey),
+    Kyber768(<Kyber768 as AsymmetricKeySet>::PublicKey),
+    Kyber1024(<Kyber1024 as AsymmetricKeySet>::PublicKey),
+}
+
+/// An enum wrapping a typed asymmetric private key.
+///
+/// 包装了类型化非对称私钥的枚举。
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
 pub enum TypedAsymmetricPrivateKey {
     Rsa2048Sha256(<Rsa2048<Sha256> as AsymmetricKeySet>::PrivateKey),
     Rsa4096Sha256(<Rsa4096<Sha256> as AsymmetricKeySet>::PrivateKey),
@@ -248,11 +284,52 @@ pub enum TypedAsymmetricPrivateKey {
 ///
 /// 包装了类型化对称密钥的枚举。
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
 pub enum TypedSymmetricKey {
     Aes128Gcm(<Aes128Gcm as SymmetricKeySet>::Key),
     Aes256Gcm(<Aes256Gcm as SymmetricKeySet>::Key),
     XChaCha20Poly1305(<XChaCha20Poly1305 as SymmetricKeySet>::Key),
     ChaCha20Poly1305(<ChaCha20Poly1305 as SymmetricKeySet>::Key),
+}
+
+impl TypedSymmetricKey {
+    pub fn from_bytes(bytes: &[u8], algorithm: SymmetricAlgorithmEnum) -> Result<Self, Error> {
+        match algorithm {
+            SymmetricAlgorithmEnum::Aes128Gcm => {
+                Ok(Self::Aes128Gcm(<Aes128Gcm as SymmetricKeySet>::Key::from_bytes(bytes)?))
+            }
+            SymmetricAlgorithmEnum::Aes256Gcm => {
+                Ok(Self::Aes256Gcm(<Aes256Gcm as SymmetricKeySet>::Key::from_bytes(bytes)?))
+            }
+            SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
+                Ok(Self::XChaCha20Poly1305(<XChaCha20Poly1305 as SymmetricKeySet>::Key::from_bytes(bytes)?))
+            }
+            SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
+                Ok(Self::ChaCha20Poly1305(<ChaCha20Poly1305 as SymmetricKeySet>::Key::from_bytes(bytes)?))
+            }
+        }
+    }
+
+    pub fn algorithm(&self) -> SymmetricAlgorithmEnum {
+        match self {
+            Self::Aes128Gcm(_) => SymmetricAlgorithmEnum::Aes128Gcm,
+            Self::Aes256Gcm(_) => SymmetricAlgorithmEnum::Aes256Gcm,
+            Self::XChaCha20Poly1305(_) => SymmetricAlgorithmEnum::XChaCha20Poly1305,
+            Self::ChaCha20Poly1305(_) => SymmetricAlgorithmEnum::ChaCha20Poly1305,
+        }
+    }
+}
+
+
+impl AsRef<[u8]> for TypedSymmetricKey {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Aes128Gcm(key) => key.as_ref(),
+            Self::Aes256Gcm(key) => key.as_ref(),
+            Self::XChaCha20Poly1305(key) => key.as_ref(),
+            Self::ChaCha20Poly1305(key) => key.as_ref(),
+        }
+    }
 }
 
 /// A byte wrapper for a symmetric encryption key.

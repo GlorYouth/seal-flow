@@ -1,4 +1,5 @@
 mod common;
+pub mod traits;
 pub mod ordinary;
 pub mod parallel;
 pub mod parallel_streaming;

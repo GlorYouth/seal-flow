@@ -8,30 +8,33 @@ use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::buffer::BufferPool;
 use crate::common::{derive_nonce, OrderedChunk, CHANNEL_BOUND, DEFAULT_CHUNK_SIZE};
 use crate::error::{Error, Result};
+use crate::keys::TypedSymmetricKey;
 use rayon::prelude::*;
 use std::collections::BinaryHeap;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use std::thread;
 
+use super::traits::ParallelStreamingBodyProcessor;
+
 /// The core pipeline for parallel streaming encryption.
 ///
 /// 并行流式加密的核心管道。
-pub fn encrypt_pipeline<S, R, W>(
-    key: S::Key,
+fn encrypt_pipeline<R, W>(
+    algorithm: Box<dyn SymmetricAlgorithm>,
+    key: TypedSymmetricKey,
     base_nonce: [u8; 12],
     mut reader: R,
     mut writer: W,
     aad: Option<&[u8]>,
 ) -> Result<()>
 where
-    S: SymmetricAlgorithm,
     R: Read + Send,
     W: Write,
 {
-    let key_arc = Arc::new(key);
     let aad_arc = Arc::new(aad.map(|d| d.to_vec()));
     let pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize));
+    let tag_size = algorithm.tag_size();
 
     // 2. Setup channels for producer-consumer pipeline
     let (raw_chunk_tx, raw_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
@@ -82,10 +85,10 @@ where
         // --- Thread 2: Parallel Encryptor (Consumer/Producer) ---
         // --- 线程 2: 并行加密器 (消费者/生产者) ---
         let enc_chunk_tx_clone = enc_chunk_tx.clone();
-        let key_clone = Arc::clone(&key_arc);
+        let algo_clone = algorithm.clone();
         let aad_clone = Arc::clone(&aad_arc);
         let in_pool = Arc::clone(&pool);
-        let out_pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE));
+        let out_pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize + tag_size));
         let writer_pool = Arc::clone(&out_pool);
         s.spawn(move || {
             raw_chunk_rx
@@ -101,18 +104,13 @@ where
                     let capacity = out_buffer.capacity();
                     out_buffer.resize(capacity, 0);
 
-                    let result = S::encrypt_to_buffer(
-                        &key_clone,
-                        &nonce,
-                        &in_buffer,
-                        &mut out_buffer,
-                        aad_val,
-                    )
-                    .map(|bytes_written| {
-                        out_buffer.truncate(bytes_written);
-                        out_buffer
-                    })
-                    .map_err(Error::from);
+                    let result = algo_clone
+                        .encrypt_to_buffer(key.clone(), &nonce, &in_buffer, &mut out_buffer, aad_val)
+                        .map(|bytes_written| {
+                            out_buffer.truncate(bytes_written);
+                            out_buffer
+                        })
+                        .map_err(Error::from);
 
                     in_pool.release(in_buffer);
 
@@ -191,8 +189,9 @@ where
 /// The core pipeline for parallel streaming decryption.
 ///
 /// 并行流式解密的核心管道。
-pub fn decrypt_pipeline<S, R, W>(
-    key: S::Key,
+fn decrypt_pipeline<R, W>(
+    algorithm: Box<dyn SymmetricAlgorithm>,
+    key: TypedSymmetricKey,
     base_nonce: [u8; 12],
     chunk_size: u32,
     mut reader: R,
@@ -200,12 +199,10 @@ pub fn decrypt_pipeline<S, R, W>(
     aad: Option<&[u8]>,
 ) -> Result<()>
 where
-    S: SymmetricAlgorithm,
     R: Read + Send,
     W: Write,
 {
-    let encrypted_chunk_size = (chunk_size as usize) + S::TAG_SIZE;
-    let key_arc = Arc::new(key);
+    let encrypted_chunk_size = (chunk_size as usize) + algorithm.tag_size();
     let aad_arc = Arc::new(aad.map(|d| d.to_vec()));
     let pool = Arc::new(BufferPool::new(encrypted_chunk_size));
 
@@ -258,7 +255,7 @@ where
         // --- Thread 2: Parallel Decryptor ---
         // --- 线程 2: 并行解密器 ---
         let dec_chunk_tx_clone = dec_chunk_tx.clone();
-        let key_clone = Arc::clone(&key_arc);
+            let algo_clone = algorithm.clone();
         let aad_clone = Arc::clone(&aad_arc);
         let in_pool = Arc::clone(&pool);
         let out_pool = Arc::new(BufferPool::new(chunk_size as usize));
@@ -277,18 +274,13 @@ where
                     let capacity = out_buffer.capacity();
                     out_buffer.resize(capacity, 0);
 
-                    let result = S::decrypt_to_buffer(
-                        &key_clone,
-                        &nonce,
-                        &in_buffer,
-                        &mut out_buffer,
-                        aad_val,
-                    )
-                    .map(|bytes_written| {
-                        out_buffer.truncate(bytes_written);
-                        out_buffer
-                    })
-                    .map_err(Error::from);
+                    let result = algo_clone
+                        .decrypt_to_buffer(key.clone(), &nonce, &in_buffer, &mut out_buffer, aad_val)
+                        .map(|bytes_written| {
+                            out_buffer.truncate(bytes_written);
+                            out_buffer
+                        })
+                        .map_err(Error::from);
 
                     in_pool.release(in_buffer);
 
@@ -359,4 +351,36 @@ where
 
         final_result
     })
+}
+
+impl ParallelStreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
+    fn encrypt_pipeline<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        reader: Box<dyn Read + Send + 'a>,
+        writer: Box<dyn Write + Send + 'a>,
+        aad: Option<&'a [u8]>,
+    ) -> Result<()> {
+        encrypt_pipeline(self.clone(), key, base_nonce, reader, writer, aad)
+    }
+
+    fn decrypt_pipeline<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        reader: Box<dyn Read + Send + 'a>,
+        writer: Box<dyn Write + Send + 'a>,
+        aad: Option<&'a [u8]>,
+    ) -> Result<()> {
+        decrypt_pipeline(
+            self.clone(),
+            key,
+            base_nonce,
+            DEFAULT_CHUNK_SIZE,
+            reader,
+            writer,
+            aad,
+        )
+    }
 }

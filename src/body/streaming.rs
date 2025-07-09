@@ -7,44 +7,51 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::error::Result;
+use crate::keys::TypedSymmetricKey;
 use std::io::{self, Read, Write};
+
+use super::traits::StreamingBodyProcessor;
+
 // --- Encryptor ---
 
 /// The implementation of a synchronous, streaming encryptor.
 ///
 /// 同步、流式加密器的实现。
-pub struct EncryptorImpl<W: Write, S: SymmetricAlgorithm> {
+pub struct EncryptorImpl<W: Write> {
     writer: W,
-    symmetric_key: S::Key,
+    algorithm: Box<dyn SymmetricAlgorithm>,
+    key: TypedSymmetricKey,
     base_nonce: [u8; 12],
     chunk_size: usize,
     buffer: Vec<u8>,
     chunk_counter: u64,
     encrypted_chunk_buffer: Vec<u8>,
     aad: Option<Vec<u8>>,
-    _phantom: std::marker::PhantomData<S>,
 }
 
-impl<W: Write, S: SymmetricAlgorithm> EncryptorImpl<W, S> {
+impl<W: Write> EncryptorImpl<W> {
     /// Creates a new `EncryptorImpl`.
     ///
     /// 创建一个新的 `EncryptorImpl`。
     pub fn new(
         writer: W,
-        symmetric_key: S::Key,
+        algorithm: Box<dyn SymmetricAlgorithm>,
+        key: TypedSymmetricKey,
         base_nonce: [u8; 12],
         aad: Option<&[u8]>,
     ) -> Result<Self> {
+        let encrypted_chunk_buffer =
+            vec![0u8; DEFAULT_CHUNK_SIZE as usize + algorithm.tag_size()];
         Ok(Self {
             writer,
-            symmetric_key,
+            algorithm,
+            key,
             base_nonce,
             chunk_size: DEFAULT_CHUNK_SIZE as usize,
             buffer: Vec::with_capacity(DEFAULT_CHUNK_SIZE as usize),
             chunk_counter: 0,
-            encrypted_chunk_buffer: vec![0u8; DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE],
+            encrypted_chunk_buffer,
             aad: aad.map(|d| d.to_vec()),
-            _phantom: std::marker::PhantomData,
         })
     }
 
@@ -58,8 +65,8 @@ impl<W: Write, S: SymmetricAlgorithm> EncryptorImpl<W, S> {
     pub fn finish(mut self) -> Result<()> {
         if !self.buffer.is_empty() {
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
-            let bytes_written = S::encrypt_to_buffer(
-                &self.symmetric_key,
+            let bytes_written = self.algorithm.encrypt_to_buffer(
+                self.key.clone(),
                 &nonce,
                 &self.buffer,
                 &mut self.encrypted_chunk_buffer,
@@ -76,7 +83,7 @@ impl<W: Write, S: SymmetricAlgorithm> EncryptorImpl<W, S> {
     }
 }
 
-impl<W: Write, S: SymmetricAlgorithm> Write for EncryptorImpl<W, S> {
+impl<W: Write> Write for EncryptorImpl<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut input = buf;
 
@@ -89,8 +96,8 @@ impl<W: Write, S: SymmetricAlgorithm> Write for EncryptorImpl<W, S> {
             if self.buffer.len() == self.chunk_size {
                 let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-                let bytes_written = S::encrypt_to_buffer(
-                    &self.symmetric_key,
+                let bytes_written = self.algorithm.encrypt_to_buffer(
+                    self.key.clone(),
                     &nonce,
                     &self.buffer,
                     &mut self.encrypted_chunk_buffer,
@@ -108,8 +115,8 @@ impl<W: Write, S: SymmetricAlgorithm> Write for EncryptorImpl<W, S> {
             let chunk = &input[..self.chunk_size];
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
 
-            let bytes_written = S::encrypt_to_buffer(
-                &self.symmetric_key,
+            let bytes_written = self.algorithm.encrypt_to_buffer(
+                self.key.clone(),
                 &nonce,
                 chunk,
                 &mut self.encrypted_chunk_buffer,
@@ -140,9 +147,10 @@ impl<W: Write, S: SymmetricAlgorithm> Write for EncryptorImpl<W, S> {
 /// The implementation of a synchronous, streaming decryptor.
 ///
 /// 同步、流式解密器的实现。
-pub struct DecryptorImpl<R: Read, S: SymmetricAlgorithm> {
+pub struct DecryptorImpl<R: Read> {
     reader: R,
-    symmetric_key: S::Key,
+    algorithm: Box<dyn SymmetricAlgorithm>,
+    key: TypedSymmetricKey,
     base_nonce: [u8; 12],
     encrypted_chunk_size: usize,
     buffer: io::Cursor<Vec<u8>>,
@@ -150,23 +158,24 @@ pub struct DecryptorImpl<R: Read, S: SymmetricAlgorithm> {
     chunk_counter: u64,
     is_done: bool,
     aad: Option<Vec<u8>>,
-    _phantom: std::marker::PhantomData<S>,
 }
 
-impl<R: Read, S: SymmetricAlgorithm> DecryptorImpl<R, S> {
+impl<R: Read> DecryptorImpl<R> {
     /// Creates a new `DecryptorImpl`.
     ///
     /// 创建一个新的 `DecryptorImpl`。
     pub fn new(
         reader: R,
-        key: S::Key,
+        algorithm: Box<dyn SymmetricAlgorithm>,
+        key: TypedSymmetricKey,
         base_nonce: [u8; 12],
-        encrypted_chunk_size: usize,
         aad: Option<&[u8]>,
     ) -> Self {
+        let encrypted_chunk_size = DEFAULT_CHUNK_SIZE as usize + algorithm.tag_size();
         Self {
             reader,
-            symmetric_key: key,
+            algorithm,
+            key,
             base_nonce,
             encrypted_chunk_size,
             buffer: io::Cursor::new(Vec::new()),
@@ -174,12 +183,11 @@ impl<R: Read, S: SymmetricAlgorithm> DecryptorImpl<R, S> {
             chunk_counter: 0,
             is_done: false,
             aad: aad.map(|d| d.to_vec()),
-            _phantom: std::marker::PhantomData,
         }
     }
 }
 
-impl<R: Read, S: SymmetricAlgorithm> Read for DecryptorImpl<R, S> {
+impl<R: Read> Read for DecryptorImpl<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let bytes_read_from_buf = self.buffer.read(buf)?;
         if bytes_read_from_buf > 0 {
@@ -216,8 +224,8 @@ impl<R: Read, S: SymmetricAlgorithm> Read for DecryptorImpl<R, S> {
         decrypted_buf.clear();
         decrypted_buf.resize(self.encrypted_chunk_size, 0);
 
-        let bytes_written = S::decrypt_to_buffer(
-            &self.symmetric_key,
+        let bytes_written = self.algorithm.decrypt_to_buffer(
+            self.key.clone(),
             &nonce,
             &self.encrypted_chunk_buffer[..total_bytes_read],
             decrypted_buf,
@@ -230,5 +238,54 @@ impl<R: Read, S: SymmetricAlgorithm> Read for DecryptorImpl<R, S> {
         self.chunk_counter += 1;
 
         self.buffer.read(buf)
+    }
+}
+
+impl StreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
+    fn encrypt_to_stream<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        writer: Box<dyn Write + 'a>,
+        aad: Option<&[u8]>,
+    ) -> Result<Box<dyn Write + 'a>> {
+        let encryptor = EncryptorImpl::new(writer, self.clone(), key, base_nonce, aad)?;
+        Ok(Box::new(encryptor))
+    }
+
+    fn decrypt_from_stream<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        reader: Box<dyn Read + 'a>,
+        aad: Option<&[u8]>,
+    ) -> Result<Box<dyn Read + 'a>> {
+        let decryptor = DecryptorImpl::new(reader, self.clone(), key, base_nonce, aad);
+        Ok(Box::new(decryptor))
+    }
+}
+
+
+impl StreamingBodyProcessor for &dyn SymmetricAlgorithm {
+    fn encrypt_to_stream<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        writer: Box<dyn Write + 'a>,
+        aad: Option<&[u8]>,
+    ) -> Result<Box<dyn Write + 'a>> {
+        let encryptor = EncryptorImpl::new(writer, self.clone_box(), key, base_nonce, aad)?;
+        Ok(Box::new(encryptor))
+    }
+
+    fn decrypt_from_stream<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        reader: Box<dyn Read + 'a>,
+        aad: Option<&[u8]>,
+    ) -> Result<Box<dyn Read + 'a>> {
+        let decryptor = DecryptorImpl::new(reader, self.clone_box(), key, base_nonce, aad);
+        Ok(Box::new(decryptor))
     }
 }

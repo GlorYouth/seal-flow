@@ -1,6 +1,5 @@
-use crate::common::algorithms::SignatureAlgorithm;
+use crate::{common::algorithms::SignatureAlgorithm, keys::TypedSymmetricKey};
 use bytes::BytesMut;
-use seal_crypto::zeroize::Zeroizing;
 
 /// This module re-exports common functionalities from the `common` directory.
 ///
@@ -62,7 +61,7 @@ pub struct SignerSet {
 pub struct DerivationSet {
     pub(crate) derivation_info: header::DerivationInfo,
     pub(crate) deriver_fn:
-        Box<dyn Fn(&[u8]) -> crate::Result<Zeroizing<Vec<u8>>> + Send + Sync + 'static>,
+        Box<dyn Fn(&TypedSymmetricKey) -> crate::Result<TypedSymmetricKey> + Send + Sync>,
 }
 
 // A private trait to abstract access to the header from the inner implementation.

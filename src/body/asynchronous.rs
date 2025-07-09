@@ -9,6 +9,7 @@
 #![cfg(feature = "async")]
 
 use crate::algorithms::traits::SymmetricAlgorithm;
+use crate::keys::TypedSymmetricKey;
 use crate::common::buffer::BufferPool;
 use crate::common::{derive_nonce, OrderedChunk, CHANNEL_BOUND, DEFAULT_CHUNK_SIZE};
 use crate::error::{Error, Result};
@@ -22,6 +23,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::task::JoinHandle;
+
+use super::traits::AsynchronousBodyProcessor;
 
 // --- Helper Structs for Encryption ---
 
@@ -59,10 +62,11 @@ pin_project! {
     /// The implementation of an asynchronous, streaming encryptor.
     ///
     /// 异步、流式加密器的实现。
-    pub struct EncryptorImpl<W: AsyncWrite, S: SymmetricAlgorithm> {
+    pub struct EncryptorImpl<W: AsyncWrite> {
         #[pin]
         pub(crate) writer: W,
-        pub(crate) symmetric_key: Arc<S::Key>,
+        pub(crate) key: Arc<TypedSymmetricKey>,
+        pub(crate) algorithm: Arc<dyn SymmetricAlgorithm>,
         pub(crate) base_nonce: [u8; 12],
         pub(crate) chunk_size: usize,
         pub(crate) buffer: BytesMut,
@@ -74,24 +78,27 @@ pin_project! {
         pub(crate) writing_state: WritingState,
         pub(crate) out_pool: Arc<BufferPool>,
         pub(crate) aad: Option<Arc<Vec<u8>>>,
-        pub(crate) _phantom: std::marker::PhantomData<S>,
     }
 }
 
-impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> EncryptorImpl<W, S>
-where
-    S: SymmetricAlgorithm,
-{
+impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
     /// Creates a new `EncryptorImpl`.
     ///
     /// 创建一个新的 `EncryptorImpl`。
-    pub(crate) fn new(writer: W, key: S::Key, base_nonce: [u8; 12], aad: Option<&[u8]>) -> Self {
+    pub(crate) fn new(
+        writer: W,
+        key: Arc<TypedSymmetricKey>,
+        algorithm: Arc<dyn SymmetricAlgorithm>,
+        base_nonce: [u8; 12],
+        aad: Option<&[u8]>,
+    ) -> Self {
         let chunk_size = DEFAULT_CHUNK_SIZE as usize;
-        let out_pool = Arc::new(BufferPool::new(chunk_size + S::TAG_SIZE));
+        let out_pool = Arc::new(BufferPool::new(chunk_size + algorithm.tag_size()));
 
         Self {
             writer,
-            symmetric_key: Arc::new(key),
+            algorithm,
+            key,
             base_nonce,
             chunk_size,
             buffer: BytesMut::with_capacity(chunk_size * 2),
@@ -103,7 +110,6 @@ where
             writing_state: WritingState::Idle,
             out_pool,
             aad: aad.map(|d| Arc::new(d.to_vec())),
-            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -129,28 +135,30 @@ where
             let chunk_len = std::cmp::min(self.buffer.len(), self.chunk_size);
             let in_buffer = self.buffer.split_to(chunk_len);
 
-            let key = Arc::clone(&self.symmetric_key);
+            let algo = Arc::clone(&self.algorithm);
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
             let index = self.chunk_counter;
             let out_pool = Arc::clone(&self.out_pool);
             let aad_clone = self.aad.clone();
+            let key = self.key.clone();
 
             let handle = tokio::task::spawn_blocking(move || {
                 let mut out_buffer = out_pool.acquire();
                 out_buffer.resize(out_buffer.capacity(), 0);
 
-                let result = S::encrypt_to_buffer(
-                    &key,
-                    &nonce,
-                    &in_buffer,
-                    &mut out_buffer,
-                    aad_clone.as_deref().map(|v| v.as_slice()),
-                )
-                .map(|bytes_written| {
-                    out_buffer.truncate(bytes_written);
-                    out_buffer
-                })
-                .map_err(Error::from);
+                let result = algo
+                    .encrypt_to_buffer(
+                        (*key).clone(),
+                        &nonce,
+                        &in_buffer,
+                        &mut out_buffer,
+                        aad_clone.as_deref().map(|v| v.as_slice()),
+                    )
+                    .map(|bytes_written| {
+                        out_buffer.truncate(bytes_written);
+                        out_buffer
+                    })
+                    .map_err(Error::from);
                 result.map(|buf| (index, buf))
             });
 
@@ -254,10 +262,7 @@ where
     }
 }
 
-impl<W: AsyncWrite + Unpin, S: SymmetricAlgorithm> AsyncWrite for EncryptorImpl<W, S>
-where
-    S: SymmetricAlgorithm,
-{
+impl<W: AsyncWrite + Unpin> AsyncWrite for EncryptorImpl<W> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -330,10 +335,11 @@ pin_project! {
     /// The implementation of an asynchronous, streaming decryptor.
     ///
     /// 异步、流式解密器的实现。
-    pub struct DecryptorImpl<R: AsyncRead, S: SymmetricAlgorithm> {
+    pub struct DecryptorImpl<R: AsyncRead> {
         #[pin]
         pub(crate) reader: R,
-        pub(crate) symmetric_key: Arc<S::Key>,
+        pub(crate) algorithm: Arc<dyn SymmetricAlgorithm>,
+        pub(crate) key: Arc<TypedSymmetricKey>,
         pub(crate) base_nonce: [u8; 12],
         pub(crate) encrypted_chunk_size: usize,
         pub(crate) decrypted_chunk_size: usize,
@@ -346,29 +352,27 @@ pin_project! {
         pub(crate) pending_chunks: BTreeMap<u64, Result<BytesMut>>,
         pub(crate) out_pool: Arc<BufferPool>,
         pub(crate) aad: Option<Arc<Vec<u8>>>,
-        pub(crate) _phantom: std::marker::PhantomData<S>,
     }
 }
 
-impl<R: AsyncRead + Unpin, S> DecryptorImpl<R, S>
-where
-    S: SymmetricAlgorithm,
-{
+impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
     /// Creates a new `DecryptorImpl`.
     ///
     /// 创建一个新的 `DecryptorImpl`。
     pub(crate) fn new(
         reader: R,
-        key: S::Key,
+        key: Arc<TypedSymmetricKey>,
+        algorithm: Arc<dyn SymmetricAlgorithm>,
         base_nonce: [u8; 12],
-        encrypted_chunk_size: usize,
-        decrypted_chunk_size: usize,
         aad: Option<&[u8]>,
     ) -> Self {
+        let decrypted_chunk_size = DEFAULT_CHUNK_SIZE as usize;
+        let encrypted_chunk_size = decrypted_chunk_size + algorithm.tag_size();
         let out_pool = Arc::new(BufferPool::new(decrypted_chunk_size));
         Self {
             reader,
-            symmetric_key: Arc::new(key),
+            algorithm,
+            key,
             base_nonce,
             encrypted_chunk_size,
             decrypted_chunk_size,
@@ -381,7 +385,6 @@ where
             pending_chunks: BTreeMap::new(),
             out_pool,
             aad: aad.map(|d| Arc::new(d.to_vec())),
-            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -428,28 +431,30 @@ where
                 let chunk_len = std::cmp::min(self.read_buffer.len(), self.encrypted_chunk_size);
                 let in_buffer = self.read_buffer.split_to(chunk_len);
 
-                let key = Arc::clone(&self.symmetric_key);
+                let algo = Arc::clone(&self.algorithm);
                 let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
                 let index = self.chunk_counter;
                 let out_pool = Arc::clone(&self.out_pool);
                 let aad_clone = self.aad.clone();
+                let key = self.key.clone();
 
                 let handle = tokio::task::spawn_blocking(move || {
                     let mut out_buffer = out_pool.acquire();
                     out_buffer.resize(out_buffer.capacity(), 0);
 
-                    let result = S::decrypt_to_buffer(
-                        &key,
-                        &nonce,
-                        &in_buffer,
-                        &mut out_buffer,
-                        aad_clone.as_deref().map(|v| v.as_slice()),
-                    )
-                    .map(|bytes_written| {
-                        out_buffer.truncate(bytes_written);
-                        out_buffer
-                    })
-                    .map_err(Error::from);
+                    let result = algo
+                        .decrypt_to_buffer(
+                            (*key).clone(),
+                            &nonce,
+                            &in_buffer,
+                            &mut out_buffer,
+                            aad_clone.as_deref().map(|v| v.as_slice()),
+                        )
+                        .map(|bytes_written| {
+                            out_buffer.truncate(bytes_written);
+                            out_buffer
+                        })
+                        .map_err(Error::from);
                     (index, result)
                 });
                 self.decrypt_tasks.push(handle);
@@ -509,10 +514,7 @@ where
     }
 }
 
-impl<R: AsyncRead + Unpin, S: SymmetricAlgorithm> AsyncRead for DecryptorImpl<R, S>
-where
-    S: SymmetricAlgorithm,
-{
+impl<R: AsyncRead + Unpin> AsyncRead for DecryptorImpl<R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -592,3 +594,53 @@ where
         }
     }
 }
+
+impl AsynchronousBodyProcessor for Arc<dyn SymmetricAlgorithm> {
+    fn encrypt_async<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
+        aad: Option<&'a [u8]>,
+    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>> {
+        let encryptor = EncryptorImpl::new(writer, Arc::new(key), self.clone(), base_nonce, aad);
+        Ok(Box::new(encryptor))
+    }
+
+    fn decrypt_async<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
+        aad: Option<&'a [u8]>,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>> {
+        let decryptor = DecryptorImpl::new(reader, Arc::new(key), self.clone(), base_nonce, aad);
+        Ok(Box::new(decryptor))
+    }
+}
+
+impl AsynchronousBodyProcessor for Box<dyn SymmetricAlgorithm> {
+    fn encrypt_async<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
+        aad: Option<&'a [u8]>,
+    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>> {
+        let encryptor = EncryptorImpl::new(writer, Arc::new(key), self.clone().into(), base_nonce, aad);
+        Ok(Box::new(encryptor))
+    }
+
+    fn decrypt_async<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
+        aad: Option<&'a [u8]>,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>> {
+        let decryptor = DecryptorImpl::new(reader, Arc::new(key), self.clone().into(), base_nonce, aad);
+        Ok(Box::new(decryptor))
+    }
+}
+
+

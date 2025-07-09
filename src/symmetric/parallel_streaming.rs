@@ -5,100 +5,55 @@
 //! 实现并行流式对称加解密方案。
 //! 此模式通过将 I/O 与并行计算重叠，专为高性能处理大文件或数据流而设计。
 
-use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
+use crate::body::traits::ParallelStreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::PendingImpl;
 use crate::error::{Error, FormatError, Result};
-use crate::impls::parallel_streaming::{decrypt_pipeline, encrypt_pipeline};
+use crate::keys::TypedSymmetricKey;
+use crate::symmetric::common::create_header;
+use crate::symmetric::traits::SymmetricParallelStreamingProcessor;
 use std::io::{Read, Write};
-
-/// Encrypts data from a reader and writes to a writer using a parallel streaming approach.
-///
-/// 使用并行流式方法从 reader 加密数据并写入 writer。
-pub fn encrypt<S, R, W>(
-    key: S::Key,
-    reader: R,
-    mut writer: W,
-    key_id: String,
-    aad: Option<&[u8]>,
-) -> Result<()>
-where
-    S: SymmetricAlgorithm,
-    R: Read + Send,
-    W: Write,
-{
-    // 1. Setup Header and write it
-    let (header, base_nonce) = create_header::<S>(key_id)?;
-
-    let header_bytes = header.encode_to_vec()?;
-    writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
-    writer.write_all(&header_bytes)?;
-
-    encrypt_pipeline::<S, R, W>(key, base_nonce, reader, writer, aad)
-}
-
-/// Decrypts a stream and writes the output to another stream.
-///
-/// 解密一个流并将输出写入另一个流。
-pub fn decrypt_body_stream<S, R, W>(
-    key: S::Key,
-    header: &Header,
-    reader: R,
-    writer: W,
-    aad: Option<&[u8]>,
-) -> Result<()>
-where
-    S: SymmetricAlgorithm,
-    R: Read + Send,
-    W: Write,
-{
-    let (chunk_size, base_nonce) = match &header.payload {
-        HeaderPayload::Symmetric {
-            stream_info: Some(info),
-            ..
-        } => (info.chunk_size, info.base_nonce),
-        _ => return Err(Error::Format(FormatError::InvalidHeader)),
-    };
-
-    decrypt_pipeline::<S, R, W>(key, base_nonce, chunk_size, reader, writer, aad)
-}
+use std::sync::Arc;
 
 /// A pending decryptor for a parallel stream, waiting for a key.
-///
-/// This state is entered after the header has been successfully read from the
-/// stream, allowing the user to inspect the header (e.g., to find the `key_id`)
-/// before supplying the appropriate key to proceed with decryption.
-///
-/// 一个用于并行流的待处理解密器，等待密钥。
-///
-/// 当从流中成功读取标头后，进入此状态，允许用户在提供适当的密钥以继续解密之前检查标头（例如，查找 `key_id`）。
 pub struct PendingDecryptor<R: Read + Send> {
     reader: R,
     header: Header,
 }
 
-impl<R: Read + Send> PendingDecryptor<R> {
-    /// Creates a new `PendingDecryptor` by reading the header from the stream.
-    ///
-    /// 通过从流中读取标头来创建一个新的 `PendingDecryptor`。
+impl<'a, R: Read + Send + 'a> PendingDecryptor<R> {
     pub fn from_reader(mut reader: R) -> Result<Self> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
         Ok(Self { reader, header })
     }
 
-    /// Consumes the `PendingDecryptor` and decrypts the rest of the stream,
-    /// writing the plaintext to the provided writer.
-    ///
-    /// 消费 `PendingDecryptor` 并解密流的其余部分，
-    /// 将明文写入提供的 writer。
-    pub fn decrypt_to_writer<S: SymmetricAlgorithm, W: Write>(
+    pub fn decrypt_to_writer<S, W>(
         self,
-        key: S::Key,
+        algorithm: Arc<S>,
+        key: TypedSymmetricKey,
         writer: W,
-        aad: Option<&[u8]>,
-    ) -> Result<()> {
-        decrypt_body_stream::<S, R, W>(key, &self.header, self.reader, writer, aad)
+        aad: Option<&'a [u8]>,
+    ) -> Result<()>
+    where
+        S: SymmetricAlgorithm + Send + Sync + 'a,
+        W: Write + Send + 'a,
+    {
+        let base_nonce = match &self.header.payload {
+            HeaderPayload::Symmetric {
+                stream_info: Some(info),
+                ..
+            } => info.base_nonce,
+            _ => return Err(Error::Format(FormatError::InvalidHeader)),
+        };
+        let processor = algorithm.clone_box();
+        processor.decrypt_pipeline(
+            key,
+            base_nonce,
+            Box::new(self.reader),
+            Box::new(writer),
+            aad,
+        )
     }
 }
 
@@ -108,13 +63,65 @@ impl<R: Read + Send> PendingImpl for PendingDecryptor<R> {
     }
 }
 
+pub struct ParallelStreaming<'a, S: SymmetricAlgorithm> {
+    algorithm: Arc<S>,
+    _marker: std::marker::PhantomData<&'a S>,
+}
+
+impl<'a, S: SymmetricAlgorithm> ParallelStreaming<'a, S> {
+    pub fn new(algorithm: Arc<S>) -> Self {
+        Self {
+            algorithm,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'a, S: SymmetricAlgorithm + Send + Sync + 'a>
+    SymmetricParallelStreamingProcessor for ParallelStreaming<'a, S>
+{
+    fn encrypt_pipeline<'b>(
+        &self,
+        key: TypedSymmetricKey,
+        key_id: String,
+        reader: Box<dyn Read + Send + 'b>,
+        mut writer: Box<dyn Write + Send + 'b>,
+        aad: Option<&'b [u8]>,
+    ) -> Result<()> {
+        let (header, base_nonce) = create_header(&*self.algorithm, key_id)?;
+        let header_bytes = header.encode_to_vec()?;
+        writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
+        writer.write_all(&header_bytes)?;
+        let processor = self.algorithm.clone_box();
+        processor.encrypt_pipeline(key, base_nonce, reader, writer, aad)
+    }
+
+    fn decrypt_pipeline<'b>(
+        &self,
+        key: TypedSymmetricKey,
+        reader: Box<dyn Read + Send + 'b>,
+        writer: Box<dyn Write + Send + 'b>,
+        aad: Option<&'b [u8]>,
+    ) -> Result<()> {
+        let pending = PendingDecryptor::from_reader(reader)?;
+        pending.decrypt_to_writer(self.algorithm.clone(), key, writer, aad)
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algorithms::definitions::symmetric::Aes256GcmWrapper;
     use crate::common::DEFAULT_CHUNK_SIZE;
+    use crate::keys::TypedSymmetricKey;
     use seal_crypto::prelude::SymmetricKeyGenerator;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::io::Cursor;
+
+    fn get_wrapper() -> Arc<Aes256GcmWrapper> {
+        Arc::new(Aes256GcmWrapper::new())
+    }
 
     fn get_test_data(size: usize) -> Vec<u8> {
         (0..size).map(|i| (i % 256) as u8).collect()
@@ -122,24 +129,63 @@ mod tests {
 
     #[test]
     fn test_parallel_streaming_roundtrip() {
-        let key = Aes256Gcm::generate_key().unwrap();
+        let wrapper = get_wrapper();
+        let processor = ParallelStreaming::new(wrapper.clone());
         let plaintext = get_test_data(1024 * 1024); // 1 MiB
-
+        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let mut encrypted_data = Vec::new();
-        encrypt::<Aes256Gcm, _, _>(
-            key.clone(),
-            Cursor::new(&plaintext),
-            &mut encrypted_data,
-            "test_key".to_string(),
-            None,
-        )
-        .unwrap();
+        processor
+            .encrypt_pipeline(
+                key.clone(),
+                "test_key".to_string(),
+                Box::new(Cursor::new(&plaintext)),
+                Box::new(&mut encrypted_data),
+                None,
+            )
+            .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        assert_eq!(pending.header().payload.key_id(), Some("test_key"));
-        pending
-            .decrypt_to_writer::<Aes256Gcm, _>(key, &mut decrypted_data, None)
+        processor
+            .decrypt_pipeline(
+                key.clone(),
+                Box::new(Cursor::new(&encrypted_data)),
+                Box::new(&mut decrypted_data),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(plaintext, decrypted_data);
+    }
+
+    #[test]
+    fn test_processor_roundtrip() {
+        let wrapper = get_wrapper();
+        let processor = ParallelStreaming::new(wrapper.clone());
+        let plaintext = get_test_data(1024 * 512); // 512 KiB
+        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let aad = Some(b"parallel streaming processor aad" as &[u8]);
+
+        // Encrypt
+        let mut encrypted_data = Vec::new();
+        processor
+            .encrypt_pipeline(
+                key.clone(),
+                "proc_key".to_string(),
+                Box::new(Cursor::new(&plaintext)),
+                Box::new(&mut encrypted_data),
+                aad,
+            )
+            .unwrap();
+
+        // Decrypt
+        let mut decrypted_data = Vec::new();
+        processor
+            .decrypt_pipeline(
+                key.clone(),
+                Box::new(Cursor::new(&encrypted_data)),
+                Box::new(&mut decrypted_data),
+                aad,
+            )
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -147,23 +193,29 @@ mod tests {
 
     #[test]
     fn test_empty_input() {
-        let key = Aes256Gcm::generate_key().unwrap();
+        let wrapper = get_wrapper();
+        let processor = ParallelStreaming::new(wrapper.clone());
         let plaintext = b"";
-
+        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let mut encrypted_data = Vec::new();
-        encrypt::<Aes256Gcm, _, _>(
-            key.clone(),
-            Cursor::new(&plaintext),
-            &mut encrypted_data,
-            "test_key".to_string(),
-            None,
-        )
-        .unwrap();
+        processor
+            .encrypt_pipeline(
+                key.clone(),
+                "test_key".to_string(),
+                Box::new(Cursor::new(&plaintext)),
+                Box::new(&mut encrypted_data),
+                None,
+            )
+            .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        pending
-            .decrypt_to_writer::<Aes256Gcm, _>(key, &mut decrypted_data, None)
+        processor
+            .decrypt_pipeline(
+                key.clone(),
+                Box::new(Cursor::new(&encrypted_data)),
+                Box::new(&mut decrypted_data),
+                None,
+            )
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data.as_slice());
@@ -171,23 +223,29 @@ mod tests {
 
     #[test]
     fn test_exact_chunk_multiple() {
-        let key = Aes256Gcm::generate_key().unwrap();
+        let wrapper = get_wrapper();
+        let processor = ParallelStreaming::new(wrapper.clone());
         let plaintext = get_test_data((DEFAULT_CHUNK_SIZE * 3) as usize);
-
+        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let mut encrypted_data = Vec::new();
-        encrypt::<Aes256Gcm, _, _>(
-            key.clone(),
-            Cursor::new(&plaintext),
-            &mut encrypted_data,
-            "test_key".to_string(),
-            None,
-        )
-        .unwrap();
+        processor
+            .encrypt_pipeline(
+                key.clone(),
+                "test_key".to_string(),
+                Box::new(Cursor::new(&plaintext)),
+                Box::new(&mut encrypted_data),
+                None,
+            )
+            .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        pending
-            .decrypt_to_writer::<Aes256Gcm, _>(key, &mut decrypted_data, None)
+        processor
+            .decrypt_pipeline(
+                key.clone(),
+                Box::new(Cursor::new(&encrypted_data)),
+                Box::new(&mut decrypted_data),
+                None,
+            )
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -195,92 +253,111 @@ mod tests {
 
     #[test]
     fn test_tampered_ciphertext_fails() {
-        let key = Aes256Gcm::generate_key().unwrap();
+        let wrapper = get_wrapper();
+        let processor = ParallelStreaming::new(wrapper.clone());
         let plaintext = get_test_data(1024);
-
+        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let mut encrypted_data = Vec::new();
-        encrypt::<Aes256Gcm, _, _>(
-            key.clone(),
-            Cursor::new(&plaintext),
-            &mut encrypted_data,
-            "test_key".to_string(),
-            None,
-        )
-        .unwrap();
+        processor
+            .encrypt_pipeline(
+                key.clone(),
+                "test_key".to_string(),
+                Box::new(Cursor::new(&plaintext)),
+                Box::new(&mut encrypted_data),
+                None,
+            )
+            .unwrap();
 
         // Tamper
         let header_len = 4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
         encrypted_data[header_len + 10] ^= 1;
 
         let mut decrypted_data = Vec::new();
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending.decrypt_to_writer::<Aes256Gcm, _>(key, &mut decrypted_data, None);
+        let result = processor.decrypt_pipeline(
+            key.clone(),
+            Box::new(Cursor::new(&encrypted_data)),
+            Box::new(&mut decrypted_data),
+            None,
+        );
 
         assert!(result.is_err());
     }
 
     #[test]
     fn test_wrong_key_fails() {
-        let key1 = Aes256Gcm::generate_key().unwrap();
-        let key2 = Aes256Gcm::generate_key().unwrap();
+        let wrapper = get_wrapper();
+        let processor = ParallelStreaming::new(wrapper.clone());
         let plaintext = get_test_data(1024);
-
+        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let mut encrypted_data = Vec::new();
-        encrypt::<Aes256Gcm, _, _>(
-            key1,
-            Cursor::new(&plaintext),
-            &mut encrypted_data,
-            "key1".to_string(),
-            None,
-        )
-        .unwrap();
+        processor
+            .encrypt_pipeline(
+                key.clone(),
+                "key1".to_string(),
+                Box::new(Cursor::new(&plaintext)),
+                Box::new(&mut encrypted_data),
+                None,
+            )
+            .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending.decrypt_to_writer::<Aes256Gcm, _>(key2, &mut decrypted_data, None);
+        let result = processor.decrypt_pipeline(
+            key.clone(),
+            Box::new(Cursor::new(&encrypted_data)),
+            Box::new(&mut decrypted_data),
+            None,
+        );
         assert!(result.is_err());
     }
 
     #[test]
     fn test_aad_roundtrip() {
-        let key = Aes256Gcm::generate_key().unwrap();
+        let wrapper = get_wrapper();
+        let processor = ParallelStreaming::new(wrapper.clone());
         let plaintext = get_test_data(1024 * 256); // 256 KiB
         let aad = b"parallel streaming aad";
-
+        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let mut encrypted_data = Vec::new();
-        encrypt::<Aes256Gcm, _, _>(
-            key.clone(),
-            Cursor::new(&plaintext),
-            &mut encrypted_data,
-            "test_key_aad".to_string(),
-            Some(aad),
-        )
-        .unwrap();
+        processor
+            .encrypt_pipeline(
+                key.clone(),
+                "test_key_aad".to_string(),
+                Box::new(Cursor::new(&plaintext)),
+                Box::new(&mut encrypted_data),
+                Some(aad),
+            )
+            .unwrap();
 
         // Decrypt with correct AAD
         let mut decrypted_data = Vec::new();
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        assert_eq!(pending.header().payload.key_id(), Some("test_key_aad"));
-        pending
-            .decrypt_to_writer::<Aes256Gcm, _>(key.clone(), &mut decrypted_data, Some(aad))
+        processor
+            .decrypt_pipeline(
+                key.clone(),
+                Box::new(Cursor::new(&encrypted_data)),
+                Box::new(&mut decrypted_data),
+                Some(aad),
+            )
             .unwrap();
         assert_eq!(plaintext, decrypted_data);
 
         // Decrypt with wrong AAD fails
         let mut decrypted_data_fail = Vec::new();
-        let pending_fail = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending_fail.decrypt_to_writer::<Aes256Gcm, _>(
+        let result = processor.decrypt_pipeline(
             key.clone(),
-            &mut decrypted_data_fail,
+            Box::new(Cursor::new(&encrypted_data)),
+            Box::new(&mut decrypted_data_fail),
             Some(b"wrong aad"),
         );
         assert!(result.is_err());
 
         // Decrypt with no AAD fails
         let mut decrypted_data_fail2 = Vec::new();
-        let pending_fail2 = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result2 =
-            pending_fail2.decrypt_to_writer::<Aes256Gcm, _>(key, &mut decrypted_data_fail2, None);
+        let result2 = processor.decrypt_pipeline(
+            key.clone(),
+            Box::new(Cursor::new(&encrypted_data)),
+            Box::new(&mut decrypted_data_fail2),
+            None,
+        );
         assert!(result2.is_err());
     }
 }

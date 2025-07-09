@@ -1,73 +1,337 @@
 //! Defines the concrete algorithm types and implements the corresponding traits.
 
 use super::traits::{
-    AsymmetricAlgorithmDetails, KdfAlgorithmDetails, SignatureAlgorithmDetails,
-    SymmetricAlgorithmDetails, XofAlgorithmDetails,
+    AsymmetricAlgorithm, KdfAlgorithmDetails, SignatureAlgorithmDetails, SymmetricAlgorithm,
+    XofAlgorithmDetails,
 };
 use crate::common;
+use crate::error::{Error, FormatError, Result};
+
+macro_rules! impl_symmetric_algorithm {
+    ($wrapper:ident, $algo:ty, $key_variant:path, $algo_enum:path) => {
+        #[derive(Clone)]
+        pub struct $wrapper;
+
+        impl $wrapper {
+            pub fn new() -> Self {
+                Self
+            }
+        }
+
+        impl SymmetricAlgorithm for $wrapper {
+            fn encrypt(
+                &self,
+                key: TypedSymmetricKey,
+                nonce: &[u8],
+                plaintext: &[u8],
+                aad: Option<&[u8]>,
+            ) -> Result<Vec<u8>> {
+                let key = match key {
+                    $key_variant(key) => key,
+                    _ => return Err(Error::Format(FormatError::InvalidKeyType)),
+                };
+                <$algo>::encrypt(&key, nonce, plaintext, aad).map_err(Error::from)
+            }
+
+            fn encrypt_to_buffer(
+                &self,
+                key: TypedSymmetricKey,
+                nonce: &[u8],
+                plaintext: &[u8],
+                output: &mut [u8],
+                aad: Option<&[u8]>,
+            ) -> Result<usize> {
+                let key = match key {
+                    $key_variant(key) => key,
+                    _ => return Err(Error::Format(FormatError::InvalidKeyType)),
+                };
+                <$algo>::encrypt_to_buffer(&key, nonce, plaintext, output, aad).map_err(Error::from)
+            }
+
+            fn decrypt(
+                &self,
+                key: TypedSymmetricKey,
+                nonce: &[u8],
+                aad: Option<&[u8]>,
+                ciphertext: &[u8],
+            ) -> Result<Vec<u8>> {
+                let key = match key {
+                    $key_variant(key) => key,
+                    _ => return Err(Error::Format(FormatError::InvalidKeyType)),
+                };
+                <$algo>::decrypt(&key, nonce, ciphertext, aad).map_err(Error::from)
+            }
+
+            fn decrypt_to_buffer(
+                &self,
+                key: TypedSymmetricKey,
+                nonce: &[u8],
+                ciphertext: &[u8],
+                output: &mut [u8],
+                aad: Option<&[u8]>,
+            ) -> Result<usize> {
+                let key = match key {
+                    $key_variant(key) => key,
+                    _ => return Err(Error::Format(FormatError::InvalidKeyType)),
+                };
+                <$algo>::decrypt_to_buffer(&key, nonce, ciphertext, output, aad).map_err(Error::from)
+            }
+
+            fn clone_box(&self) -> Box<dyn SymmetricAlgorithm> {
+                Box::new(self.clone())
+            }
+
+            fn algorithm(&self) -> common::algorithms::SymmetricAlgorithm {
+                $algo_enum
+            }
+
+            fn key_size(&self) -> usize {
+                <$algo>::KEY_SIZE
+            }
+
+            fn nonce_size(&self) -> usize {
+                <$algo>::NONCE_SIZE
+            }
+
+            fn tag_size(&self) -> usize {
+                <$algo>::TAG_SIZE
+            }
+        }
+    };
+}
 
 pub mod symmetric {
     use super::*;
+    use crate::keys::TypedSymmetricKey;
     pub use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};
     pub use seal_crypto::schemes::symmetric::chacha20_poly1305::{
         ChaCha20Poly1305, XChaCha20Poly1305,
     };
+    use seal_crypto::prelude::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor};
 
-    // --- Symmetric Algorithms ---
-    impl SymmetricAlgorithmDetails for Aes128Gcm {
-        const ALGORITHM: common::algorithms::SymmetricAlgorithm =
-            common::algorithms::SymmetricAlgorithm::Aes128Gcm;
-    }
+    impl_symmetric_algorithm!(
+        Aes128GcmWrapper,
+        Aes128Gcm,
+        TypedSymmetricKey::Aes128Gcm,
+        common::algorithms::SymmetricAlgorithm::Aes128Gcm
+    );
 
-    impl SymmetricAlgorithmDetails for Aes256Gcm {
-        const ALGORITHM: common::algorithms::SymmetricAlgorithm =
-            common::algorithms::SymmetricAlgorithm::Aes256Gcm;
-    }
+    impl_symmetric_algorithm!(
+        Aes256GcmWrapper,
+        Aes256Gcm,
+        TypedSymmetricKey::Aes256Gcm,
+        common::algorithms::SymmetricAlgorithm::Aes256Gcm
+    );
 
-    impl SymmetricAlgorithmDetails for ChaCha20Poly1305 {
-        const ALGORITHM: common::algorithms::SymmetricAlgorithm =
-            common::algorithms::SymmetricAlgorithm::ChaCha20Poly1305;
-    }
+    impl_symmetric_algorithm!(
+        ChaCha20Poly1305Wrapper,
+        ChaCha20Poly1305,
+        TypedSymmetricKey::ChaCha20Poly1305,
+        common::algorithms::SymmetricAlgorithm::ChaCha20Poly1305
+    );
 
-    impl SymmetricAlgorithmDetails for XChaCha20Poly1305 {
-        const ALGORITHM: common::algorithms::SymmetricAlgorithm =
-            common::algorithms::SymmetricAlgorithm::XChaCha20Poly1305;
-    }
+    impl_symmetric_algorithm!(
+        XChaCha20Poly1305Wrapper,
+        XChaCha20Poly1305,
+        TypedSymmetricKey::XChaCha20Poly1305,
+        common::algorithms::SymmetricAlgorithm::XChaCha20Poly1305
+    );
+}
+
+macro_rules! impl_asymmetric_algorithm {
+    ($wrapper:ident, $algo:ty, $key_variant:ident, $algo_enum:path) => {
+        #[derive(Clone)]
+        pub struct $wrapper;
+
+        impl $wrapper {
+            pub fn new() -> Self {
+                Self
+            }
+        }
+
+        impl AsymmetricAlgorithm for $wrapper {
+            fn algorithm(&self) -> common::algorithms::AsymmetricAlgorithm {
+                $algo_enum
+            }
+
+            fn encapsulate_key(
+                &self,
+                public_key: &TypedAsymmetricPublicKey,
+            ) -> Result<(Zeroizing<Vec<u8>>, Vec<u8>)> {
+                let public_key = match public_key {
+                    TypedAsymmetricPublicKey::$key_variant(pk) => pk,
+                    _ => return Err(Error::Format(FormatError::InvalidKeyType)),
+                };
+                <$algo>::encapsulate(public_key).map_err(Error::from)
+            }
+
+            fn decapsulate_key(
+                &self,
+                private_key: &TypedAsymmetricPrivateKey,
+                encapsulated_key: &Zeroizing<Vec<u8>>,
+            ) -> Result<Zeroizing<Vec<u8>>> {
+                let private_key = match private_key {
+                    TypedAsymmetricPrivateKey::$key_variant(sk) => sk,
+                    _ => return Err(Error::Format(FormatError::InvalidKeyType)),
+                };
+                <$algo>::decapsulate(private_key, encapsulated_key).map_err(Error::from)
+            }
+
+            fn generate_keypair(&self) -> Result<TypedAsymmetricKeyPair> {
+                <$algo>::generate_keypair()
+                    .map_err(Error::from)
+                    .map(|(pk, sk)| TypedAsymmetricKeyPair::$key_variant((pk, sk)))
+            }
+
+            fn clone_box(&self) -> Box<dyn AsymmetricAlgorithm> {
+                Box::new(self.clone())
+            }
+        }
+    };
 }
 
 // --- Asymmetric Algorithms ---
 pub mod asymmetric {
     use super::*;
+    use crate::keys::{TypedAsymmetricKeyPair, TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey};
+    use seal_crypto::prelude::{Kem, KeyGenerator};
     pub use seal_crypto::schemes::asymmetric::post_quantum::kyber::{
         Kyber1024, Kyber512, Kyber768,
     };
     pub use seal_crypto::schemes::asymmetric::traditional::rsa::{Rsa2048, Rsa4096};
+    use seal_crypto::schemes::hash::Sha256;
+    use seal_crypto::zeroize::Zeroizing;
 
-    impl AsymmetricAlgorithmDetails for Rsa2048 {
-        const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
-            common::algorithms::AsymmetricAlgorithm::Rsa2048Sha256;
+    impl_asymmetric_algorithm!(
+        Rsa2048Sha256Wrapper,
+        Rsa2048<Sha256>,
+        Rsa2048Sha256,
+        common::algorithms::AsymmetricAlgorithm::Rsa2048Sha256
+    );
+
+    impl_asymmetric_algorithm!(
+        Rsa4096Sha256Wrapper,
+        Rsa4096<Sha256>,
+        Rsa4096Sha256,
+        common::algorithms::AsymmetricAlgorithm::Rsa4096Sha256
+    );
+
+    impl_asymmetric_algorithm!(
+        Kyber512Wrapper,
+        Kyber512,
+        Kyber512,
+        common::algorithms::AsymmetricAlgorithm::Kyber512
+    );
+
+    impl_asymmetric_algorithm!(
+        Kyber768Wrapper,
+        Kyber768,
+        Kyber768,
+        common::algorithms::AsymmetricAlgorithm::Kyber768
+    );
+
+    impl_asymmetric_algorithm!(
+        Kyber1024Wrapper,
+        Kyber1024,
+        Kyber1024,
+        common::algorithms::AsymmetricAlgorithm::Kyber1024
+    );
+}
+
+pub mod hybrid {
+    use crate::algorithms::traits::{AsymmetricAlgorithm, HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm};
+    use crate::keys::{TypedAsymmetricKeyPair, TypedSymmetricKey};
+    use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey};
+    use crate::zeroize::Zeroizing;
+
+    #[derive(Clone)]
+    pub struct HybridAlgorithm {
+        asymmetric_algorithm: Box<dyn AsymmetricAlgorithm>,
+        symmetric_algorithm: Box<dyn SymmetricAlgorithm>,
     }
 
-    impl AsymmetricAlgorithmDetails for Rsa4096 {
-        const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
-            common::algorithms::AsymmetricAlgorithm::Rsa4096Sha256;
+    impl HybridAlgorithm {
+        pub fn new(asymmetric_algorithm: Box<dyn AsymmetricAlgorithm>, symmetric_algorithm: Box<dyn SymmetricAlgorithm>) -> Self {
+            Self { asymmetric_algorithm, symmetric_algorithm }
+        }
     }
 
-    impl AsymmetricAlgorithmDetails for Kyber512 {
-        const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
-            common::algorithms::AsymmetricAlgorithm::Kyber512;
+    impl HybridAlgorithmTrait for HybridAlgorithm {
+        fn asymmetric_algorithm(&self) -> &dyn AsymmetricAlgorithm {
+            self.asymmetric_algorithm.as_ref()
+        }
+
+        fn symmetric_algorithm(&self) -> &dyn SymmetricAlgorithm {
+            self.symmetric_algorithm.as_ref()
+        }
+
+        fn clone_box(&self) -> Box<dyn HybridAlgorithmTrait> {
+            Box::new(self.clone())
+        }
     }
 
-    impl AsymmetricAlgorithmDetails for Kyber768 {
-        const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
-            common::algorithms::AsymmetricAlgorithm::Kyber768;
+    impl AsymmetricAlgorithm for HybridAlgorithm {
+        fn algorithm(&self) -> crate::common::algorithms::AsymmetricAlgorithm {
+            self.asymmetric_algorithm.algorithm()
+        }
+
+        fn encapsulate_key(&self, public_key: &TypedAsymmetricPublicKey) -> crate::Result<(Zeroizing<Vec<u8>>, Vec<u8>)> {
+            self.asymmetric_algorithm.encapsulate_key(public_key)
+        }
+
+        fn decapsulate_key(&self, private_key: &TypedAsymmetricPrivateKey, encapsulated_key: &Zeroizing<Vec<u8>>) -> crate::Result<Zeroizing<Vec<u8>>> {
+            self.asymmetric_algorithm.decapsulate_key(private_key, encapsulated_key)
+        }
+
+        fn clone_box(&self) -> Box<dyn AsymmetricAlgorithm> {
+            Box::new(self.clone())
+        }
+
+        fn generate_keypair(&self) -> crate::Result<TypedAsymmetricKeyPair> {
+            self.asymmetric_algorithm.generate_keypair()
+        }
     }
 
-    impl AsymmetricAlgorithmDetails for Kyber1024 {
-        const ALGORITHM: common::algorithms::AsymmetricAlgorithm =
-            common::algorithms::AsymmetricAlgorithm::Kyber1024;
+    impl SymmetricAlgorithm for HybridAlgorithm {
+        fn algorithm(&self) -> crate::common::algorithms::SymmetricAlgorithm {
+            self.symmetric_algorithm.algorithm()
+        }
+
+        fn encrypt(&self, key: TypedSymmetricKey, nonce: &[u8], plaintext: &[u8], aad: Option<&[u8]>) -> crate::Result<Vec<u8>> {
+            self.symmetric_algorithm.encrypt(key, nonce, plaintext, aad)
+        }
+
+        fn encrypt_to_buffer(&self, key: TypedSymmetricKey, nonce: &[u8], plaintext: &[u8], output: &mut [u8], aad: Option<&[u8]>) -> crate::Result<usize> {
+            self.symmetric_algorithm.encrypt_to_buffer(key, nonce, plaintext, output, aad)
+        }
+
+        fn decrypt(&self, key: TypedSymmetricKey, nonce: &[u8], aad: Option<&[u8]>, ciphertext: &[u8]) -> crate::Result<Vec<u8>> {
+            self.symmetric_algorithm.decrypt(key, nonce, aad, ciphertext)
+        }
+
+        fn decrypt_to_buffer(&self, key: TypedSymmetricKey, nonce: &[u8], ciphertext: &[u8], output: &mut [u8], aad: Option<&[u8]>) -> crate::Result<usize> {
+            self.symmetric_algorithm.decrypt_to_buffer(key, nonce, ciphertext, output, aad)
+        }
+
+        fn clone_box(&self) -> Box<dyn SymmetricAlgorithm> {
+            Box::new(self.clone())
+        }
+
+        fn key_size(&self) -> usize {
+            self.symmetric_algorithm.key_size()
+        }
+
+        fn nonce_size(&self) -> usize {
+            self.symmetric_algorithm.nonce_size()
+        }
+
+        fn tag_size(&self) -> usize {
+            self.symmetric_algorithm.tag_size()
+        }
+
     }
 }
+
 
 // --- Signature Algorithms ---
 pub mod signature {

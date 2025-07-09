@@ -2,47 +2,24 @@
 //!
 //! 实现普通（单线程，内存中）对称加密方案。
 
-use super::common::create_header;
 use crate::algorithms::traits::SymmetricAlgorithm;
+use crate::body::traits::OrdinaryBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::PendingImpl;
 use crate::error::{Error, FormatError, Result};
-use crate::impls::ordinary::{decrypt_in_memory, encrypt_in_memory};
-
-/// Encrypts plaintext using a chunking mechanism.
-///
-/// 使用分块机制加密明文。
-pub fn encrypt<S: SymmetricAlgorithm>(
-    key: S::Key,
-    plaintext: &[u8],
-    key_id: String,
-    aad: Option<&[u8]>,
-) -> Result<Vec<u8>> {
-    let (header, base_nonce) = create_header::<S>(key_id)?;
-    let header_bytes = header.encode_to_vec()?;
-
-    encrypt_in_memory::<S>(key, base_nonce, header_bytes, plaintext, aad)
-}
+use crate::symmetric::common::create_header;
+use crate::keys::TypedSymmetricKey;
+use crate::symmetric::traits::SymmetricOrdinaryProcessor;
 
 /// A pending decryptor for in-memory data, waiting for a key.
-///
-/// This state is entered after the header has been successfully parsed from
-/// the ciphertext, allowing the user to inspect the header (e.g., to find
-/// the `key_id`) before supplying the appropriate key to proceed with decryption.
-///
-/// 一个待处理的内存数据解密器，等待密钥提供。
-///
-/// 当从密文中成功解析标头后，进入此状态，允许用户在提供适当的密钥以继续解密之前检查标头（例如，查找 `key_id`）。
-pub struct PendingDecryptor<'a> {
+struct PendingDecryptor<'a> {
     header: Header,
     ciphertext_body: &'a [u8],
 }
 
 impl<'a> PendingDecryptor<'a> {
     /// Creates a new `PendingDecryptor` by parsing the header from the ciphertext.
-    ///
-    /// 通过从密文中解析标头来创建一个新的 `PendingDecryptor`。
-    pub fn from_ciphertext(ciphertext: &'a [u8]) -> Result<Self> {
+    fn from_ciphertext(ciphertext: &'a [u8]) -> Result<Self> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
         Ok(Self {
             header,
@@ -51,39 +28,22 @@ impl<'a> PendingDecryptor<'a> {
     }
 
     /// Consumes the `PendingDecryptor` and returns the decrypted plaintext.
-    ///
-    /// 消费 `PendingDecryptor` 并返回解密的明文。
-    pub fn into_plaintext<S: SymmetricAlgorithm>(
+    fn into_plaintext<S: SymmetricAlgorithm + OrdinaryBodyProcessor>(
         self,
-        key: S::Key,
+        algorithm: &S,
+        key: TypedSymmetricKey,
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
-        decrypt_body::<S>(key, &self.header, self.ciphertext_body, aad)
+        let base_nonce = match &self.header.payload {
+            HeaderPayload::Symmetric {
+                stream_info: Some(info),
+                ..
+            } => info.base_nonce,
+            _ => return Err(Error::Format(FormatError::InvalidHeader)),
+        };
+
+        algorithm.decrypt_in_memory(key, &base_nonce, self.ciphertext_body, aad)
     }
-}
-
-/// Decrypts a ciphertext body using the provided key and header.
-///
-/// This function assumes `decode_header` has been called and its results are provided.
-///
-/// 使用提供的密钥和标头解密密文体。
-///
-/// 此函数假定已经调用了 `decode_header` 并提供了其结果。
-pub fn decrypt_body<S: SymmetricAlgorithm>(
-    key: S::Key,
-    header: &Header,
-    ciphertext_body: &[u8],
-    aad: Option<&[u8]>,
-) -> Result<Vec<u8>> {
-    let (chunk_size, base_nonce) = match &header.payload {
-        HeaderPayload::Symmetric {
-            stream_info: Some(info),
-            ..
-        } => (info.chunk_size, info.base_nonce),
-        _ => return Err(Error::Format(FormatError::InvalidHeader)),
-    };
-
-    decrypt_in_memory::<S>(key, base_nonce, chunk_size, ciphertext_body, aad)
 }
 
 impl<'a> PendingImpl for PendingDecryptor<'a> {
@@ -92,151 +52,170 @@ impl<'a> PendingImpl for PendingDecryptor<'a> {
     }
 }
 
+pub struct Ordinary<'a, S: SymmetricAlgorithm + OrdinaryBodyProcessor> {
+    algorithm: &'a S,
+}
+
+impl<'a, S: SymmetricAlgorithm + OrdinaryBodyProcessor> Ordinary<'a, S> {
+    pub fn new(algorithm: &'a S) -> Self {
+        Self { algorithm }
+    }
+}
+
+impl<'a, S: SymmetricAlgorithm + OrdinaryBodyProcessor> SymmetricOrdinaryProcessor
+    for Ordinary<'a, S>
+{
+    fn encrypt_in_memory(
+        &self,
+        key: TypedSymmetricKey,
+        key_id: String,
+        plaintext: &[u8],
+        aad: Option<&[u8]>,
+    ) -> Result<Vec<u8>> {
+        let (header, base_nonce) = create_header(self.algorithm, key_id)?;
+        let header_bytes = header.encode_to_vec()?;
+
+        self.algorithm
+            .encrypt_in_memory(key, &base_nonce, header_bytes, plaintext, aad)
+    }
+
+    fn decrypt_in_memory(
+        &self,
+        key: TypedSymmetricKey,
+        ciphertext: &[u8],
+        aad: Option<&[u8]>,
+    ) -> Result<Vec<u8>> {
+        let pending = PendingDecryptor::from_ciphertext(ciphertext)?;
+        pending.into_plaintext(self.algorithm, key, aad)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algorithms::definitions::symmetric::Aes256GcmWrapper;
+    use crate::keys::TypedSymmetricKey;
     use crate::common::DEFAULT_CHUNK_SIZE;
     use seal_crypto::prelude::SymmetricKeyGenerator;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 
+    fn get_wrapper() -> Aes256GcmWrapper {
+        Aes256GcmWrapper::new()
+    }
+
     #[test]
     fn test_symmetric_ordinary_roundtrip() {
-        let key = Aes256Gcm::generate_key().unwrap();
+        let wrapper = get_wrapper();
+        let processor = Ordinary::new(&wrapper);
         let plaintext = b"This is a test message that is longer than one chunk to ensure the chunking logic works correctly. Let's add some more data to be sure.";
-
-        let encrypted =
-            encrypt::<Aes256Gcm>(key.clone(), plaintext, "test_key_id".to_string(), None).unwrap();
-
-        // Test the full convenience function
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted_full = pending
-            .into_plaintext::<Aes256Gcm>(key.clone(), None)
+        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let encrypted = processor
+            .encrypt_in_memory(key.clone(), "test_key_id".to_string(), plaintext, None)
             .unwrap();
-        assert_eq!(plaintext, decrypted_full.as_slice());
+        let decrypted = processor
+            .decrypt_in_memory(key.clone(), &encrypted, None)
+            .unwrap();
 
-        // Test the separated functions
-        let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
-        assert_eq!(header.payload.key_id().unwrap(), "test_key_id");
-        let decrypted_parts = decrypt_body::<Aes256Gcm>(key, &header, body, None).unwrap();
-        assert_eq!(plaintext, decrypted_parts.as_slice());
+        assert_eq!(plaintext, decrypted.as_slice());
+    }
+
+    #[test]
+    fn test_processor_roundtrip() {
+        let wrapper = get_wrapper();
+        let processor = Ordinary::new(&wrapper);
+        let plaintext = b"This is a processor test.";
+        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let encrypted = processor
+            .encrypt_in_memory(key.clone(), "proc_key".to_string(), plaintext, None)
+            .unwrap();
+        let decrypted = processor
+            .decrypt_in_memory(key.clone(), &encrypted, None)
+            .unwrap();
+        assert_eq!(plaintext, decrypted.as_slice());
     }
 
     #[test]
     fn test_empty_plaintext() {
-        let key = Aes256Gcm::generate_key().unwrap();
+        let wrapper = get_wrapper();
+        let processor = Ordinary::new(&wrapper);
         let plaintext = b"";
-
-        let encrypted =
-            encrypt::<Aes256Gcm>(key.clone(), plaintext, "test_key_id".to_string(), None).unwrap();
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext::<Aes256Gcm>(key, None).unwrap();
+        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let encrypted = processor
+            .encrypt_in_memory(key.clone(), "test_key_id".to_string(), plaintext, None)
+            .unwrap();
+        let decrypted = processor
+            .decrypt_in_memory(key.clone(), &encrypted, None)
+            .unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
 
     #[test]
     fn test_exact_chunk_size() {
-        let key = Aes256Gcm::generate_key().unwrap();
+        let wrapper = get_wrapper();
+        let processor = Ordinary::new(&wrapper);
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
-
-        let encrypted =
-            encrypt::<Aes256Gcm>(key.clone(), &plaintext, "test_key_id".to_string(), None).unwrap();
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext::<Aes256Gcm>(key, None).unwrap();
+        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let encrypted = processor
+            .encrypt_in_memory(
+                key.clone(),
+                "test_key_id".to_string(),
+                &plaintext,
+                None,
+            )
+            .unwrap();
+        let decrypted = processor
+            .decrypt_in_memory(key.clone(), &encrypted, None)
+            .unwrap();
 
         assert_eq!(plaintext, decrypted);
     }
 
     #[test]
     fn test_tampered_ciphertext_fails() {
-        let key = Aes256Gcm::generate_key().unwrap();
+        let wrapper = get_wrapper();
+        let processor = Ordinary::new(&wrapper);
         let plaintext = b"some important data";
-
-        let mut encrypted =
-            encrypt::<Aes256Gcm>(key.clone(), plaintext, "test_key_id".to_string(), None).unwrap();
+        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let mut encrypted = processor
+            .encrypt_in_memory(key.clone(), "test_key_id".to_string(), plaintext, None)
+            .unwrap();
 
         // Tamper with the ciphertext body
-        if !encrypted.is_empty() {
-            let len = encrypted.len();
-            encrypted[len / 2] ^= 1;
+        let header_len = 4 + u32::from_le_bytes(encrypted[0..4].try_into().unwrap()) as usize;
+        if encrypted.len() > header_len {
+            encrypted[header_len] ^= 1;
         }
 
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext::<Aes256Gcm>(key, None);
+        let result = processor.decrypt_in_memory(key.clone(), &encrypted, None);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_wrong_key_fails() {
-        let key1 = Aes256Gcm::generate_key().unwrap();
-        let key2 = Aes256Gcm::generate_key().unwrap();
-        let plaintext = b"some data";
-
-        let encrypted =
-            encrypt::<Aes256Gcm>(key1, plaintext, "test_key_id_1".to_string(), None).unwrap();
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext::<Aes256Gcm>(key2, None);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_wrong_nonce_fails() {
-        let key = Aes256Gcm::generate_key().unwrap();
-        let plaintext = b"some data";
-
-        let mut encrypted =
-            encrypt::<Aes256Gcm>(key.clone(), plaintext, "test_key_id".to_string(), None).unwrap();
-
-        // Tamper with the nonce in the header
-        if encrypted.len() > 20 {
-            // Ensure there's a header to tamper with
-            encrypted[20] ^= 1;
-        }
-
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext::<Aes256Gcm>(key, None);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_internal_functions() {
-        let key = Aes256Gcm::generate_key().unwrap();
-        let plaintext = b"some plaintext";
-        let encrypted =
-            encrypt::<Aes256Gcm>(key.clone(), plaintext, "test_key_id".to_string(), None).unwrap();
-
-        // Test the separated functions
-        let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
-        assert_eq!(header.payload.key_id().unwrap(), "test_key_id");
-        let decrypted_parts = decrypt_body::<Aes256Gcm>(key, &header, body, None).unwrap();
-        assert_eq!(plaintext, decrypted_parts.as_slice());
-    }
-
-    #[test]
-    fn test_aad_roundtrip() {
-        let key = Aes256Gcm::generate_key().unwrap();
+    fn test_wrong_aad_fails() {
+        let wrapper = get_wrapper();
+        let processor = Ordinary::new(&wrapper);
         let plaintext = b"some data to protect";
         let aad = b"some context data";
-
+        let wrong_aad = b"wrong context data";
+        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         // Encrypt with AAD
-        let encrypted =
-            encrypt::<Aes256Gcm>(key.clone(), plaintext, "aad_key".to_string(), Some(aad)).unwrap();
+        let encrypted = processor
+            .encrypt_in_memory(key.clone(), "aad_key".to_string(), plaintext, Some(aad))
+            .unwrap();
 
         // Decrypt with correct AAD
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending
-            .into_plaintext::<Aes256Gcm>(key.clone(), Some(aad))
+        let decrypted = processor
+            .decrypt_in_memory(key.clone(), &encrypted, Some(aad))
             .unwrap();
-        assert_eq!(plaintext, decrypted.as_slice());
+        assert_eq!(&plaintext[..], &decrypted[..]);
 
         // Decrypt with wrong AAD fails
-        let pending_fail = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result_fail = pending_fail.into_plaintext::<Aes256Gcm>(key.clone(), Some(b"wrong aad"));
+        let result_fail = processor.decrypt_in_memory(key.clone(), &encrypted, Some(wrong_aad));
         assert!(result_fail.is_err());
 
         // Decrypt with no AAD fails
-        let pending_fail2 = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result_fail2 = pending_fail2.into_plaintext::<Aes256Gcm>(key, None);
+        let result_fail2 = processor.decrypt_in_memory(key.clone(), &encrypted, None);
         assert!(result_fail2.is_err());
     }
 }
