@@ -10,10 +10,22 @@ use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::pending::PendingDecryptor;
-use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+use crate::keys::{
+    AsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey,
+};
 use seal_crypto::zeroize::Zeroizing;
 
-impl<H: HybridAlgorithmTrait + ?Sized> HybridOrdinaryProcessor for H {
+pub struct Ordinary<'h, H: HybridAlgorithmTrait> {
+    algorithm: &'h H,
+}
+
+impl<'h, H: HybridAlgorithmTrait> Ordinary<'h, H> {
+    pub fn new(algorithm: &'h H) -> Self {
+        Self { algorithm }
+    }
+}
+
+impl<'h, H: HybridAlgorithmTrait> HybridOrdinaryProcessor for Ordinary<'h, H> {
     fn encrypt_hybrid_in_memory(
         &self,
         public_key: &TypedAsymmetricPublicKey,
@@ -29,7 +41,7 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridOrdinaryProcessor for H {
 
         // 1. Create header, nonce, and shared secret
         let (header, base_nonce, shared_secret) =
-            create_header(self, public_key, kek_id, signer, aad, info)?;
+            create_header(self.algorithm, public_key, kek_id, signer, aad, info)?;
 
         // 2. Derive key if a deriver function is specified
         let dek = if let Some(f) = deriver_fn {
@@ -41,34 +53,32 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridOrdinaryProcessor for H {
         // 3. Serialize the header.
         let header_bytes = header.encode_to_vec()?;
 
-        self.symmetric_algorithm()
+        self.algorithm
+            .symmetric_algorithm()
             .encrypt_body_in_memory(dek, &base_nonce, header_bytes, plaintext, aad)
     }
 
-    fn begin_decrypt_hybrid_in_memory<'a, 'p>(
-        &'p self,
+    fn begin_decrypt_hybrid_in_memory<'a>(
+        &self,
         ciphertext: &'a [u8],
-    ) -> Result<Box<dyn HybridOrdinaryPendingDecryptor<'a> + 'a>>
-    where
-        'p: 'a,
-    {
+    ) -> Result<Box<dyn HybridOrdinaryPendingDecryptor<'a> + 'a>> {
         let (header, _) = Header::decode_from_prefixed_slice(ciphertext)?;
         let pending = PendingDecryptor {
             source: ciphertext,
             header,
-            algorithm: self,
+            algorithm: self.algorithm.clone(),
         };
         Ok(Box::new(pending))
     }
 }
 
-impl<'a, 'p, H> HybridOrdinaryPendingDecryptor<'a> for PendingDecryptor<&'a [u8], &'p H>
+impl<'a, H> HybridOrdinaryPendingDecryptor<'a> for PendingDecryptor<&'a [u8], H>
 where
-    H: HybridOrdinaryProcessor + HybridAlgorithmTrait + ?Sized,
+    H: HybridAlgorithmTrait,
 {
     fn into_plaintext(
         self: Box<Self>,
-        private_key: &TypedAsymmetricPrivateKey,
+        private_key: &AsymmetricPrivateKey,
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(self.source)?;
@@ -136,7 +146,7 @@ mod tests {
         )
     }
 
-    fn generate_test_keys() -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {
+    fn generate_test_keys() -> (TypedAsymmetricPublicKey, AsymmetricPrivateKey) {
         Rsa2048Sha256Wrapper::new()
             .generate_keypair()
             .unwrap()
@@ -146,6 +156,7 @@ mod tests {
     #[test]
     fn test_hybrid_ordinary_roundtrip_with_kdf() {
         let algorithm = get_test_algorithm();
+        let processor = Ordinary::new(&algorithm);
         let (pk, sk) = generate_test_keys();
         let plaintext = b"This is a test message with KDF.";
         let salt = b"salt";
@@ -166,21 +177,21 @@ mod tests {
                 .map(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm()))?
         });
 
-        let encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
-            &algorithm,
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            Some(DerivationSet {
-                derivation_info: DerivationInfo::Kdf(kdf_info),
-                deriver_fn: kdf_fn,
-            }),
-        )
-        .unwrap();
+        let encrypted = processor
+            .encrypt_hybrid_in_memory(
+                &pk,
+                plaintext,
+                "test_kek_id".to_string(),
+                None,
+                None,
+                Some(DerivationSet {
+                    derivation_info: DerivationInfo::Kdf(kdf_info),
+                    deriver_fn: kdf_fn,
+                }),
+            )
+            .unwrap();
 
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_in_memory(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(&sk, None).unwrap();
@@ -190,21 +201,22 @@ mod tests {
     #[test]
     fn test_hybrid_ordinary_roundtrip() {
         let algorithm = get_test_algorithm();
+        let processor = Ordinary::new(&algorithm);
         let (pk, sk) = generate_test_keys();
         let plaintext = b"This is a test message for hybrid ordinary encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
-        let encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
-            &algorithm,
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let encrypted = processor
+            .encrypt_hybrid_in_memory(
+                &pk,
+                plaintext,
+                "test_kek_id".to_string(),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_in_memory(&encrypted)
             .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some("test_kek_id"));
@@ -215,21 +227,22 @@ mod tests {
     #[test]
     fn test_empty_plaintext() {
         let algorithm = get_test_algorithm();
+        let processor = Ordinary::new(&algorithm);
         let (pk, sk) = generate_test_keys();
         let plaintext = b"";
 
-        let encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
-            &algorithm,
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let encrypted = processor
+            .encrypt_hybrid_in_memory(
+                &pk,
+                plaintext,
+                "test_kek_id".to_string(),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_in_memory(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(&sk, None).unwrap();
@@ -240,21 +253,22 @@ mod tests {
     #[test]
     fn test_exact_chunk_size() {
         let algorithm = get_test_algorithm();
+        let processor = Ordinary::new(&algorithm);
         let (pk, sk) = generate_test_keys();
         let plaintext = vec![42u8; crate::common::DEFAULT_CHUNK_SIZE as usize];
 
-        let encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
-            &algorithm,
-            &pk,
-            &plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let encrypted = processor
+            .encrypt_hybrid_in_memory(
+                &pk,
+                &plaintext,
+                "test_kek_id".to_string(),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_in_memory(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(&sk, None).unwrap();
@@ -265,26 +279,27 @@ mod tests {
     #[test]
     fn test_tampered_ciphertext_fails() {
         let algorithm = get_test_algorithm();
+        let processor = Ordinary::new(&algorithm);
         let (pk, sk) = generate_test_keys();
         let plaintext = b"some important data";
 
-        let mut encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
-            &algorithm,
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let mut encrypted = processor
+            .encrypt_hybrid_in_memory(
+                &pk,
+                plaintext,
+                "test_kek_id".to_string(),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
         // Tamper with the ciphertext body
         if encrypted.len() > 300 {
             encrypted[300] ^= 1; // Tamper after the header
         }
 
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_in_memory(&encrypted)
             .unwrap();
         let result = pending.into_plaintext(&sk, None);
@@ -294,22 +309,23 @@ mod tests {
     #[test]
     fn test_wrong_private_key_fails() {
         let algorithm = get_test_algorithm();
+        let processor = Ordinary::new(&algorithm);
         let (pk, _) = generate_test_keys();
         let (_, sk2) = generate_test_keys();
         let plaintext = b"some data";
 
-        let encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
-            &algorithm,
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let encrypted = processor
+            .encrypt_hybrid_in_memory(
+                &pk,
+                plaintext,
+                "test_kek_id".to_string(),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_in_memory(&encrypted)
             .unwrap();
         let result = pending.into_plaintext(&sk2, None);
@@ -319,39 +335,38 @@ mod tests {
     #[test]
     fn test_aad_roundtrip() {
         let algorithm = get_test_algorithm();
+        let processor = Ordinary::new(&algorithm);
         let (pk, sk) = generate_test_keys();
         let plaintext = b"some important data with aad";
         let aad = b"some important context";
 
-        let encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
-            &algorithm,
-            &pk,
-            plaintext,
-            "aad_kek_id".to_string(),
-            None,
-            Some(aad),
-            None,
-        )
-        .unwrap();
+        let encrypted = processor
+            .encrypt_hybrid_in_memory(
+                &pk,
+                plaintext,
+                "aad_kek_id".to_string(),
+                None,
+                Some(aad),
+                None,
+            )
+            .unwrap();
 
         // Decrypt with correct AAD
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_in_memory(&encrypted)
             .unwrap();
-        let decrypted = pending
-            .into_plaintext(&sk, Some(aad))
-            .unwrap();
+        let decrypted = pending.into_plaintext(&sk, Some(aad)).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
-        let pending_fail = algorithm
+        let pending_fail = processor
             .begin_decrypt_hybrid_in_memory(&encrypted)
             .unwrap();
         let result_fail = pending_fail.into_plaintext(&sk, Some(b"wrong aad"));
         assert!(result_fail.is_err());
 
         // Decrypt with no AAD fails
-        let pending_fail2 = algorithm
+        let pending_fail2 = processor
             .begin_decrypt_hybrid_in_memory(&encrypted)
             .unwrap();
         let result_fail2 = pending_fail2.into_plaintext(&sk, None);

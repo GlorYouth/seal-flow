@@ -10,10 +10,20 @@ use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::pending::PendingDecryptor;
-use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+use crate::keys::{AsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
 
-impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelProcessor for H {
+pub struct Parallel<'h, H: HybridAlgorithmTrait> {
+    algorithm: &'h H,
+}
+
+impl<'h, H: HybridAlgorithmTrait> Parallel<'h, H> {
+    pub fn new(algorithm: &'h H) -> Self {
+        Self { algorithm }
+    }
+}
+
+impl<'h, H: HybridAlgorithmTrait> HybridParallelProcessor for Parallel<'h, H> {
     fn encrypt_parallel(
         &self,
         public_key: &TypedAsymmetricPublicKey,
@@ -29,7 +39,7 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelProcessor for H {
 
         // 1. Create header, nonce, and shared secret
         let (header, base_nonce, shared_secret) =
-            create_header(self, public_key, kek_id, signer, aad, info)?;
+            create_header(self.algorithm, public_key, kek_id, signer, aad, info)?;
 
         // 2. Derive key if a deriver function is specified
         let dek = if let Some(f) = deriver_fn {
@@ -41,34 +51,32 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelProcessor for H {
         // 3. Serialize the header and prepare for encryption
         let header_bytes = header.encode_to_vec()?;
 
-        self.symmetric_algorithm()
+        self.algorithm
+            .symmetric_algorithm()
             .encrypt_body_parallel(dek, &base_nonce, header_bytes, plaintext, aad)
     }
 
-    fn begin_decrypt_hybrid_parallel<'a, 'p>(
-        &'p self,
+    fn begin_decrypt_hybrid_parallel<'a>(
+        &self,
         ciphertext: &'a [u8],
-    ) -> Result<Box<dyn HybridParallelPendingDecryptor<'a> + 'a>>
-    where
-        'p: 'a,
-    {
+    ) -> Result<Box<dyn HybridParallelPendingDecryptor<'a> + 'a>> {
         let (header, _) = Header::decode_from_prefixed_slice(ciphertext)?;
         let pending = PendingDecryptor {
             source: ciphertext,
             header,
-            algorithm: self,
+            algorithm: self.algorithm.clone(),
         };
         Ok(Box::new(pending))
     }
 }
 
-impl<'a, 'p, H> HybridParallelPendingDecryptor<'a> for PendingDecryptor<&'a [u8], &'p H>
+impl<'a, H> HybridParallelPendingDecryptor<'a> for PendingDecryptor<&'a [u8], H>
 where
-    H: HybridParallelProcessor + HybridAlgorithmTrait + ?Sized,
+    H: HybridAlgorithmTrait,
 {
     fn into_plaintext(
         self: Box<Self>,
-        private_key: &TypedAsymmetricPrivateKey,
+        private_key: &AsymmetricPrivateKey,
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(self.source)?;
@@ -122,8 +130,9 @@ mod tests {
     };
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
+    use crate::common::DEFAULT_CHUNK_SIZE;
     use crate::common::DerivationSet;
-    use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey};
+    use crate::keys::{AsymmetricPrivateKey, TypedAsymmetricPublicKey};
     use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
 
@@ -134,7 +143,7 @@ mod tests {
         )
     }
 
-    fn generate_test_keys() -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {
+    fn generate_test_keys() -> (TypedAsymmetricPublicKey, AsymmetricPrivateKey) {
         Rsa2048Sha256Wrapper::new()
             .generate_keypair()
             .unwrap()
@@ -144,6 +153,7 @@ mod tests {
     #[test]
     fn test_hybrid_parallel_roundtrip_with_kdf() {
         let algorithm = get_test_algorithm();
+        let processor = Parallel::new(&algorithm);
         let (pk, sk) = generate_test_keys();
         let plaintext = b"This is a test message with KDF in parallel.";
         let salt = b"salt-parallel";
@@ -164,21 +174,21 @@ mod tests {
                 .map(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm()))?
         });
 
-        let encrypted = HybridParallelProcessor::encrypt_parallel(
-            &algorithm,
-            &pk,
-            plaintext,
-            "test_kek_id_kdf".to_string(),
-            None,
-            None,
-            Some(DerivationSet {
-                derivation_info: DerivationInfo::Kdf(kdf_info),
-                deriver_fn: kdf_fn,
-            }),
-        )
-        .unwrap();
+        let encrypted = processor
+            .encrypt_parallel(
+                &pk,
+                plaintext,
+                "test_kek_id_kdf".to_string(),
+                None,
+                None,
+                Some(DerivationSet {
+                    derivation_info: DerivationInfo::Kdf(kdf_info),
+                    deriver_fn: kdf_fn,
+                }),
+            )
+            .unwrap();
 
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_parallel(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(&sk, None).unwrap();
@@ -188,27 +198,26 @@ mod tests {
     #[test]
     fn test_hybrid_parallel_roundtrip() {
         let algorithm = get_test_algorithm();
+        let processor = Parallel::new(&algorithm);
         let (pk, sk) = generate_test_keys();
         let plaintext = b"This is a test message for hybrid parallel encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
-        let encrypted = HybridParallelProcessor::encrypt_parallel(
-            &algorithm,
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let encrypted = processor
+            .encrypt_parallel(
+                &pk,
+                plaintext,
+                "test_kek_id".to_string(),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
         // Test convenience function
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_parallel(&encrypted)
             .unwrap();
-        let decrypted = pending
-            .into_plaintext(&sk, None)
-            .unwrap();
+        let decrypted = pending.into_plaintext(&sk, None).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Tamper with the ciphertext body
@@ -217,7 +226,7 @@ mod tests {
             encrypted_tampered[300] ^= 1;
         }
 
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_parallel(&encrypted_tampered)
             .unwrap();
         let result = pending.into_plaintext(&sk, None);
@@ -227,21 +236,22 @@ mod tests {
     #[test]
     fn test_empty_plaintext() {
         let algorithm = get_test_algorithm();
+        let processor = Parallel::new(&algorithm);
         let (pk, sk) = generate_test_keys();
         let plaintext = b"";
 
-        let encrypted = HybridParallelProcessor::encrypt_parallel(
-            &algorithm,
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let encrypted = processor
+            .encrypt_parallel(
+                &pk,
+                plaintext,
+                "test_kek_id".to_string(),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_parallel(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(&sk, None).unwrap();
@@ -252,21 +262,22 @@ mod tests {
     #[test]
     fn test_exact_chunk_size() {
         let algorithm = get_test_algorithm();
+        let processor = Parallel::new(&algorithm);
         let (pk, sk) = generate_test_keys();
-        let plaintext = vec![42u8; crate::common::DEFAULT_CHUNK_SIZE as usize];
+        let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
-        let encrypted = HybridParallelProcessor::encrypt_parallel(
-            &algorithm,
-            &pk,
-            &plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let encrypted = processor
+            .encrypt_parallel(
+                &pk,
+                &plaintext,
+                "test_kek_id".to_string(),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_parallel(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(&sk, None).unwrap();
@@ -277,22 +288,23 @@ mod tests {
     #[test]
     fn test_wrong_private_key_fails() {
         let algorithm = get_test_algorithm();
+        let processor = Parallel::new(&algorithm);
         let (pk, _) = generate_test_keys();
         let (_, sk2) = generate_test_keys();
         let plaintext = b"some data";
 
-        let encrypted = HybridParallelProcessor::encrypt_parallel(
-            &algorithm,
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let encrypted = processor
+            .encrypt_parallel(
+                &pk,
+                plaintext,
+                "test_kek_id".to_string(),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
 
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_parallel(&encrypted)
             .unwrap();
         let result = pending.into_plaintext(&sk2, None);
@@ -302,40 +314,39 @@ mod tests {
     #[test]
     fn test_aad_roundtrip() {
         let algorithm = get_test_algorithm();
+        let processor = Parallel::new(&algorithm);
         let (pk, sk) = generate_test_keys();
         let plaintext = b"some parallel data to protect";
         let aad = b"some parallel context data";
 
         // Encrypt with AAD
-        let encrypted = HybridParallelProcessor::encrypt_parallel(
-            &algorithm,
-            &pk,
-            plaintext,
-            "aad_key".to_string(),
-            None,
-            Some(aad),
-            None,
-        )
-        .unwrap();
+        let encrypted = processor
+            .encrypt_parallel(
+                &pk,
+                plaintext,
+                "aad_key".to_string(),
+                None,
+                Some(aad),
+                None,
+            )
+            .unwrap();
 
         // Decrypt with correct AAD
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_parallel(&encrypted)
             .unwrap();
-        let decrypted = pending
-            .into_plaintext(&sk, Some(aad))
-            .unwrap();
+        let decrypted = pending.into_plaintext(&sk, Some(aad)).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
-        let pending_fail = algorithm
+        let pending_fail = processor
             .begin_decrypt_hybrid_parallel(&encrypted)
             .unwrap();
         let result_fail = pending_fail.into_plaintext(&sk, Some(b"wrong aad"));
         assert!(result_fail.is_err());
 
         // Decrypt with no AAD fails
-        let pending_fail2 = algorithm
+        let pending_fail2 = processor
             .begin_decrypt_hybrid_parallel(&encrypted)
             .unwrap();
         let result_fail2 = pending_fail2.into_plaintext(&sk, None);

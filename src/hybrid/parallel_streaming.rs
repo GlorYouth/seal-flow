@@ -10,11 +10,28 @@ use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::pending::PendingDecryptor;
-use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+use crate::keys::{AsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
+use std::sync::Arc;
 
-impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelStreamingProcessor for H {
+pub struct ParallelStreaming<'h, H: HybridAlgorithmTrait> {
+    algorithm: Arc<H>,
+    _marker: std::marker::PhantomData<&'h H>,
+}
+
+impl<'h, H: HybridAlgorithmTrait> ParallelStreaming<'h, H> {
+    pub fn new(algorithm: Arc<H>) -> Self {
+        Self {
+            algorithm,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'h, H: HybridAlgorithmTrait + Send + Sync + 'h> HybridParallelStreamingProcessor
+    for ParallelStreaming<'h, H>
+{
     fn encrypt_hybrid_pipeline<'a>(
         &self,
         public_key: &TypedAsymmetricPublicKey,
@@ -30,7 +47,7 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelStreamingProcessor for H {
             .unzip();
 
         let (header, base_nonce, shared_secret) =
-            create_header(self, public_key, kek_id, signer, aad, info)?;
+            create_header(&*self.algorithm, public_key, kek_id, signer, aad, info)?;
 
         let dek = if let Some(f) = deriver_fn {
             f(&shared_secret)?
@@ -42,38 +59,38 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelStreamingProcessor for H {
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
 
-        let algo = self.symmetric_algorithm().clone_box_symmetric();
+        let algo = self.algorithm.symmetric_algorithm().clone_box_symmetric();
         ParallelStreamingBodyProcessor::encrypt_body_pipeline(
             &algo, dek, base_nonce, reader, writer, aad,
         )
     }
 
-    fn begin_decrypt_hybrid_pipeline<'a, 'p, R>(
-        &'p self,
+    fn begin_decrypt_hybrid_pipeline<'a, R>(
+        &self,
         mut reader: R,
     ) -> Result<Box<dyn HybridParallelStreamingPendingDecryptor<'a, R> + 'a>>
     where
         R: Read + Send + 'a,
-        'p: 'a,
     {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
         let pending = PendingDecryptor {
             source: reader,
             header,
-            algorithm: self,
+            algorithm: self.algorithm.clone(),
         };
         Ok(Box::new(pending))
     }
 }
 
-impl<'a, 'p, R, H> HybridParallelStreamingPendingDecryptor<'a, R> for PendingDecryptor<R, &'p H>
+impl<'a, R, H> HybridParallelStreamingPendingDecryptor<'a, R>
+    for PendingDecryptor<R, Arc<H>>
 where
     R: Read + Send + 'a,
-    H: HybridParallelStreamingProcessor + HybridAlgorithmTrait + ?Sized + 'p,
+    H: HybridAlgorithmTrait + Send + Sync + 'a,
 {
     fn decrypt_to_writer(
         self: Box<Self>,
-        sk: &TypedAsymmetricPrivateKey,
+        sk: &AsymmetricPrivateKey,
         writer: Box<dyn Write + Send + 'a>,
         aad: Option<&'a [u8]>,
     ) -> Result<()> {
@@ -130,7 +147,7 @@ mod tests {
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
     use crate::common::DerivationSet;
-    use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+    use crate::keys::{AsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
     use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use std::io::Cursor;
@@ -146,7 +163,7 @@ mod tests {
         )
     }
 
-    fn generate_test_keys() -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {
+    fn generate_test_keys() -> (TypedAsymmetricPublicKey, AsymmetricPrivateKey) {
         Rsa2048Sha256Wrapper::new()
             .generate_keypair()
             .unwrap()
@@ -156,6 +173,7 @@ mod tests {
     #[test]
     fn test_hybrid_parallel_streaming_roundtrip() {
         let algorithm = get_test_algorithm();
+        let processor = ParallelStreaming::new(Arc::new(algorithm));
         let (pk, sk) = generate_test_keys();
         let kek_id = "test-kek-id".to_string();
         let plaintext = get_test_data(1024 * 1024); // 1 MiB
@@ -163,20 +181,12 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
-        HybridParallelStreamingProcessor::encrypt_hybrid_pipeline(
-            &algorithm,
-            &pk,
-            reader,
-            writer,
-            kek_id.clone(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        processor
+            .encrypt_hybrid_pipeline(&pk, reader, writer, kek_id.clone(), None, None, None)
+            .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
             .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
@@ -190,6 +200,7 @@ mod tests {
     #[test]
     fn test_empty_input() {
         let algorithm = get_test_algorithm();
+        let processor = ParallelStreaming::new(Arc::new(algorithm));
         let (pk, sk) = generate_test_keys();
         let kek_id = "test-kek-id".to_string();
         let plaintext = get_test_data(0);
@@ -197,20 +208,12 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
-        HybridParallelStreamingProcessor::encrypt_hybrid_pipeline(
-            &algorithm,
-            &pk,
-            reader,
-            writer,
-            kek_id.clone(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        processor
+            .encrypt_hybrid_pipeline(&pk, reader, writer, kek_id.clone(), None, None, None)
+            .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
             .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
@@ -224,6 +227,7 @@ mod tests {
     #[test]
     fn test_tampered_ciphertext_fails() {
         let algorithm = get_test_algorithm();
+        let processor = ParallelStreaming::new(Arc::new(algorithm));
         let (pk, sk) = generate_test_keys();
         let kek_id = "test-kek-id".to_string();
         let plaintext = get_test_data(1024);
@@ -231,24 +235,16 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
-        HybridParallelStreamingProcessor::encrypt_hybrid_pipeline(
-            &algorithm,
-            &pk,
-            reader,
-            writer,
-            kek_id.clone(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        processor
+            .encrypt_hybrid_pipeline(&pk, reader, writer, kek_id.clone(), None, None, None)
+            .unwrap();
 
         // Tamper
         let header_len = 4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
         encrypted_data[header_len + 10] ^= 1;
 
         let mut decrypted_data = Vec::new();
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
             .unwrap();
         let result = pending.decrypt_to_writer(&sk, Box::new(&mut decrypted_data), None);
@@ -259,6 +255,7 @@ mod tests {
     #[test]
     fn test_wrong_private_key_fails() {
         let algorithm = get_test_algorithm();
+        let processor = ParallelStreaming::new(Arc::new(algorithm));
         let (pk, _) = generate_test_keys();
         let (_, sk2) = generate_test_keys();
         let kek_id = "test-kek-id".to_string();
@@ -267,20 +264,12 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
-        HybridParallelStreamingProcessor::encrypt_hybrid_pipeline(
-            &algorithm,
-            &pk,
-            reader,
-            writer,
-            kek_id.clone(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        processor
+            .encrypt_hybrid_pipeline(&pk, reader, writer, kek_id.clone(), None, None, None)
+            .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
             .unwrap();
         let result = pending.decrypt_to_writer(&sk2, Box::new(&mut decrypted_data), None);
@@ -290,6 +279,7 @@ mod tests {
     #[test]
     fn test_aad_roundtrip() {
         let algorithm = get_test_algorithm();
+        let processor = ParallelStreaming::new(Arc::new(algorithm));
         let (pk, sk) = generate_test_keys();
         let plaintext = get_test_data(1024 * 256); // 256 KiB
         let aad = b"parallel streaming aad";
@@ -297,21 +287,21 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
-        HybridParallelStreamingProcessor::encrypt_hybrid_pipeline(
-            &algorithm,
-            &pk,
-            reader,
-            writer,
-            "test_kek_id_aad".to_string(),
-            None,
-            Some(aad),
-            None,
-        )
-        .unwrap();
+        processor
+            .encrypt_hybrid_pipeline(
+                &pk,
+                reader,
+                writer,
+                "test_kek_id_aad".to_string(),
+                None,
+                Some(aad),
+                None,
+            )
+            .unwrap();
 
         // Decrypt with correct AAD
         let mut decrypted_data = Vec::new();
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
             .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some("test_kek_id_aad"));
@@ -322,7 +312,7 @@ mod tests {
 
         // Decrypt with wrong AAD fails
         let mut decrypted_data_fail = Vec::new();
-        let pending_fail = algorithm
+        let pending_fail = processor
             .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
             .unwrap();
         let result = pending_fail.decrypt_to_writer(
@@ -334,7 +324,7 @@ mod tests {
 
         // Decrypt with no AAD fails
         let mut decrypted_data_fail2 = Vec::new();
-        let pending_fail2 = algorithm
+        let pending_fail2 = processor
             .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
             .unwrap();
         let result2 =
@@ -345,6 +335,7 @@ mod tests {
     #[test]
     fn test_hybrid_parallel_streaming_roundtrip_with_kdf() {
         let algorithm = get_test_algorithm();
+        let processor = ParallelStreaming::new(Arc::new(algorithm));
         let (pk, sk) = generate_test_keys();
         let kek_id = "test-kek-id-kdf".to_string();
         let plaintext = get_test_data(1024 * 1024); // 1 MiB
@@ -369,23 +360,23 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
-        HybridParallelStreamingProcessor::encrypt_hybrid_pipeline(
-            &algorithm,
-            &pk,
-            reader,
-            writer,
-            kek_id.clone(),
-            None,
-            None,
-            Some(DerivationSet {
-                derivation_info: DerivationInfo::Kdf(kdf_info),
-                deriver_fn: kdf_fn,
-            }),
-        )
-        .unwrap();
+        processor
+            .encrypt_hybrid_pipeline(
+                &pk,
+                reader,
+                writer,
+                kek_id.clone(),
+                None,
+                None,
+                Some(DerivationSet {
+                    derivation_info: DerivationInfo::Kdf(kdf_info),
+                    deriver_fn: kdf_fn,
+                }),
+            )
+            .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending = algorithm
+        let pending = processor
             .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
             .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
