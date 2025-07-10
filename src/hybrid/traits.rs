@@ -48,16 +48,14 @@ pub trait HybridStreamingProcessor {
         derivation_config: Option<DerivationSet>,
     ) -> Result<Box<dyn Write + 'a>>;
 
-    fn begin_decrypt_hybrid_from_stream<'a, R>(
+    fn begin_decrypt_hybrid_from_stream<'a>(
         &self,
-        reader: R,
-    ) -> Result<Box<dyn HybridStreamingPendingDecryptor<'a, R> + 'a>>
-    where
-        R: Read + 'a;
+        reader: Box<dyn Read + 'a>,
+    ) -> Result<Box<dyn HybridStreamingPendingDecryptor<'a> + 'a>>;
 }
 
 /// A pending decryptor for streaming hybrid-encrypted data.
-pub trait HybridStreamingPendingDecryptor<'a, R: Read> {
+pub trait HybridStreamingPendingDecryptor<'a> {
     fn into_decryptor(
         self: Box<Self>,
         private_key: &AsymmetricPrivateKey,
@@ -107,16 +105,14 @@ pub trait HybridParallelStreamingProcessor {
         derivation_config: Option<DerivationSet>,
     ) -> Result<()>;
 
-    fn begin_decrypt_hybrid_pipeline<'a, R>(
+    fn begin_decrypt_hybrid_pipeline<'a>(
         &self,
-        reader: R,
-    ) -> Result<Box<dyn HybridParallelStreamingPendingDecryptor<'a, R> + 'a>>
-    where
-        R: Read + Send + 'a;
+        reader: Box<dyn Read + Send + 'a>,
+    ) -> Result<Box<dyn HybridParallelStreamingPendingDecryptor<'a> + 'a>>;
 }
 
 /// A pending decryptor for parallel streaming hybrid-encrypted data.
-pub trait HybridParallelStreamingPendingDecryptor<'a, R: Read + Send> {
+pub trait HybridParallelStreamingPendingDecryptor<'a> {
     fn decrypt_to_writer(
         self: Box<Self>,
         private_key: &AsymmetricPrivateKey,
@@ -143,21 +139,20 @@ pub trait HybridAsynchronousProcessor {
         derivation_config: Option<DerivationSet>,
     ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>>;
 
-    async fn begin_decrypt_hybrid_async<'a, R>(
+    async fn begin_decrypt_hybrid_async<'a>(
         &self,
-        reader: R,
-    ) -> Result<Box<dyn HybridAsynchronousPendingDecryptor<'a, R> + 'a>>
-    where
-        R: tokio::io::AsyncRead + Send + Unpin + 'a;
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
+    ) -> Result<Box<dyn HybridAsynchronousPendingDecryptor<'a> + Send + 'a>>;
 }
 
 /// A pending decryptor for asynchronous hybrid-encrypted data.
 #[cfg(feature = "async")]
-pub trait HybridAsynchronousPendingDecryptor<'a, R: tokio::io::AsyncRead + Send + Unpin> {
-    fn into_decryptor(
+#[async_trait]
+pub trait HybridAsynchronousPendingDecryptor<'decr_life>: Send {
+    async fn into_decryptor<'a>(
         self: Box<Self>,
-        private_key: &AsymmetricPrivateKey,
-        aad: Option<&[u8]>,
-    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>>;
+        private_key: &'a AsymmetricPrivateKey,
+        aad: Option<&'a [u8]>,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'decr_life>>;
     fn header(&self) -> &Header;
 }

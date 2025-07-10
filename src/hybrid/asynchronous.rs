@@ -119,16 +119,16 @@ impl<R: AsyncRead + Unpin> AsyncRead for Decryptor<R> {
     }
 }
 
-impl<'a, R, H> HybridAsynchronousPendingDecryptor<'a, R> for PendingDecryptor<R, H>
+impl<'decr_life, H> HybridAsynchronousPendingDecryptor<'decr_life>
+    for PendingDecryptor<Box<dyn AsyncRead + Send + Unpin + 'decr_life>, H>
 where
-    R: AsyncRead + Send + Unpin + 'a,
-    H: HybridAlgorithmTrait + Send + Sync,
+    H: HybridAlgorithmTrait + Send + Sync + 'decr_life,
 {
-    fn into_decryptor(
+    async fn into_decryptor<'a>(
         self: Box<Self>,
-        sk: &AsymmetricPrivateKey,
-        aad: Option<&[u8]>,
-    ) -> Result<Box<dyn AsyncRead + Send + Unpin + 'a>> {
+        sk: &'a AsymmetricPrivateKey,
+        aad: Option<&'a [u8]>,
+    ) -> Result<Box<dyn AsyncRead + Send + Unpin + 'decr_life>> {
         let (encapsulated_key, base_nonce, derivation_info) = match &self.header.payload {
             HeaderPayload::Hybrid {
                 stream_info: Some(info),
@@ -142,11 +142,12 @@ where
             ),
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
+        let typed_sk = sk.clone().into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
 
         let shared_secret = self
             .algorithm
             .asymmetric_algorithm()
-            .decapsulate_key(sk, &encapsulated_key)?;
+            .decapsulate_key(&typed_sk, &encapsulated_key)?;
 
         let dek = if let Some(info) = derivation_info {
             info.derive_key(&shared_secret)?
@@ -181,8 +182,8 @@ impl<'h, H: HybridAlgorithmTrait> Asynchronous<'h, H> {
 }
 
 #[async_trait]
-impl<'h, H: HybridAlgorithmTrait + Send + Sync> HybridAsynchronousProcessor
-    for Asynchronous<'h, H>
+impl<'decr_life, H: HybridAlgorithmTrait + Send + Sync> HybridAsynchronousProcessor
+    for Asynchronous<'decr_life, H>
 {
     async fn encrypt_hybrid_async<'a>(
         &self,
@@ -225,20 +226,17 @@ impl<'h, H: HybridAlgorithmTrait + Send + Sync> HybridAsynchronousProcessor
         )))
     }
 
-    async fn begin_decrypt_hybrid_async<'a, R>(
+    async fn begin_decrypt_hybrid_async<'a>(
         &self,
-        mut reader: R,
-    ) -> Result<Box<dyn HybridAsynchronousPendingDecryptor<'a, R> + 'a>>
-    where
-        R: AsyncRead + Send + Unpin + 'a,
-    {
+        mut reader: Box<dyn AsyncRead + Send + Unpin + 'a>,
+    ) -> Result<Box<dyn HybridAsynchronousPendingDecryptor<'a> + Send + 'a>> {
         let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
         let pending = PendingDecryptor {
             source: reader,
             header,
             algorithm: self.algorithm.clone(),
         };
-        Ok(Box::new(pending) as Box<dyn HybridAsynchronousPendingDecryptor<'a, R> + 'a>)
+        Ok(Box::new(pending) as Box<dyn HybridAsynchronousPendingDecryptor<'a> + Send + 'a>)
     }
 }
 
@@ -297,9 +295,12 @@ mod tests {
         // Decrypt
         let reader = Box::new(Cursor::new(encrypted_data));
         let mut decryptor = {
-            let pending = processor.begin_decrypt_hybrid_async(reader).await.unwrap();
+            let pending = processor
+                .begin_decrypt_hybrid_async(reader)
+                .await
+                .unwrap();
             assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
-            pending.into_decryptor(&sk, aad).unwrap()
+            pending.into_decryptor(&sk, aad).await.unwrap()
         };
 
         let mut decrypted_data = Vec::new();
@@ -362,8 +363,11 @@ mod tests {
 
         let reader = Box::new(Cursor::new(encrypted_data));
         let decryptor_result = {
-            let pending = processor.begin_decrypt_hybrid_async(reader).await.unwrap();
-            pending.into_decryptor(&sk, None)
+            let pending = processor
+                .begin_decrypt_hybrid_async(reader)
+                .await
+                .unwrap();
+            pending.into_decryptor(&sk, None).await
         };
 
         let mut decryptor = decryptor_result.unwrap();
@@ -384,7 +388,7 @@ mod tests {
         {
             let writer = Box::new(&mut encrypted_data);
             let mut encryptor = processor
-                .encrypt_hybrid_async(&pk, writer, "test_kek_id".to_string(), None, None, None)
+                .encrypt_hybrid_async(&pk, writer, "test-kek-id".to_string(), None, None, None)
                 .await
                 .unwrap();
 
@@ -394,8 +398,11 @@ mod tests {
 
         let reader = Box::new(Cursor::new(encrypted_data));
         let decryptor_result = {
-            let pending = processor.begin_decrypt_hybrid_async(reader).await.unwrap();
-            pending.into_decryptor(&sk2, None)
+            let pending = processor
+                .begin_decrypt_hybrid_async(reader)
+                .await
+                .unwrap();
+            pending.into_decryptor(&sk2, None).await
         };
 
         assert!(
@@ -429,8 +436,11 @@ mod tests {
         // Decrypt with the wrong aad
         let reader1 = Box::new(Cursor::new(encrypted_data.clone()));
         let mut decryptor = {
-            let pending = processor.begin_decrypt_hybrid_async(reader1).await.unwrap();
-            pending.into_decryptor(&sk, Some(aad2)).unwrap()
+            let pending = processor
+                .begin_decrypt_hybrid_async(reader1)
+                .await
+                .unwrap();
+            pending.into_decryptor(&sk, Some(aad2)).await.unwrap()
         };
         let result = decryptor.read_to_end(&mut Vec::new()).await;
         assert!(result.is_err());
@@ -438,8 +448,11 @@ mod tests {
         // Decrypt with no aad
         let reader2 = Box::new(Cursor::new(encrypted_data));
         let mut decryptor2 = {
-            let pending2 = processor.begin_decrypt_hybrid_async(reader2).await.unwrap();
-            pending2.into_decryptor(&sk, None).unwrap()
+            let pending2 = processor
+                .begin_decrypt_hybrid_async(reader2)
+                .await
+                .unwrap();
+            pending2.into_decryptor(&sk, None).await.unwrap()
         };
         let result2 = decryptor2.read_to_end(&mut Vec::new()).await;
         assert!(result2.is_err());
@@ -490,8 +503,11 @@ mod tests {
         // Decrypt
         let reader = Box::new(Cursor::new(encrypted_data));
         let mut decryptor = {
-            let pending = processor.begin_decrypt_hybrid_async(reader).await.unwrap();
-            pending.into_decryptor(&sk, None).unwrap()
+            let pending = processor
+                .begin_decrypt_hybrid_async(reader)
+                .await
+                .unwrap();
+            pending.into_decryptor(&sk, None).await.unwrap()
         };
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();

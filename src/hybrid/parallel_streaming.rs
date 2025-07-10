@@ -65,13 +65,10 @@ impl<'h, H: HybridAlgorithmTrait + Send + Sync + 'h> HybridParallelStreamingProc
         )
     }
 
-    fn begin_decrypt_hybrid_pipeline<'a, R>(
+    fn begin_decrypt_hybrid_pipeline<'a>(
         &self,
-        mut reader: R,
-    ) -> Result<Box<dyn HybridParallelStreamingPendingDecryptor<'a, R> + 'a>>
-    where
-        R: Read + Send + 'a,
-    {
+        mut reader: Box<dyn Read + Send + 'a>,
+    ) -> Result<Box<dyn HybridParallelStreamingPendingDecryptor<'a> + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
         let pending = PendingDecryptor {
             source: reader,
@@ -82,10 +79,8 @@ impl<'h, H: HybridAlgorithmTrait + Send + Sync + 'h> HybridParallelStreamingProc
     }
 }
 
-impl<'a, R, H> HybridParallelStreamingPendingDecryptor<'a, R>
-    for PendingDecryptor<R, Arc<H>>
+impl<'a, H> HybridParallelStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Read + Send + 'a>, Arc<H>>
 where
-    R: Read + Send + 'a,
     H: HybridAlgorithmTrait + Send + Sync + 'a,
 {
     fn decrypt_to_writer(
@@ -187,7 +182,7 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending = processor
-            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending
@@ -214,7 +209,7 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending = processor
-            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending
@@ -245,7 +240,7 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending = processor
-            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         let result = pending.decrypt_to_writer(&sk, Box::new(&mut decrypted_data), None);
 
@@ -270,7 +265,7 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending = processor
-            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         let result = pending.decrypt_to_writer(&sk2, Box::new(&mut decrypted_data), None);
         assert!(result.is_err());
@@ -302,7 +297,7 @@ mod tests {
         // Decrypt with correct AAD
         let mut decrypted_data = Vec::new();
         let pending = processor
-            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some("test_kek_id_aad"));
         pending
@@ -313,7 +308,7 @@ mod tests {
         // Decrypt with wrong AAD fails
         let mut decrypted_data_fail = Vec::new();
         let pending_fail = processor
-            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         let result = pending_fail.decrypt_to_writer(
             &sk,
@@ -325,7 +320,7 @@ mod tests {
         // Decrypt with no AAD fails
         let mut decrypted_data_fail2 = Vec::new();
         let pending_fail2 = processor
-            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         let result2 =
             pending_fail2.decrypt_to_writer(&sk, Box::new(&mut decrypted_data_fail2), None);
@@ -377,7 +372,7 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending = processor
-            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending

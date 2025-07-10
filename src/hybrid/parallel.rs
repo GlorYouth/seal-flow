@@ -80,7 +80,7 @@ where
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(self.source)?;
-        let (encapsulated_key, _chunk_size, base_nonce, derivation_info) = match &header.payload {
+        let (encapsulated_key, base_nonce, derivation_info) = match &header.payload {
             HeaderPayload::Hybrid {
                 encrypted_dek,
                 stream_info: Some(info),
@@ -88,7 +88,6 @@ where
                 ..
             } => (
                 Zeroizing::new(encrypted_dek.clone()),
-                info.chunk_size,
                 info.base_nonce,
                 derivation_info.clone(),
             ),
