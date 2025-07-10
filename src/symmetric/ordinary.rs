@@ -65,7 +65,7 @@ impl<'s, S: SymmetricAlgorithm + OrdinaryBodyProcessor> SymmetricOrdinaryProcess
             .encrypt_body_in_memory(key, &base_nonce, header_bytes, plaintext, aad)
     }
 
-    fn decrypt_symmetric_in_memory<'a, 'p>(
+    fn begin_decrypt_symmetric_in_memory<'a, 'p>(
         &'p self,
         ciphertext: &'a [u8],
     ) -> Result<Box<dyn SymmetricOrdinaryPendingDecryptor<'a> + 'a>>
@@ -105,7 +105,7 @@ mod tests {
             .encrypt_symmetric_in_memory(key.clone(), "test_key_id".to_string(), plaintext, None)
             .unwrap();
         let pending = processor
-            .decrypt_symmetric_in_memory(&encrypted)
+            .begin_decrypt_symmetric_in_memory(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(key.clone(), None).unwrap();
 
@@ -122,7 +122,7 @@ mod tests {
             .encrypt_symmetric_in_memory(key.clone(), "proc_key".to_string(), plaintext, None)
             .unwrap();
         let pending = processor
-            .decrypt_symmetric_in_memory(&encrypted)
+            .begin_decrypt_symmetric_in_memory(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(key.clone(), None).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
@@ -138,7 +138,7 @@ mod tests {
             .encrypt_symmetric_in_memory(key.clone(), "test_key_id".to_string(), plaintext, None)
             .unwrap();
         let pending = processor
-            .decrypt_symmetric_in_memory(&encrypted)
+            .begin_decrypt_symmetric_in_memory(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(key.clone(), None).unwrap();
 
@@ -155,7 +155,7 @@ mod tests {
             .encrypt_symmetric_in_memory(key.clone(), "test_key_id".to_string(), &plaintext, None)
             .unwrap();
         let pending = processor
-            .decrypt_symmetric_in_memory(&encrypted)
+            .begin_decrypt_symmetric_in_memory(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(key.clone(), None).unwrap();
 
@@ -178,7 +178,7 @@ mod tests {
             encrypted[header_len] ^= 1;
         }
 
-        let pending = processor.decrypt_symmetric_in_memory(&encrypted).unwrap();
+        let pending = processor.begin_decrypt_symmetric_in_memory(&encrypted).unwrap();
         let result = pending.into_plaintext(key.clone(), None);
         assert!(result.is_err());
     }
@@ -197,17 +197,17 @@ mod tests {
             .unwrap();
 
         // Decrypt with correct AAD
-        let pending = processor.decrypt_symmetric_in_memory(&encrypted).unwrap();
+        let pending = processor.begin_decrypt_symmetric_in_memory(&encrypted).unwrap();
         let decrypted = pending.into_plaintext(key.clone(), Some(aad)).unwrap();
         assert_eq!(&plaintext[..], &decrypted[..]);
 
         // Decrypt with wrong AAD fails
-        let pending_fail = processor.decrypt_symmetric_in_memory(&encrypted).unwrap();
+        let pending_fail = processor.begin_decrypt_symmetric_in_memory(&encrypted).unwrap();
         let result_fail = pending_fail.into_plaintext(key.clone(), Some(wrong_aad));
         assert!(result_fail.is_err());
 
         // Decrypt with no AAD fails
-        let pending_fail2 = processor.decrypt_symmetric_in_memory(&encrypted).unwrap();
+        let pending_fail2 = processor.begin_decrypt_symmetric_in_memory(&encrypted).unwrap();
         let result_fail2 = pending_fail2.into_plaintext(key.clone(), None);
         assert!(result_fail2.is_err());
     }

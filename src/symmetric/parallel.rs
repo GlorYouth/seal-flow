@@ -64,7 +64,7 @@ impl<'s, S: SymmetricAlgorithm + ParallelBodyProcessor> SymmetricParallelProcess
             .encrypt_body_parallel(key, &base_nonce, header_bytes, plaintext, aad)
     }
 
-    fn decrypt_symmetric_parallel<'a, 'p>(
+    fn begin_decrypt_symmetric_parallel<'a, 'p>(
         &'p self,
         ciphertext: &'a [u8],
     ) -> Result<Box<dyn SymmetricParallelPendingDecryptor<'a> + 'a>>
@@ -107,7 +107,7 @@ mod tests {
             .unwrap();
 
         let pending = processor
-            .decrypt_symmetric_parallel(&encrypted)
+            .begin_decrypt_symmetric_parallel(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(key.clone(), None).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
@@ -124,7 +124,7 @@ mod tests {
         encrypted_tampered[ciphertext_start_index] ^= 1;
 
         let pending = processor
-            .decrypt_symmetric_parallel(&encrypted_tampered)
+            .begin_decrypt_symmetric_parallel(&encrypted_tampered)
             .unwrap();
         let result = pending.into_plaintext(key.clone(), None);
         assert!(result.is_err());
@@ -140,7 +140,7 @@ mod tests {
             .encrypt_symmetric_parallel(key.clone(), "proc_key".to_string(), plaintext, None)
             .unwrap();
         let pending = processor
-            .decrypt_symmetric_parallel(&encrypted)
+            .begin_decrypt_symmetric_parallel(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(key.clone(), None).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
@@ -158,7 +158,7 @@ mod tests {
             .unwrap();
 
         let pending = processor
-            .decrypt_symmetric_parallel(&encrypted)
+            .begin_decrypt_symmetric_parallel(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(key.clone(), None).unwrap();
 
@@ -177,7 +177,7 @@ mod tests {
             .unwrap();
 
         let pending = processor
-            .decrypt_symmetric_parallel(&encrypted)
+            .begin_decrypt_symmetric_parallel(&encrypted)
             .unwrap();
         let decrypted = pending.into_plaintext(key.clone(), None).unwrap();
 
@@ -196,7 +196,7 @@ mod tests {
             .unwrap();
 
         let pending = processor
-            .decrypt_symmetric_parallel(&encrypted)
+            .begin_decrypt_symmetric_parallel(&encrypted)
             .unwrap();
         let result = pending.into_plaintext(key.clone(), None);
         assert!(result.is_err());
@@ -218,7 +218,7 @@ mod tests {
             .unwrap();
 
         // Test the separated functions
-        let pending = processor.decrypt_symmetric_parallel(&encrypted).unwrap();
+        let pending = processor.begin_decrypt_symmetric_parallel(&encrypted).unwrap();
         assert_eq!(pending.header().payload.key_id(), Some("test_key_id"));
 
         let decrypted_body = pending.into_plaintext(key.clone(), None).unwrap();
@@ -240,17 +240,17 @@ mod tests {
             .unwrap();
 
         // Decrypt with correct AAD
-        let pending = processor.decrypt_symmetric_parallel(&encrypted).unwrap();
+        let pending = processor.begin_decrypt_symmetric_parallel(&encrypted).unwrap();
         let decrypted = pending.into_plaintext(key.clone(), Some(aad)).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
-        let pending_fail = processor.decrypt_symmetric_parallel(&encrypted).unwrap();
+        let pending_fail = processor.begin_decrypt_symmetric_parallel(&encrypted).unwrap();
         let result_fail = pending_fail.into_plaintext(key.clone(), Some(b"wrong aad"));
         assert!(result_fail.is_err());
 
         // Decrypt with no AAD fails
-        let pending_fail2 = processor.decrypt_symmetric_parallel(&encrypted).unwrap();
+        let pending_fail2 = processor.begin_decrypt_symmetric_parallel(&encrypted).unwrap();
         let result_fail2 = pending_fail2.into_plaintext(key.clone(), None);
         assert!(result_fail2.is_err());
     }

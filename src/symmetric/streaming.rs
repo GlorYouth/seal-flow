@@ -112,7 +112,7 @@ impl<'s, S: SymmetricAlgorithm> SymmetricStreamingProcessor for Streaming<'s, S>
         }))
     }
 
-    fn decrypt_symmetric_from_stream<'a, 'p>(
+    fn begin_decrypt_symmetric_from_stream<'a, 'p>(
         &'p self,
         mut reader: Box<dyn Read + 'a>,
     ) -> Result<Box<dyn SymmetricStreamingPendingDecryptor<'a> + 'a>>
@@ -192,7 +192,7 @@ mod tests {
 
         // Decrypt using the new two-step process
         let pending_decryptor = processor
-            .decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         assert_eq!(
             pending_decryptor.header().payload.key_id(),
@@ -230,7 +230,7 @@ mod tests {
 
         // Decrypt
         let mut decrypt_stream = processor
-            .decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
             .unwrap()
             .into_decryptor(key.clone(), aad)
             .unwrap();
@@ -290,7 +290,7 @@ mod tests {
         }
 
         let pending = processor
-            .decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         let mut decryptor = pending.into_decryptor(key, None).unwrap();
         let result = decryptor.read_to_end(&mut Vec::new());
@@ -320,7 +320,7 @@ mod tests {
 
         // Decrypt with the wrong key
         let pending = processor
-            .decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         let mut decryptor = pending.into_decryptor(key2, None).unwrap();
         let result = decryptor.read_to_end(&mut Vec::new());
@@ -351,7 +351,7 @@ mod tests {
 
         // Decrypt with wrong AAD
         let pending = processor
-            .decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         let mut decryptor = pending
             .into_decryptor(key.clone(), Some(aad2))
@@ -361,7 +361,7 @@ mod tests {
 
         // Decrypt with no AAD
         let pending2 = processor
-            .decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         let mut decryptor2 = pending2.into_decryptor(key, None).unwrap();
         let result2 = decryptor2.read_to_end(&mut Vec::new());

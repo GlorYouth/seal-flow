@@ -3,7 +3,7 @@
 //! 同步、流式混合加密和解密实现。
 use super::common::create_header;
 use super::traits::{HybridStreamingPendingDecryptor, HybridStreamingProcessor};
-use crate::algorithms::traits::{HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm};
+use crate::algorithms::traits::HybridAlgorithm as HybridAlgorithmTrait;
 use crate::body::traits::StreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, SignerSet};
@@ -129,7 +129,6 @@ mod tests {
     use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
     use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
-    use seal_crypto::zeroize::Zeroizing;
     use std::io::Cursor;
 
     fn get_test_algorithm() -> HybridAlgorithm {
@@ -181,7 +180,7 @@ mod tests {
         // Encrypt
         let mut encrypted_data = Vec::new();
         let writer = Box::new(&mut encrypted_data);
-        let encryptor = HybridStreamingProcessor::encrypt_hybrid_to_stream(
+        let mut encryptor = HybridStreamingProcessor::encrypt_hybrid_to_stream(
             &algorithm,
             &pk,
             writer,
@@ -191,6 +190,8 @@ mod tests {
             derivation_config,
         )
         .unwrap();
+
+        encryptor.write_all(plaintext).unwrap();
 
         // Drop the encryptor to ensure finish is called via Drop trait.
         std::mem::drop(encryptor);
@@ -263,7 +264,7 @@ mod tests {
 
         let mut encrypted_data = Vec::new();
         let writer = Box::new(&mut encrypted_data);
-        let encryptor = HybridStreamingProcessor::encrypt_hybrid_to_stream(
+        let mut encryptor = HybridStreamingProcessor::encrypt_hybrid_to_stream(
             &algorithm,
             &pk,
             writer,
@@ -273,6 +274,7 @@ mod tests {
             None,
         )
         .unwrap();
+        encryptor.write_all(plaintext).unwrap();
         std::mem::drop(encryptor);
 
         // Tamper with the ciphertext body
@@ -298,7 +300,7 @@ mod tests {
 
         let mut encrypted_data = Vec::new();
         let writer = Box::new(&mut encrypted_data);
-        let encryptor = HybridStreamingProcessor::encrypt_hybrid_to_stream(
+        let mut encryptor = HybridStreamingProcessor::encrypt_hybrid_to_stream(
             &algorithm,
             &pk,
             writer,
@@ -308,6 +310,7 @@ mod tests {
             None,
         )
         .unwrap();
+        encryptor.write_all(plaintext).unwrap();
         std::mem::drop(encryptor);
 
         let (_, sk2) = generate_test_keys();
@@ -328,7 +331,7 @@ mod tests {
 
         let mut encrypted_data = Vec::new();
         let writer = Box::new(&mut encrypted_data);
-        let encryptor = HybridStreamingProcessor::encrypt_hybrid_to_stream(
+        let mut encryptor = HybridStreamingProcessor::encrypt_hybrid_to_stream(
             &algorithm,
             &pk,
             writer,
@@ -338,6 +341,7 @@ mod tests {
             None,
         )
         .unwrap();
+        encryptor.write_all(plaintext).unwrap();
         std::mem::drop(encryptor);
 
         let pending = algorithm

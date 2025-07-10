@@ -159,7 +159,7 @@ impl<'s, S: SymmetricAlgorithm + Send + Sync> SymmetricAsynchronousProcessor
         Ok(Box::new(encryptor))
     }
 
-    async fn decrypt_symmetric_async<'a, 'p>(
+    async fn begin_decrypt_symmetric_async<'a, 'p>(
         &'p self,
         mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
     ) -> Result<Box<dyn SymmetricAsynchronousPendingDecryptor<'a> + Send + 'a>>
@@ -215,7 +215,7 @@ mod tests {
 
         // Decrypt
         let mut decryptor = processor
-            .decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data)))
+            .begin_decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data)))
             .await
             .unwrap()
             .into_decryptor(key.clone(), aad)
@@ -253,7 +253,7 @@ mod tests {
 
         // Decrypt
         let mut decrypt_stream = processor
-            .decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
             .await
             .unwrap()
             .into_decryptor(key.clone(), aad)
@@ -320,7 +320,7 @@ mod tests {
         }
 
         let mut decryptor = processor
-            .decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
             .await
             .unwrap()
             .into_decryptor(key.clone(), None)
@@ -356,7 +356,7 @@ mod tests {
 
         // Decrypt with the wrong key
         let mut decryptor = processor
-            .decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
             .await
             .unwrap()
             .into_decryptor(key2, None)
@@ -393,7 +393,7 @@ mod tests {
         // Decrypt with the wrong aad
         {
             let mut decryptor = processor
-                .decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
+                .begin_decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
                 .await
                 .unwrap()
                 .into_decryptor(key.clone(), Some(aad2))
@@ -406,7 +406,7 @@ mod tests {
         // Decrypt with no aad
         {
             let mut decryptor = processor
-                .decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
+                .begin_decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
                 .await
                 .unwrap()
                 .into_decryptor(key, None)
