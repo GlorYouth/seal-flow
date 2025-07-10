@@ -41,10 +41,10 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelProcessor for H {
         let header_bytes = header.encode_to_vec()?;
 
         self.symmetric_algorithm()
-            .encrypt_parallel(dek, &base_nonce, header_bytes, plaintext, aad)
+            .encrypt_body_parallel(dek, &base_nonce, header_bytes, plaintext, aad)
     }
 
-    fn decrypt_parallel(
+    fn decrypt_hybrid_parallel(
         &self,
         private_key: &TypedAsymmetricPrivateKey,
         ciphertext: &[u8],
@@ -81,7 +81,7 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelProcessor for H {
             TypedSymmetricKey::from_bytes(dek.as_slice(), self.symmetric_algorithm().algorithm())?;
 
         self.symmetric_algorithm()
-            .decrypt_parallel(dek, &base_nonce, ciphertext_body, aad)
+            .decrypt_body_parallel(dek, &base_nonce, ciphertext_body, aad)
     }
 }
 
@@ -122,7 +122,7 @@ impl<'a> PendingDecryptor<'a> {
         sk: &TypedAsymmetricPrivateKey,
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
-        HybridParallelProcessor::decrypt_parallel(&algorithm, sk, self.ciphertext_with_header, aad)
+        HybridParallelProcessor::decrypt_hybrid_parallel(&algorithm, sk, self.ciphertext_with_header, aad)
     }
 }
 

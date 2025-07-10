@@ -14,7 +14,7 @@ impl<S: SymmetricAlgorithm + ?Sized> OrdinaryBodyProcessor for S {
     /// Encrypts in-memory data sequentially.
     ///
     /// 顺序加密内存中的数据。
-    fn encrypt_in_memory(
+    fn encrypt_body_in_memory(
         &self,
         key: TypedSymmetricKey,
         nonce: &[u8; 12],
@@ -45,7 +45,7 @@ impl<S: SymmetricAlgorithm + ?Sized> OrdinaryBodyProcessor for S {
     /// Decrypts a ciphertext body sequentially.
     ///
     /// 顺序解密密文体。
-    fn decrypt_in_memory(
+    fn decrypt_body_in_memory(
         &self,
         key: TypedSymmetricKey,
         nonce: &[u8; 12],

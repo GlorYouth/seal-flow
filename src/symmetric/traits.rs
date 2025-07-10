@@ -7,14 +7,14 @@ use crate::keys::TypedSymmetricKey;
 use std::io::{Read, Write};
 
 pub trait SymmetricOrdinaryProcessor {
-    fn encrypt_in_memory(
+    fn encrypt_symmetric_in_memory(
         &self,
         key: TypedSymmetricKey,
         key_id: String,
         plaintext: &[u8],
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>>;
-    fn decrypt_in_memory(
+    fn decrypt_symmetric_in_memory(
         &self,
         key: TypedSymmetricKey,
         ciphertext: &[u8],
@@ -23,7 +23,7 @@ pub trait SymmetricOrdinaryProcessor {
 }
 
 pub trait SymmetricStreamingProcessor {
-    fn encrypt_to_stream<'a>(
+    fn encrypt_symmetric_to_stream<'a>(
         &self,
         key: TypedSymmetricKey,
         key_id: String,
@@ -31,7 +31,7 @@ pub trait SymmetricStreamingProcessor {
         aad: Option<&[u8]>,
     ) -> Result<Box<dyn Write + 'a>>;
 
-    fn decrypt_from_stream<'a>(
+    fn decrypt_symmetric_from_stream<'a>(
         &self,
         key: TypedSymmetricKey,
         reader: Box<dyn Read + 'a>,
@@ -40,14 +40,14 @@ pub trait SymmetricStreamingProcessor {
 }
 
 pub trait SymmetricParallelProcessor {
-    fn encrypt_parallel(
+    fn encrypt_symmetric_parallel(
         &self,
         key: TypedSymmetricKey,
         key_id: String,
         plaintext: &[u8],
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>>;
-    fn decrypt_parallel(
+    fn decrypt_symmetric_parallel(
         &self,
         key: TypedSymmetricKey,
         ciphertext: &[u8],
@@ -56,7 +56,7 @@ pub trait SymmetricParallelProcessor {
 }
 
 pub trait SymmetricParallelStreamingProcessor {
-    fn encrypt_pipeline<'a>(
+    fn encrypt_symmetric_pipeline<'a>(
         &self,
         key: TypedSymmetricKey,
         key_id: String,
@@ -65,7 +65,7 @@ pub trait SymmetricParallelStreamingProcessor {
         aad: Option<&'a [u8]>,
     ) -> Result<()>;
 
-    fn decrypt_pipeline<'a>(
+    fn decrypt_symmetric_pipeline<'a>(
         &self,
         key: TypedSymmetricKey,
         reader: Box<dyn Read + Send + 'a>,
@@ -80,7 +80,7 @@ use async_trait::async_trait;
 #[cfg(feature = "async")]
 #[async_trait]
 pub trait SymmetricAsynchronousProcessor {
-    async fn encrypt_async<'a>(
+    async fn encrypt_symmetric_async<'a>(
         &self,
         key: TypedSymmetricKey,
         key_id: String,
@@ -88,7 +88,7 @@ pub trait SymmetricAsynchronousProcessor {
         aad: Option<&'a [u8]>,
     ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>>;
 
-    async fn decrypt_async<'a>(
+    async fn decrypt_symmetric_async<'a>(
         &self,
         key: TypedSymmetricKey,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,

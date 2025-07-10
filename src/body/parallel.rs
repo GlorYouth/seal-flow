@@ -16,7 +16,7 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
     /// Encrypts in-memory data in parallel.
     ///
     /// 并行加密内存中的数据。
-    fn encrypt_parallel(
+    fn encrypt_body_parallel(
         &self,
         key: TypedSymmetricKey,
         base_nonce: &[u8; 12],
@@ -79,7 +79,7 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
     /// Decrypts a ciphertext body in parallel.
     ///
     /// 并行解密密文体。
-    fn decrypt_parallel(
+    fn decrypt_body_parallel(
         &self,
         key: TypedSymmetricKey,
         base_nonce: &[u8; 12],

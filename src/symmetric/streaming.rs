@@ -100,7 +100,7 @@ impl<'a, S: SymmetricAlgorithm> Streaming<'a, S> {
 }
 
 impl<'a, S: SymmetricAlgorithm> SymmetricStreamingProcessor for Streaming<'a, S> {
-    fn encrypt_to_stream<'b>(
+    fn encrypt_symmetric_to_stream<'b>(
         &self,
         key: TypedSymmetricKey,
         key_id: String,
@@ -114,7 +114,7 @@ impl<'a, S: SymmetricAlgorithm> SymmetricStreamingProcessor for Streaming<'a, S>
         }))
     }
 
-    fn decrypt_from_stream<'b>(
+    fn decrypt_symmetric_from_stream<'b>(
         &self,
         key: TypedSymmetricKey,
         reader: Box<dyn Read + 'b>,
@@ -213,7 +213,7 @@ mod tests {
         let mut encrypted_data = Vec::new();
         {
             let mut encrypt_stream = processor
-                .encrypt_to_stream(
+                .encrypt_symmetric_to_stream(
                     key.clone(),
                     "proc_key".to_string(),
                     Box::new(&mut encrypted_data),
@@ -225,7 +225,7 @@ mod tests {
 
         // Decrypt
         let mut decrypt_stream = processor
-            .decrypt_from_stream(key.clone(), Box::new(Cursor::new(&encrypted_data)), aad)
+            .decrypt_symmetric_from_stream(key.clone(), Box::new(Cursor::new(&encrypted_data)), aad)
             .unwrap();
         let mut decrypted_data = Vec::new();
         decrypt_stream.read_to_end(&mut decrypted_data).unwrap();

@@ -13,7 +13,7 @@ use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 
 impl<H: HybridAlgorithmTrait + ?Sized> HybridStreamingProcessor for H {
-    fn encrypt_to_stream<'a>(
+    fn encrypt_hybrid_to_stream<'a>(
         &self,
         public_key: &TypedAsymmetricPublicKey,
         mut writer: Box<dyn Write + 'a>,
@@ -40,10 +40,10 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridStreamingProcessor for H {
         writer.write_all(&header_bytes)?;
 
         let algo = self.symmetric_algorithm();
-        StreamingBodyProcessor::encrypt_to_stream(&algo, dek, base_nonce, writer, aad)
+        StreamingBodyProcessor::encrypt_body_to_stream(&algo, dek, base_nonce, writer, aad)
     }
 
-    fn decrypt_from_stream<'a>(
+    fn decrypt_hybrid_from_stream<'a>(
         &self,
         private_key: &TypedAsymmetricPrivateKey,
         mut reader: Box<dyn Read + 'a>,
@@ -79,7 +79,7 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridStreamingProcessor for H {
             TypedSymmetricKey::from_bytes(dek.as_slice(), self.symmetric_algorithm().algorithm())?;
 
         let algo = self.symmetric_algorithm();
-        StreamingBodyProcessor::decrypt_from_stream(&algo, dek, base_nonce, reader, aad)
+        StreamingBodyProcessor::decrypt_body_from_stream(&algo, dek, base_nonce, reader, aad)
     }
 }
 
@@ -147,7 +147,7 @@ impl<R: Read> PendingDecryptor<R> {
         )?;
 
         let algo = algorithm.symmetric_algorithm();
-        StreamingBodyProcessor::decrypt_from_stream(&algo, dek, base_nonce, reader, aad)
+        StreamingBodyProcessor::decrypt_body_from_stream(&algo, dek, base_nonce, reader, aad)
     }
 }
 
@@ -221,7 +221,7 @@ mod tests {
         // Encrypt
         let mut encrypted_data = Vec::new();
         let writer = Box::new(&mut encrypted_data);
-        let encryptor = HybridStreamingProcessor::encrypt_to_stream(
+        let encryptor = HybridStreamingProcessor::encrypt_hybrid_to_stream(
             &algorithm,
             &pk,
             writer,
@@ -302,7 +302,7 @@ mod tests {
 
         let mut encrypted_data = Vec::new();
         let writer = Box::new(&mut encrypted_data);
-        let encryptor = HybridStreamingProcessor::encrypt_to_stream(
+        let encryptor = HybridStreamingProcessor::encrypt_hybrid_to_stream(
             &algorithm,
             &pk,
             writer,
@@ -335,7 +335,7 @@ mod tests {
 
         let mut encrypted_data = Vec::new();
         let writer = Box::new(&mut encrypted_data);
-        let encryptor = HybridStreamingProcessor::encrypt_to_stream(
+        let encryptor = HybridStreamingProcessor::encrypt_hybrid_to_stream(
             &algorithm,
             &pk,
             writer,
@@ -363,7 +363,7 @@ mod tests {
 
         let mut encrypted_data = Vec::new();
         let writer = Box::new(&mut encrypted_data);
-        let encryptor = HybridStreamingProcessor::encrypt_to_stream(
+        let encryptor = HybridStreamingProcessor::encrypt_hybrid_to_stream(
             &algorithm,
             &pk,
             writer,

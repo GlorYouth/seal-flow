@@ -13,7 +13,7 @@ use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymm
 use seal_crypto::zeroize::Zeroizing;
 
 impl<H: HybridAlgorithmTrait + ?Sized> HybridOrdinaryProcessor for H {
-    fn encrypt_in_memory(
+    fn encrypt_hybrid_in_memory(
         &self,
         public_key: &TypedAsymmetricPublicKey,
         plaintext: &[u8],
@@ -41,10 +41,10 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridOrdinaryProcessor for H {
         let header_bytes = header.encode_to_vec()?;
 
         self.symmetric_algorithm()
-            .encrypt_in_memory(dek, &base_nonce, header_bytes, plaintext, aad)
+            .encrypt_body_in_memory(dek, &base_nonce, header_bytes, plaintext, aad)
     }
 
-    fn decrypt_in_memory(
+    fn decrypt_hybrid_in_memory(
         &self,
         private_key: &TypedAsymmetricPrivateKey,
         ciphertext: &[u8],
@@ -83,7 +83,7 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridOrdinaryProcessor for H {
             TypedSymmetricKey::from_bytes(dek.as_slice(), self.symmetric_algorithm().algorithm())?;
 
         self.symmetric_algorithm()
-            .decrypt_in_memory(dek, &base_nonce, ciphertext_body, aad)
+            .decrypt_body_in_memory(dek, &base_nonce, ciphertext_body, aad)
     }
 }
 
@@ -123,7 +123,7 @@ impl<'a> PendingDecryptor<'a> {
         sk: &TypedAsymmetricPrivateKey,
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
-        HybridOrdinaryProcessor::decrypt_in_memory(&algorithm, sk, self.ciphertext_with_header, aad)
+        HybridOrdinaryProcessor::decrypt_hybrid_in_memory(&algorithm, sk, self.ciphertext_with_header, aad)
     }
 }
 
@@ -183,7 +183,7 @@ mod tests {
                 .map(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm()))?
         });
 
-        let encrypted = HybridOrdinaryProcessor::encrypt_in_memory(
+        let encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
             &algorithm,
             &pk,
             plaintext,
@@ -208,7 +208,7 @@ mod tests {
         let (pk, sk) = generate_test_keys();
         let plaintext = b"This is a test message for hybrid ordinary encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
-        let encrypted = HybridOrdinaryProcessor::encrypt_in_memory(
+        let encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
             &algorithm,
             &pk,
             plaintext,
@@ -231,7 +231,7 @@ mod tests {
         let (pk, sk) = generate_test_keys();
         let plaintext = b"";
 
-        let encrypted = HybridOrdinaryProcessor::encrypt_in_memory(
+        let encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
             &algorithm,
             &pk,
             plaintext,
@@ -254,7 +254,7 @@ mod tests {
         let (pk, sk) = generate_test_keys();
         let plaintext = vec![42u8; crate::common::DEFAULT_CHUNK_SIZE as usize];
 
-        let encrypted = HybridOrdinaryProcessor::encrypt_in_memory(
+        let encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
             &algorithm,
             &pk,
             &plaintext,
@@ -277,7 +277,7 @@ mod tests {
         let (pk, sk) = generate_test_keys();
         let plaintext = b"some important data";
 
-        let mut encrypted = HybridOrdinaryProcessor::encrypt_in_memory(
+        let mut encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
             &algorithm,
             &pk,
             plaintext,
@@ -305,7 +305,7 @@ mod tests {
         let (_, sk2) = generate_test_keys();
         let plaintext = b"some data";
 
-        let encrypted = HybridOrdinaryProcessor::encrypt_in_memory(
+        let encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
             &algorithm,
             &pk,
             plaintext,
@@ -328,7 +328,7 @@ mod tests {
         let plaintext = b"some important data with aad";
         let aad = b"some important context";
 
-        let encrypted = HybridOrdinaryProcessor::encrypt_in_memory(
+        let encrypted = HybridOrdinaryProcessor::encrypt_hybrid_in_memory(
             &algorithm,
             &pk,
             plaintext,

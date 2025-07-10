@@ -47,7 +47,7 @@ impl<'a, R: Read + Send + 'a> PendingDecryptor<R> {
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
         let processor = algorithm.clone_box_symmetric();
-        processor.decrypt_pipeline(
+        processor.decrypt_body_pipeline(
             key,
             base_nonce,
             Box::new(self.reader),
@@ -80,7 +80,7 @@ impl<'a, S: SymmetricAlgorithm> ParallelStreaming<'a, S> {
 impl<'a, S: SymmetricAlgorithm + Send + Sync + 'a> SymmetricParallelStreamingProcessor
     for ParallelStreaming<'a, S>
 {
-    fn encrypt_pipeline<'b>(
+    fn encrypt_symmetric_pipeline<'b>(
         &self,
         key: TypedSymmetricKey,
         key_id: String,
@@ -93,10 +93,10 @@ impl<'a, S: SymmetricAlgorithm + Send + Sync + 'a> SymmetricParallelStreamingPro
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
         let processor = self.algorithm.clone_box_symmetric();
-        processor.encrypt_pipeline(key, base_nonce, reader, writer, aad)
+        processor.encrypt_body_pipeline(key, base_nonce, reader, writer, aad)
     }
 
-    fn decrypt_pipeline<'b>(
+    fn decrypt_symmetric_pipeline<'b>(
         &self,
         key: TypedSymmetricKey,
         reader: Box<dyn Read + Send + 'b>,
@@ -134,7 +134,7 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let mut encrypted_data = Vec::new();
         processor
-            .encrypt_pipeline(
+            .encrypt_symmetric_pipeline(
                 key.clone(),
                 "test_key".to_string(),
                 Box::new(Cursor::new(&plaintext)),
@@ -145,7 +145,7 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         processor
-            .decrypt_pipeline(
+            .decrypt_symmetric_pipeline(
                 key.clone(),
                 Box::new(Cursor::new(&encrypted_data)),
                 Box::new(&mut decrypted_data),
@@ -167,7 +167,7 @@ mod tests {
         // Encrypt
         let mut encrypted_data = Vec::new();
         processor
-            .encrypt_pipeline(
+            .encrypt_symmetric_pipeline(
                 key.clone(),
                 "proc_key".to_string(),
                 Box::new(Cursor::new(&plaintext)),
@@ -179,7 +179,7 @@ mod tests {
         // Decrypt
         let mut decrypted_data = Vec::new();
         processor
-            .decrypt_pipeline(
+            .decrypt_symmetric_pipeline(
                 key.clone(),
                 Box::new(Cursor::new(&encrypted_data)),
                 Box::new(&mut decrypted_data),
@@ -198,7 +198,7 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let mut encrypted_data = Vec::new();
         processor
-            .encrypt_pipeline(
+            .encrypt_symmetric_pipeline(
                 key.clone(),
                 "test_key".to_string(),
                 Box::new(Cursor::new(&plaintext)),
@@ -209,7 +209,7 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         processor
-            .decrypt_pipeline(
+            .decrypt_symmetric_pipeline(
                 key.clone(),
                 Box::new(Cursor::new(&encrypted_data)),
                 Box::new(&mut decrypted_data),
@@ -228,7 +228,7 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let mut encrypted_data = Vec::new();
         processor
-            .encrypt_pipeline(
+            .encrypt_symmetric_pipeline(
                 key.clone(),
                 "test_key".to_string(),
                 Box::new(Cursor::new(&plaintext)),
@@ -239,7 +239,7 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         processor
-            .decrypt_pipeline(
+            .decrypt_symmetric_pipeline(
                 key.clone(),
                 Box::new(Cursor::new(&encrypted_data)),
                 Box::new(&mut decrypted_data),
@@ -258,7 +258,7 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let mut encrypted_data = Vec::new();
         processor
-            .encrypt_pipeline(
+            .encrypt_symmetric_pipeline(
                 key.clone(),
                 "test_key".to_string(),
                 Box::new(Cursor::new(&plaintext)),
@@ -272,7 +272,7 @@ mod tests {
         encrypted_data[header_len + 10] ^= 1;
 
         let mut decrypted_data = Vec::new();
-        let result = processor.decrypt_pipeline(
+        let result = processor.decrypt_symmetric_pipeline(
             key.clone(),
             Box::new(Cursor::new(&encrypted_data)),
             Box::new(&mut decrypted_data),
@@ -290,7 +290,7 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let mut encrypted_data = Vec::new();
         processor
-            .encrypt_pipeline(
+            .encrypt_symmetric_pipeline(
                 key.clone(),
                 "key1".to_string(),
                 Box::new(Cursor::new(&plaintext)),
@@ -300,7 +300,7 @@ mod tests {
             .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let result = processor.decrypt_pipeline(
+        let result = processor.decrypt_symmetric_pipeline(
             key.clone(),
             Box::new(Cursor::new(&encrypted_data)),
             Box::new(&mut decrypted_data),
@@ -318,7 +318,7 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let mut encrypted_data = Vec::new();
         processor
-            .encrypt_pipeline(
+            .encrypt_symmetric_pipeline(
                 key.clone(),
                 "test_key_aad".to_string(),
                 Box::new(Cursor::new(&plaintext)),
@@ -330,7 +330,7 @@ mod tests {
         // Decrypt with correct AAD
         let mut decrypted_data = Vec::new();
         processor
-            .decrypt_pipeline(
+            .decrypt_symmetric_pipeline(
                 key.clone(),
                 Box::new(Cursor::new(&encrypted_data)),
                 Box::new(&mut decrypted_data),
@@ -341,7 +341,7 @@ mod tests {
 
         // Decrypt with wrong AAD fails
         let mut decrypted_data_fail = Vec::new();
-        let result = processor.decrypt_pipeline(
+        let result = processor.decrypt_symmetric_pipeline(
             key.clone(),
             Box::new(Cursor::new(&encrypted_data)),
             Box::new(&mut decrypted_data_fail),
@@ -351,7 +351,7 @@ mod tests {
 
         // Decrypt with no AAD fails
         let mut decrypted_data_fail2 = Vec::new();
-        let result2 = processor.decrypt_pipeline(
+        let result2 = processor.decrypt_symmetric_pipeline(
             key.clone(),
             Box::new(Cursor::new(&encrypted_data)),
             Box::new(&mut decrypted_data_fail2),

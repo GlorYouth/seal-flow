@@ -40,7 +40,7 @@ impl<'a> PendingDecryptor<'a> {
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
 
-        algorithm.decrypt_parallel(key, &base_nonce, self.ciphertext_body, aad)
+        algorithm.decrypt_body_parallel(key, &base_nonce, self.ciphertext_body, aad)
     }
 }
 
@@ -63,7 +63,7 @@ impl<'a, S: SymmetricAlgorithm + ParallelBodyProcessor> Parallel<'a, S> {
 impl<'a, S: SymmetricAlgorithm + ParallelBodyProcessor> SymmetricParallelProcessor
     for Parallel<'a, S>
 {
-    fn encrypt_parallel(
+    fn encrypt_symmetric_parallel(
         &self,
         key: TypedSymmetricKey,
         key_id: String,
@@ -73,10 +73,10 @@ impl<'a, S: SymmetricAlgorithm + ParallelBodyProcessor> SymmetricParallelProcess
         let (header, base_nonce) = create_header(self.algorithm, key_id)?;
         let header_bytes = header.encode_to_vec()?;
         self.algorithm
-            .encrypt_parallel(key, &base_nonce, header_bytes, plaintext, aad)
+            .encrypt_body_parallel(key, &base_nonce, header_bytes, plaintext, aad)
     }
 
-    fn decrypt_parallel(
+    fn decrypt_symmetric_parallel(
         &self,
         key: TypedSymmetricKey,
         ciphertext: &[u8],
@@ -109,11 +109,11 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
 
         let encrypted = processor
-            .encrypt_parallel(key.clone(), "test_key_id".to_string(), plaintext, None)
+            .encrypt_symmetric_parallel(key.clone(), "test_key_id".to_string(), plaintext, None)
             .unwrap();
 
         let decrypted = processor
-            .decrypt_parallel(key.clone(), &encrypted, None)
+            .decrypt_symmetric_parallel(key.clone(), &encrypted, None)
             .unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
@@ -128,7 +128,7 @@ mod tests {
         let mut encrypted_tampered = encrypted.clone();
         encrypted_tampered[ciphertext_start_index] ^= 1;
 
-        let result = processor.decrypt_parallel(key.clone(), &encrypted_tampered, None);
+        let result = processor.decrypt_symmetric_parallel(key.clone(), &encrypted_tampered, None);
         assert!(result.is_err());
     }
 
@@ -139,10 +139,10 @@ mod tests {
         let plaintext = b"This is a parallel processor test.";
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let encrypted = processor
-            .encrypt_parallel(key.clone(), "proc_key".to_string(), plaintext, None)
+            .encrypt_symmetric_parallel(key.clone(), "proc_key".to_string(), plaintext, None)
             .unwrap();
         let decrypted = processor
-            .decrypt_parallel(key.clone(), &encrypted, None)
+            .decrypt_symmetric_parallel(key.clone(), &encrypted, None)
             .unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -155,11 +155,11 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
 
         let encrypted = processor
-            .encrypt_parallel(key.clone(), "test_key_id".to_string(), plaintext, None)
+            .encrypt_symmetric_parallel(key.clone(), "test_key_id".to_string(), plaintext, None)
             .unwrap();
 
         let decrypted = processor
-            .decrypt_parallel(key.clone(), &encrypted, None)
+            .decrypt_symmetric_parallel(key.clone(), &encrypted, None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
@@ -173,11 +173,11 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
 
         let encrypted = processor
-            .encrypt_parallel(key.clone(), "test_key_id".to_string(), &plaintext, None)
+            .encrypt_symmetric_parallel(key.clone(), "test_key_id".to_string(), &plaintext, None)
             .unwrap();
 
         let decrypted = processor
-            .decrypt_parallel(key.clone(), &encrypted, None)
+            .decrypt_symmetric_parallel(key.clone(), &encrypted, None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted);
@@ -191,10 +191,10 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
 
         let encrypted = processor
-            .encrypt_parallel(key.clone(), "test_key_id_1".to_string(), plaintext, None)
+            .encrypt_symmetric_parallel(key.clone(), "test_key_id_1".to_string(), plaintext, None)
             .unwrap();
 
-        let result = processor.decrypt_parallel(key.clone(), &encrypted, None);
+        let result = processor.decrypt_symmetric_parallel(key.clone(), &encrypted, None);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -210,7 +210,7 @@ mod tests {
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
 
         let encrypted = processor
-            .encrypt_parallel(key.clone(), "test_key_id".to_string(), plaintext, None)
+            .encrypt_symmetric_parallel(key.clone(), "test_key_id".to_string(), plaintext, None)
             .unwrap();
 
         // Test the separated functions
@@ -233,21 +233,21 @@ mod tests {
 
         // Encrypt with AAD
         let encrypted = processor
-            .encrypt_parallel(key.clone(), "aad_key".to_string(), plaintext, Some(aad))
+            .encrypt_symmetric_parallel(key.clone(), "aad_key".to_string(), plaintext, Some(aad))
             .unwrap();
 
         // Decrypt with correct AAD
         let decrypted = processor
-            .decrypt_parallel(key.clone(), &encrypted, Some(aad))
+            .decrypt_symmetric_parallel(key.clone(), &encrypted, Some(aad))
             .unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
-        let result_fail = processor.decrypt_parallel(key.clone(), &encrypted, Some(b"wrong aad"));
+        let result_fail = processor.decrypt_symmetric_parallel(key.clone(), &encrypted, Some(b"wrong aad"));
         assert!(result_fail.is_err());
 
         // Decrypt with no AAD fails
-        let result_fail2 = processor.decrypt_parallel(key.clone(), &encrypted, None);
+        let result_fail2 = processor.decrypt_symmetric_parallel(key.clone(), &encrypted, None);
         assert!(result_fail2.is_err());
     }
 }

@@ -366,7 +366,7 @@ where
 }
 
 impl ParallelStreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
-    fn encrypt_pipeline<'a>(
+    fn encrypt_body_pipeline<'a>(
         &self,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
@@ -377,7 +377,7 @@ impl ParallelStreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
         encrypt_pipeline(self.clone(), key, base_nonce, reader, writer, aad)
     }
 
-    fn decrypt_pipeline<'a>(
+    fn decrypt_body_pipeline<'a>(
         &self,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],

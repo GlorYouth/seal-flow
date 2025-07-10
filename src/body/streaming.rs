@@ -249,7 +249,7 @@ impl<R: Read> Read for DecryptorImpl<R> {
 }
 
 impl StreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
-    fn encrypt_to_stream<'a>(
+    fn encrypt_body_to_stream<'a>(
         &self,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
@@ -260,7 +260,7 @@ impl StreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
         Ok(Box::new(encryptor))
     }
 
-    fn decrypt_from_stream<'a>(
+    fn decrypt_body_from_stream<'a>(
         &self,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
@@ -273,7 +273,7 @@ impl StreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
 }
 
 impl StreamingBodyProcessor for &dyn SymmetricAlgorithm {
-    fn encrypt_to_stream<'a>(
+    fn encrypt_body_to_stream<'a>(
         &self,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
@@ -284,7 +284,7 @@ impl StreamingBodyProcessor for &dyn SymmetricAlgorithm {
         Ok(Box::new(encryptor))
     }
 
-    fn decrypt_from_stream<'a>(
+    fn decrypt_body_from_stream<'a>(
         &self,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],

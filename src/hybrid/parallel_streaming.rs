@@ -14,7 +14,7 @@ use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 
 impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelStreamingProcessor for H {
-    fn encrypt_pipeline<'a>(
+    fn encrypt_hybrid_pipeline<'a>(
         &self,
         public_key: &TypedAsymmetricPublicKey,
         reader: Box<dyn Read + Send + 'a>,
@@ -42,12 +42,12 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelStreamingProcessor for H {
         writer.write_all(&header_bytes)?;
 
         let algo = self.symmetric_algorithm().clone_box_symmetric();
-        ParallelStreamingBodyProcessor::encrypt_pipeline(
+        ParallelStreamingBodyProcessor::encrypt_body_pipeline(
             &algo, dek, base_nonce, reader, writer, aad,
         )
     }
 
-    fn decrypt_pipeline<'a>(
+    fn decrypt_hybrid_pipeline<'a>(
         &self,
         private_key: &TypedAsymmetricPrivateKey,
         mut reader: Box<dyn Read + Send + 'a>,
@@ -83,7 +83,7 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelStreamingProcessor for H {
             TypedSymmetricKey::from_bytes(dek.as_slice(), self.symmetric_algorithm().algorithm())?;
 
         let algo = self.symmetric_algorithm().clone_box_symmetric();
-        ParallelStreamingBodyProcessor::decrypt_pipeline(
+        ParallelStreamingBodyProcessor::decrypt_body_pipeline(
             &algo, dek, base_nonce, reader, writer, aad,
         )
     }
@@ -166,7 +166,7 @@ where
         )?;
 
         let algo = algorithm.symmetric_algorithm().clone_box_symmetric();
-        ParallelStreamingBodyProcessor::decrypt_pipeline(
+        ParallelStreamingBodyProcessor::decrypt_body_pipeline(
             &algo, dek, base_nonce, reader, writer, aad,
         )
     }
@@ -223,7 +223,7 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
-        HybridParallelStreamingProcessor::encrypt_pipeline(
+        HybridParallelStreamingProcessor::encrypt_hybrid_pipeline(
             &algorithm,
             &pk,
             reader,
@@ -255,7 +255,7 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
-        HybridParallelStreamingProcessor::encrypt_pipeline(
+        HybridParallelStreamingProcessor::encrypt_hybrid_pipeline(
             &algorithm,
             &pk,
             reader,
@@ -287,7 +287,7 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
-        HybridParallelStreamingProcessor::encrypt_pipeline(
+        HybridParallelStreamingProcessor::encrypt_hybrid_pipeline(
             &algorithm,
             &pk,
             reader,
@@ -321,7 +321,7 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
-        HybridParallelStreamingProcessor::encrypt_pipeline(
+        HybridParallelStreamingProcessor::encrypt_hybrid_pipeline(
             &algorithm,
             &pk,
             reader,
@@ -349,7 +349,7 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
-        HybridParallelStreamingProcessor::encrypt_pipeline(
+        HybridParallelStreamingProcessor::encrypt_hybrid_pipeline(
             &algorithm,
             &pk,
             reader,
@@ -420,7 +420,7 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
-        HybridParallelStreamingProcessor::encrypt_pipeline(
+        HybridParallelStreamingProcessor::encrypt_hybrid_pipeline(
             &algorithm,
             &pk,
             reader,

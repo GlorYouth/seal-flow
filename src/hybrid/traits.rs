@@ -10,7 +10,7 @@ use std::io::{Read, Write};
 
 /// Trait for ordinary (in-memory) hybrid encryption.
 pub trait HybridOrdinaryProcessor {
-    fn encrypt_in_memory(
+    fn encrypt_hybrid_in_memory(
         &self,
         public_key: &TypedAsymmetricPublicKey,
         plaintext: &[u8],
@@ -20,7 +20,7 @@ pub trait HybridOrdinaryProcessor {
         derivation_config: Option<DerivationSet>,
     ) -> Result<Vec<u8>>;
 
-    fn decrypt_in_memory(
+    fn decrypt_hybrid_in_memory(
         &self,
         private_key: &TypedAsymmetricPrivateKey,
         ciphertext: &[u8],
@@ -30,7 +30,7 @@ pub trait HybridOrdinaryProcessor {
 
 /// Trait for streaming hybrid encryption.
 pub trait HybridStreamingProcessor {
-    fn encrypt_to_stream<'a>(
+    fn encrypt_hybrid_to_stream<'a>(
         &self,
         public_key: &TypedAsymmetricPublicKey,
         writer: Box<dyn Write + 'a>,
@@ -40,7 +40,7 @@ pub trait HybridStreamingProcessor {
         derivation_config: Option<DerivationSet>,
     ) -> Result<Box<dyn Write + 'a>>;
 
-    fn decrypt_from_stream<'a>(
+    fn decrypt_hybrid_from_stream<'a>(
         &self,
         private_key: &TypedAsymmetricPrivateKey,
         reader: Box<dyn Read + 'a>,
@@ -60,7 +60,7 @@ pub trait HybridParallelProcessor {
         derivation_config: Option<DerivationSet>,
     ) -> Result<Vec<u8>>;
 
-    fn decrypt_parallel(
+    fn decrypt_hybrid_parallel(
         &self,
         private_key: &TypedAsymmetricPrivateKey,
         ciphertext: &[u8],
@@ -70,7 +70,7 @@ pub trait HybridParallelProcessor {
 
 /// Trait for parallel streaming hybrid encryption.
 pub trait HybridParallelStreamingProcessor {
-    fn encrypt_pipeline<'a>(
+    fn encrypt_hybrid_pipeline<'a>(
         &self,
         public_key: &TypedAsymmetricPublicKey,
         reader: Box<dyn Read + Send + 'a>,
@@ -81,7 +81,7 @@ pub trait HybridParallelStreamingProcessor {
         derivation_config: Option<DerivationSet>,
     ) -> Result<()>;
 
-    fn decrypt_pipeline<'a>(
+    fn decrypt_hybrid_pipeline<'a>(
         &self,
         private_key: &TypedAsymmetricPrivateKey,
         reader: Box<dyn Read + Send + 'a>,
@@ -93,7 +93,7 @@ pub trait HybridParallelStreamingProcessor {
 /// Trait for asynchronous hybrid encryption.
 #[cfg(feature = "async")]
 pub trait HybridAsynchronousProcessor {
-    fn encrypt_async<'a>(
+    fn encrypt_hybrid_async<'a>(
         &self,
         public_key: &TypedAsymmetricPublicKey,
         writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
@@ -103,7 +103,7 @@ pub trait HybridAsynchronousProcessor {
         derivation_config: Option<DerivationSet>,
     ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>>;
 
-    fn decrypt_async<'a>(
+    fn decrypt_hybrid_async<'a>(
         &self,
         private_key: &TypedAsymmetricPrivateKey,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,

@@ -187,7 +187,7 @@ impl<H> HybridAsynchronousProcessor for H
 where
     H: HybridAlgorithmTrait + ?Sized,
 {
-    fn encrypt_async<'a>(
+    fn encrypt_hybrid_async<'a>(
         &self,
         public_key: &TypedAsymmetricPublicKey,
         mut writer: Box<dyn AsyncWrite + Send + Unpin + 'a>,
@@ -232,7 +232,7 @@ where
         Ok(Box::new(Encryptor::new(writer, dek, algo, base_nonce, aad)))
     }
 
-    fn decrypt_async<'a>(
+    fn decrypt_hybrid_async<'a>(
         &self,
         private_key: &TypedAsymmetricPrivateKey,
         reader: Box<dyn AsyncRead + Send + Unpin + 'a>,
@@ -297,7 +297,7 @@ mod tests {
             {
                 let writer = Box::new(&mut encrypted_data);
                 let mut encryptor = algo_clone
-                    .encrypt_async(
+                    .encrypt_hybrid_async(
                         &pk_clone,
                         writer,
                         kek_id_clone,
@@ -379,7 +379,7 @@ mod tests {
             {
                 let writer = Box::new(&mut encrypted_data);
                 let mut encryptor = algo_clone
-                    .encrypt_async(&pk_clone, writer, kek_id, None, None, None)
+                    .encrypt_hybrid_async(&pk_clone, writer, kek_id, None, None, None)
                     .unwrap();
 
                 futures::executor::block_on(async {
@@ -428,7 +428,7 @@ mod tests {
             {
                 let writer = Box::new(&mut encrypted_data);
                 let mut encryptor = algo_clone
-                    .encrypt_async(&pk_clone, writer, kek_id, None, None, None)
+                    .encrypt_hybrid_async(&pk_clone, writer, kek_id, None, None, None)
                     .unwrap();
 
                 futures::executor::block_on(async {
@@ -474,7 +474,7 @@ mod tests {
             {
                 let writer = Box::new(&mut encrypted_data);
                 let mut encryptor = algo_clone
-                    .encrypt_async(
+                    .encrypt_hybrid_async(
                         &pk_clone,
                         writer,
                         "key1".to_string(),
@@ -566,7 +566,7 @@ mod tests {
             {
                 let writer = Box::new(&mut encrypted_data);
                 let mut encryptor = algo_clone
-                    .encrypt_async(
+                    .encrypt_hybrid_async(
                         &pk_clone,
                         writer,
                         kek_id_clone,

@@ -157,7 +157,7 @@ impl<'a, S: SymmetricAlgorithm> Asynchronous<'a, S> {
 impl<'a, S: SymmetricAlgorithm + Send + Sync> SymmetricAsynchronousProcessor
     for Asynchronous<'a, S>
 {
-    async fn encrypt_async<'b>(
+    async fn encrypt_symmetric_async<'b>(
         &self,
         key: TypedSymmetricKey,
         key_id: String,
@@ -168,7 +168,7 @@ impl<'a, S: SymmetricAlgorithm + Send + Sync> SymmetricAsynchronousProcessor
         Ok(Box::new(encryptor))
     }
 
-    async fn decrypt_async<'b>(
+    async fn decrypt_symmetric_async<'b>(
         &self,
         key: TypedSymmetricKey,
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'b>,
@@ -204,7 +204,7 @@ mod tests {
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
-                .encrypt_async(
+                .encrypt_symmetric_async(
                     key.clone(),
                     key_id.clone(),
                     Box::new(&mut encrypted_data),
@@ -218,7 +218,7 @@ mod tests {
 
         // Decrypt
         let mut decryptor = processor
-            .decrypt_async(key.clone(), Box::new(Cursor::new(encrypted_data)), aad)
+            .decrypt_symmetric_async(key.clone(), Box::new(Cursor::new(encrypted_data)), aad)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -239,7 +239,7 @@ mod tests {
         let mut encrypted_data = Vec::new();
         {
             let mut encrypt_stream = processor
-                .encrypt_async(
+                .encrypt_symmetric_async(
                     key.clone(),
                     "proc_key".to_string(),
                     Box::new(&mut encrypted_data),
@@ -253,7 +253,7 @@ mod tests {
 
         // Decrypt
         let mut decrypt_stream = processor
-            .decrypt_async(key.clone(), Box::new(Cursor::new(&encrypted_data)), aad)
+            .decrypt_symmetric_async(key.clone(), Box::new(Cursor::new(&encrypted_data)), aad)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -298,7 +298,7 @@ mod tests {
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
-                .encrypt_async(
+                .encrypt_symmetric_async(
                     key.clone(),
                     "test_key_id".to_string(),
                     Box::new(&mut encrypted_data),
@@ -317,7 +317,7 @@ mod tests {
         }
 
         let mut decryptor = processor
-            .decrypt_async(key.clone(), Box::new(Cursor::new(&encrypted_data)), None)
+            .decrypt_symmetric_async(key.clone(), Box::new(Cursor::new(&encrypted_data)), None)
             .await
             .unwrap();
         let result = decryptor.read_to_end(&mut Vec::new()).await;
@@ -336,7 +336,7 @@ mod tests {
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
-                .encrypt_async(
+                .encrypt_symmetric_async(
                     key1,
                     "key1".to_string(),
                     Box::new(&mut encrypted_data),
@@ -350,7 +350,7 @@ mod tests {
 
         // Decrypt with the wrong key
         let mut decryptor = processor
-            .decrypt_async(key2, Box::new(Cursor::new(&encrypted_data)), None)
+            .decrypt_symmetric_async(key2, Box::new(Cursor::new(&encrypted_data)), None)
             .await
             .unwrap();
         let result = decryptor.read_to_end(&mut Vec::new()).await;
@@ -369,7 +369,7 @@ mod tests {
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
-                .encrypt_async(
+                .encrypt_symmetric_async(
                     key.clone(),
                     "key1".to_string(),
                     Box::new(&mut encrypted_data),
@@ -384,7 +384,7 @@ mod tests {
         // Decrypt with the wrong aad
         {
             let mut decryptor = processor
-                .decrypt_async(
+                .decrypt_symmetric_async(
                     key.clone(),
                     Box::new(Cursor::new(&encrypted_data)),
                     Some(aad2),
@@ -398,7 +398,7 @@ mod tests {
         // Decrypt with no aad
         {
             let mut decryptor = processor
-                .decrypt_async(key, Box::new(Cursor::new(&encrypted_data)), None)
+                .decrypt_symmetric_async(key, Box::new(Cursor::new(&encrypted_data)), None)
                 .await
                 .unwrap();
             let result = decryptor.read_to_end(&mut Vec::new()).await;

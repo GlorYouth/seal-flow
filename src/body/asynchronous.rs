@@ -596,7 +596,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for DecryptorImpl<R> {
 }
 
 impl AsynchronousBodyProcessor for Arc<dyn SymmetricAlgorithm> {
-    fn encrypt_async<'a>(
+    fn encrypt_body_async<'a>(
         &self,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
@@ -607,7 +607,7 @@ impl AsynchronousBodyProcessor for Arc<dyn SymmetricAlgorithm> {
         Ok(Box::new(encryptor))
     }
 
-    fn decrypt_async<'a>(
+    fn decrypt_body_async<'a>(
         &self,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
@@ -620,7 +620,7 @@ impl AsynchronousBodyProcessor for Arc<dyn SymmetricAlgorithm> {
 }
 
 impl AsynchronousBodyProcessor for Box<dyn SymmetricAlgorithm> {
-    fn encrypt_async<'a>(
+    fn encrypt_body_async<'a>(
         &self,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
@@ -632,7 +632,7 @@ impl AsynchronousBodyProcessor for Box<dyn SymmetricAlgorithm> {
         Ok(Box::new(encryptor))
     }
 
-    fn decrypt_async<'a>(
+    fn decrypt_body_async<'a>(
         &self,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
