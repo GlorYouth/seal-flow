@@ -29,7 +29,7 @@ impl<W: Write> Encryptor<W> {
         let header_bytes = header.encode_to_vec()?;
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
-        let inner = EncryptorImpl::new(writer, algorithm.clone_box(), key, base_nonce, aad)?;
+        let inner = EncryptorImpl::new(writer, algorithm.clone_box_symmetric(), key, base_nonce, aad)?;
         Ok(Self { inner })
     }
 
@@ -67,7 +67,7 @@ impl<R: Read> PendingDecryptor<R> {
             } => info.base_nonce,
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
-        let inner = DecryptorImpl::new(self.reader, algorithm.clone_box(), key, base_nonce, aad);
+        let inner = DecryptorImpl::new(self.reader, algorithm.clone_box_symmetric(), key, base_nonce, aad);
         Ok(Decryptor { inner })
     }
 }

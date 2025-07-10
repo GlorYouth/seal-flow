@@ -11,10 +11,10 @@ use seal_crypto::zeroize::Zeroizing;
 macro_rules! impl_trait_for_box {
     ($trait:ident {
         $(fn $method:ident(&self, $($arg:ident: $ty:ty),*) -> $ret:ty;)*
-    }) => {
+    },$clone_box_name:ident) => {
         impl Clone for Box<dyn $trait> {
             fn clone(&self) -> Self {
-                self.clone_box()
+                self.$clone_box_name()
             }
         }
 
@@ -35,7 +35,7 @@ macro_rules! impl_trait_for_box {
 /// 这是一个对象安全的 trait，它擦除了具体的算法类型。
 pub trait SymmetricAlgorithm: Send + Sync + 'static {
     /// 克隆自身到一个 Box<dyn SymmetricAlgorithm>
-    fn clone_box(&self) -> Box<dyn SymmetricAlgorithm>;
+    fn clone_box_symmetric(&self) -> Box<dyn SymmetricAlgorithm>;
 
     /// Encrypts the given plaintext.
     fn encrypt(
@@ -87,7 +87,7 @@ pub trait SymmetricAlgorithm: Send + Sync + 'static {
 }
 
 impl_trait_for_box!(SymmetricAlgorithm {
-    fn clone_box(&self,) -> Box<dyn SymmetricAlgorithm>;
+    fn clone_box_symmetric(&self,) -> Box<dyn SymmetricAlgorithm>;
     fn encrypt(&self, key: TypedSymmetricKey, nonce: &[u8], plaintext: &[u8], aad: Option<&[u8]>) -> Result<Vec<u8>>;
     fn encrypt_to_buffer(&self, key: TypedSymmetricKey, nonce: &[u8], plaintext: &[u8], output: &mut [u8], aad: Option<&[u8]>) -> Result<usize>;
     fn decrypt(&self, key: TypedSymmetricKey, nonce: &[u8], aad: Option<&[u8]>, ciphertext: &[u8]) -> Result<Vec<u8>>;
@@ -96,7 +96,7 @@ impl_trait_for_box!(SymmetricAlgorithm {
     fn key_size(&self,) -> usize;
     fn nonce_size(&self,) -> usize;
     fn tag_size(&self,) -> usize;
-});
+}, clone_box_symmetric);
 
 /// Trait to provide the details for a specific key-based key derivation function (KDF).
 /// The implementor of this trait is the scheme itself.
@@ -152,16 +152,16 @@ pub trait AsymmetricAlgorithm: Send + Sync + 'static {
     /// Clones the algorithm.
     ///
     /// 克隆算法。
-    fn clone_box(&self) -> Box<dyn AsymmetricAlgorithm>;
+    fn clone_box_asymmetric(&self) -> Box<dyn AsymmetricAlgorithm>;
 }
 
 impl_trait_for_box!(AsymmetricAlgorithm {
-    fn clone_box(&self,) -> Box<dyn AsymmetricAlgorithm>;
+    fn clone_box_asymmetric(&self,) -> Box<dyn AsymmetricAlgorithm>;
     fn algorithm(&self,) -> common::algorithms::AsymmetricAlgorithm;
     fn encapsulate_key(&self, public_key: &TypedAsymmetricPublicKey) -> Result<(Zeroizing<Vec<u8>>, Vec<u8>)>;
     fn decapsulate_key(&self, private_key: &TypedAsymmetricPrivateKey, encapsulated_key: &Zeroizing<Vec<u8>>) -> Result<Zeroizing<Vec<u8>>>;
     fn generate_keypair(&self,) -> Result<TypedAsymmetricKeyPair>;
-});
+}, clone_box_asymmetric);
 
 pub trait HybridAlgorithm: AsymmetricAlgorithm + SymmetricAlgorithm {
     fn asymmetric_algorithm(&self) -> &dyn AsymmetricAlgorithm;
@@ -173,7 +173,7 @@ impl AsymmetricAlgorithm for Box<dyn HybridAlgorithm> {
     fn algorithm(&self) -> common::algorithms::AsymmetricAlgorithm {
         self.as_ref().asymmetric_algorithm().algorithm()
     }
-    fn clone_box(&self) -> Box<dyn AsymmetricAlgorithm> {
+    fn clone_box_asymmetric(&self) -> Box<dyn AsymmetricAlgorithm> {
         self.clone()
     }
     fn encapsulate_key(
@@ -198,7 +198,7 @@ impl SymmetricAlgorithm for Box<dyn HybridAlgorithm> {
     fn algorithm(&self) -> common::algorithms::SymmetricAlgorithm {
         self.as_ref().symmetric_algorithm().algorithm()
     }
-    fn clone_box(&self) -> Box<dyn SymmetricAlgorithm> {
+    fn clone_box_symmetric(&self) -> Box<dyn SymmetricAlgorithm> {
         self.clone()
     }
     fn key_size(&self) -> usize {

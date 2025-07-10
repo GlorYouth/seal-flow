@@ -46,7 +46,7 @@ impl<'a, R: Read + Send + 'a> PendingDecryptor<R> {
             } => info.base_nonce,
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
-        let processor = algorithm.clone_box();
+        let processor = algorithm.clone_box_symmetric();
         processor.decrypt_pipeline(
             key,
             base_nonce,
@@ -92,7 +92,7 @@ impl<'a, S: SymmetricAlgorithm + Send + Sync + 'a> SymmetricParallelStreamingPro
         let header_bytes = header.encode_to_vec()?;
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
-        let processor = self.algorithm.clone_box();
+        let processor = self.algorithm.clone_box_symmetric();
         processor.encrypt_pipeline(key, base_nonce, reader, writer, aad)
     }
 

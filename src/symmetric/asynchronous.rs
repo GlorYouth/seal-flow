@@ -53,7 +53,7 @@ impl<W: AsyncWrite + Unpin> Encryptor<W> {
         let inner = EncryptorImpl::new(
             writer,
             key.into(),
-            algorithm.clone_box().into(),
+            algorithm.clone_box_symmetric().into(),
             base_nonce,
             aad,
         );
@@ -111,7 +111,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
         let inner = DecryptorImpl::new(
             self.reader,
             key.into(),
-            algorithm.clone_box().into(),
+            algorithm.clone_box_symmetric().into(),
             base_nonce,
             aad,
         );

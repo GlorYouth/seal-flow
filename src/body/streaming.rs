@@ -280,7 +280,7 @@ impl StreamingBodyProcessor for &dyn SymmetricAlgorithm {
         writer: Box<dyn Write + 'a>,
         aad: Option<&[u8]>,
     ) -> Result<Box<dyn Write + 'a>> {
-        let encryptor = EncryptorImpl::new(writer, self.clone_box(), key, base_nonce, aad)?;
+        let encryptor = EncryptorImpl::new(writer, self.clone_box_symmetric(), key, base_nonce, aad)?;
         Ok(Box::new(encryptor))
     }
 
@@ -291,7 +291,7 @@ impl StreamingBodyProcessor for &dyn SymmetricAlgorithm {
         reader: Box<dyn Read + 'a>,
         aad: Option<&[u8]>,
     ) -> Result<Box<dyn Read + 'a>> {
-        let decryptor = DecryptorImpl::new(reader, self.clone_box(), key, base_nonce, aad);
+        let decryptor = DecryptorImpl::new(reader, self.clone_box_symmetric(), key, base_nonce, aad);
         Ok(Box::new(decryptor))
     }
 }

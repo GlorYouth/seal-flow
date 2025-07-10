@@ -78,7 +78,7 @@ macro_rules! impl_symmetric_algorithm {
                     .map_err(Error::from)
             }
 
-            fn clone_box(&self) -> Box<dyn SymmetricAlgorithm> {
+            fn clone_box_symmetric(&self) -> Box<dyn SymmetricAlgorithm> {
                 Box::new(self.clone())
             }
 
@@ -184,7 +184,7 @@ macro_rules! impl_asymmetric_algorithm {
                     .map(|(pk, sk)| TypedAsymmetricKeyPair::$key_variant((pk, sk)))
             }
 
-            fn clone_box(&self) -> Box<dyn AsymmetricAlgorithm> {
+            fn clone_box_asymmetric(&self) -> Box<dyn AsymmetricAlgorithm> {
                 Box::new(self.clone())
             }
         }
@@ -302,7 +302,7 @@ pub mod hybrid {
                 .decapsulate_key(private_key, encapsulated_key)
         }
 
-        fn clone_box(&self) -> Box<dyn AsymmetricAlgorithm> {
+        fn clone_box_asymmetric(&self) -> Box<dyn AsymmetricAlgorithm> {
             Box::new(self.clone())
         }
 
@@ -361,7 +361,7 @@ pub mod hybrid {
                 .decrypt_to_buffer(key, nonce, ciphertext, output, aad)
         }
 
-        fn clone_box(&self) -> Box<dyn SymmetricAlgorithm> {
+        fn clone_box_symmetric(&self) -> Box<dyn SymmetricAlgorithm> {
             Box::new(self.clone())
         }
 

@@ -170,7 +170,7 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
             algorithm.symmetric_algorithm().algorithm(),
         )?;
 
-        let algo = Arc::from(algorithm.symmetric_algorithm().clone_box());
+        let algo = Arc::from(algorithm.symmetric_algorithm().clone_box_symmetric());
         let decryptor = Decryptor::new(self.reader, dek, algo, base_nonce, aad);
 
         Ok(decryptor)
@@ -228,7 +228,7 @@ where
             Ok::<(), io::Error>(())
         })?;
 
-        let algo = Arc::from(self.symmetric_algorithm().clone_box());
+        let algo = Arc::from(self.symmetric_algorithm().clone_box_symmetric());
         Ok(Box::new(Encryptor::new(writer, dek, algo, base_nonce, aad)))
     }
 

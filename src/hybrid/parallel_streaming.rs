@@ -41,7 +41,7 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelStreamingProcessor for H {
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
 
-        let algo = self.symmetric_algorithm().clone_box();
+        let algo = self.symmetric_algorithm().clone_box_symmetric();
         ParallelStreamingBodyProcessor::encrypt_pipeline(
             &algo, dek, base_nonce, reader, writer, aad,
         )
@@ -82,7 +82,7 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelStreamingProcessor for H {
         let dek =
             TypedSymmetricKey::from_bytes(dek.as_slice(), self.symmetric_algorithm().algorithm())?;
 
-        let algo = self.symmetric_algorithm().clone_box();
+        let algo = self.symmetric_algorithm().clone_box_symmetric();
         ParallelStreamingBodyProcessor::decrypt_pipeline(
             &algo, dek, base_nonce, reader, writer, aad,
         )
@@ -165,7 +165,7 @@ where
             algorithm.symmetric_algorithm().algorithm(),
         )?;
 
-        let algo = algorithm.symmetric_algorithm().clone_box();
+        let algo = algorithm.symmetric_algorithm().clone_box_symmetric();
         ParallelStreamingBodyProcessor::decrypt_pipeline(
             &algo, dek, base_nonce, reader, writer, aad,
         )
