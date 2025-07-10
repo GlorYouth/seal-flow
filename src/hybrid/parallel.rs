@@ -3,12 +3,13 @@
 //! 实现并行、内存中的混合加密和解密。
 
 use super::common::create_header;
-use super::traits::HybridParallelProcessor;
+use super::traits::{HybridParallelPendingDecryptor, HybridParallelProcessor};
 use crate::algorithms::traits::HybridAlgorithm as HybridAlgorithmTrait;
 use crate::body::traits::ParallelBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::{DerivationSet, PendingImpl, SignerSet};
+use crate::common::{DerivationSet, SignerSet};
 use crate::error::{Error, FormatError, Result};
+use crate::hybrid::pending::PendingDecryptor;
 use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
 
@@ -44,13 +45,33 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelProcessor for H {
             .encrypt_body_parallel(dek, &base_nonce, header_bytes, plaintext, aad)
     }
 
-    fn decrypt_hybrid_parallel(
-        &self,
+    fn begin_decrypt_hybrid_parallel<'a, 'p>(
+        &'p self,
+        ciphertext: &'a [u8],
+    ) -> Result<Box<dyn HybridParallelPendingDecryptor<'a> + 'a>>
+    where
+        'p: 'a,
+    {
+        let (header, _) = Header::decode_from_prefixed_slice(ciphertext)?;
+        let pending = PendingDecryptor {
+            source: ciphertext,
+            header,
+            algorithm: self,
+        };
+        Ok(Box::new(pending))
+    }
+}
+
+impl<'a, 'p, H> HybridParallelPendingDecryptor<'a> for PendingDecryptor<&'a [u8], &'p H>
+where
+    H: HybridParallelProcessor + HybridAlgorithmTrait + ?Sized,
+{
+    fn into_plaintext(
+        self: Box<Self>,
         private_key: &TypedAsymmetricPrivateKey,
-        ciphertext: &[u8],
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
-        let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
+        let (header, ciphertext_body) = Header::decode_from_prefixed_slice(self.source)?;
         let (encapsulated_key, _chunk_size, base_nonce, derivation_info) = match &header.payload {
             HeaderPayload::Hybrid {
                 encrypted_dek,
@@ -67,6 +88,7 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelProcessor for H {
         };
 
         let shared_secret = self
+            .algorithm
             .asymmetric_algorithm()
             .decapsulate_key(private_key, &encapsulated_key)?;
 
@@ -77,56 +99,16 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelProcessor for H {
             shared_secret
         };
 
-        let dek =
-            TypedSymmetricKey::from_bytes(dek.as_slice(), self.symmetric_algorithm().algorithm())?;
+        let dek = TypedSymmetricKey::from_bytes(
+            dek.as_slice(),
+            self.algorithm.symmetric_algorithm().algorithm(),
+        )?;
 
-        self.symmetric_algorithm()
+        self.algorithm
+            .symmetric_algorithm()
             .decrypt_body_parallel(dek, &base_nonce, ciphertext_body, aad)
     }
-}
 
-/// A pending decryptor for in-memory hybrid-encrypted data that will be
-/// processed in parallel.
-///
-/// This state is entered after the header has been successfully parsed from
-/// the ciphertext, allowing the user to inspect the header (e.g., to find
-/// the `kek_id`) before supplying the appropriate private key to proceed with
-/// decryption.
-///
-/// 一个用于将并行处理的内存中混合加密数据的待定解密器。
-///
-/// 从密文中成功解析标头后，进入此状态，允许用户在提供适当的私钥以继续解密之前检查标头（例如，查找 `kek_id`）。
-pub struct PendingDecryptor<'a> {
-    header: Header,
-    ciphertext_with_header: &'a [u8],
-}
-
-impl<'a> PendingDecryptor<'a> {
-    /// Creates a new `PendingDecryptor` by parsing the header from the ciphertext.
-    ///
-    /// 通过从密文中解析标头来创建一个新的 `PendingDecryptor`。
-    pub fn from_ciphertext(ciphertext: &'a [u8]) -> Result<Self> {
-        let (header, _) = Header::decode_from_prefixed_slice(ciphertext)?;
-        Ok(Self {
-            header,
-            ciphertext_with_header: ciphertext,
-        })
-    }
-
-    /// Consumes the `PendingDecryptor` and returns the decrypted plaintext.
-    ///
-    /// 消费 `PendingDecryptor` 并返回解密的明文。
-    pub fn into_plaintext(
-        self,
-        algorithm: impl HybridAlgorithmTrait,
-        sk: &TypedAsymmetricPrivateKey,
-        aad: Option<&[u8]>,
-    ) -> Result<Vec<u8>> {
-        HybridParallelProcessor::decrypt_hybrid_parallel(&algorithm, sk, self.ciphertext_with_header, aad)
-    }
-}
-
-impl<'a> PendingImpl for PendingDecryptor<'a> {
     fn header(&self) -> &Header {
         &self.header
     }
@@ -196,8 +178,10 @@ mod tests {
         )
         .unwrap();
 
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext(algorithm, &sk, None).unwrap();
+        let pending = algorithm
+            .begin_decrypt_hybrid_parallel(&encrypted)
+            .unwrap();
+        let decrypted = pending.into_plaintext(&sk, None).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
     }
 
@@ -219,9 +203,11 @@ mod tests {
         .unwrap();
 
         // Test convenience function
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let pending = algorithm
+            .begin_decrypt_hybrid_parallel(&encrypted)
+            .unwrap();
         let decrypted = pending
-            .into_plaintext(algorithm.clone(), &sk, None)
+            .into_plaintext(&sk, None)
             .unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
@@ -231,8 +217,10 @@ mod tests {
             encrypted_tampered[300] ^= 1;
         }
 
-        let pending = PendingDecryptor::from_ciphertext(&encrypted_tampered).unwrap();
-        let result = pending.into_plaintext(algorithm, &sk, None);
+        let pending = algorithm
+            .begin_decrypt_hybrid_parallel(&encrypted_tampered)
+            .unwrap();
+        let result = pending.into_plaintext(&sk, None);
         assert!(result.is_err());
     }
 
@@ -253,8 +241,10 @@ mod tests {
         )
         .unwrap();
 
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext(algorithm, &sk, None).unwrap();
+        let pending = algorithm
+            .begin_decrypt_hybrid_parallel(&encrypted)
+            .unwrap();
+        let decrypted = pending.into_plaintext(&sk, None).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -276,8 +266,10 @@ mod tests {
         )
         .unwrap();
 
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext(algorithm, &sk, None).unwrap();
+        let pending = algorithm
+            .begin_decrypt_hybrid_parallel(&encrypted)
+            .unwrap();
+        let decrypted = pending.into_plaintext(&sk, None).unwrap();
 
         assert_eq!(plaintext, decrypted);
     }
@@ -300,8 +292,10 @@ mod tests {
         )
         .unwrap();
 
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext(algorithm, &sk2, None);
+        let pending = algorithm
+            .begin_decrypt_hybrid_parallel(&encrypted)
+            .unwrap();
+        let result = pending.into_plaintext(&sk2, None);
         assert!(result.is_err());
     }
 
@@ -325,20 +319,26 @@ mod tests {
         .unwrap();
 
         // Decrypt with correct AAD
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
+        let pending = algorithm
+            .begin_decrypt_hybrid_parallel(&encrypted)
+            .unwrap();
         let decrypted = pending
-            .into_plaintext(algorithm.clone(), &sk, Some(aad))
+            .into_plaintext(&sk, Some(aad))
             .unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
-        let pending_fail = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result_fail = pending_fail.into_plaintext(algorithm.clone(), &sk, Some(b"wrong aad"));
+        let pending_fail = algorithm
+            .begin_decrypt_hybrid_parallel(&encrypted)
+            .unwrap();
+        let result_fail = pending_fail.into_plaintext(&sk, Some(b"wrong aad"));
         assert!(result_fail.is_err());
 
         // Decrypt with no AAD fails
-        let pending_fail2 = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result_fail2 = pending_fail2.into_plaintext(algorithm, &sk, None);
+        let pending_fail2 = algorithm
+            .begin_decrypt_hybrid_parallel(&encrypted)
+            .unwrap();
+        let result_fail2 = pending_fail2.into_plaintext(&sk, None);
         assert!(result_fail2.is_err());
     }
 }

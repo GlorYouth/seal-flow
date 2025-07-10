@@ -42,7 +42,6 @@ pub mod prelude {
         SignatureAlgorithm as SignatureAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
         XofAlgorithm as XofAlgorithmEnum,
     };
-    pub use crate::common::PendingImpl;
     pub use crate::keys::provider::{EncryptionKeyProvider, KeyProvider, KeyProviderError};
     pub use crate::keys::{
         AsymmetricPrivateKey, AsymmetricPublicKey, SignaturePublicKey, SymmetricKey,

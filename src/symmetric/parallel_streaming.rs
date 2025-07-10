@@ -8,37 +8,27 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::body::traits::ParallelStreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::PendingImpl;
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::common::create_header;
-use crate::symmetric::traits::SymmetricParallelStreamingProcessor;
+use crate::symmetric::pending::PendingDecryptor;
+use crate::symmetric::traits::{
+    SymmetricParallelStreamingPendingDecryptor, SymmetricParallelStreamingProcessor,
+};
 use std::io::{Read, Write};
 use std::sync::Arc;
 
-/// A pending decryptor for a parallel stream, waiting for a key.
-pub struct PendingDecryptor<R: Read + Send> {
-    reader: R,
-    header: Header,
-}
-
-impl<'a, R: Read + Send + 'a> PendingDecryptor<R> {
-    pub fn from_reader(mut reader: R) -> Result<Self> {
-        let header = Header::decode_from_prefixed_reader(&mut reader)?;
-        Ok(Self { reader, header })
-    }
-
-    pub fn decrypt_to_writer<S, W>(
-        self,
-        algorithm: Arc<S>,
+impl<'a, S> SymmetricParallelStreamingPendingDecryptor<'a>
+    for PendingDecryptor<Box<dyn Read + Send + 'a>, Arc<S>>
+where
+    S: SymmetricAlgorithm + Send + Sync + 'a,
+{
+    fn decrypt_to_writer(
+        self: Box<Self>,
         key: TypedSymmetricKey,
-        writer: W,
+        writer: Box<dyn Write + Send + 'a>,
         aad: Option<&'a [u8]>,
-    ) -> Result<()>
-    where
-        S: SymmetricAlgorithm + Send + Sync + 'a,
-        W: Write + Send + 'a,
-    {
+    ) -> Result<()> {
         let base_nonce = match &self.header.payload {
             HeaderPayload::Symmetric {
                 stream_info: Some(info),
@@ -46,18 +36,10 @@ impl<'a, R: Read + Send + 'a> PendingDecryptor<R> {
             } => info.base_nonce,
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
-        let processor = algorithm.clone_box_symmetric();
-        processor.decrypt_body_pipeline(
-            key,
-            base_nonce,
-            Box::new(self.reader),
-            Box::new(writer),
-            aad,
-        )
+        let processor = self.algorithm.clone_box_symmetric();
+        processor.decrypt_body_pipeline(key, base_nonce, self.source, writer, aad)
     }
-}
 
-impl<R: Read + Send> PendingImpl for PendingDecryptor<R> {
     fn header(&self) -> &Header {
         &self.header
     }
@@ -96,15 +78,21 @@ impl<'a, S: SymmetricAlgorithm + Send + Sync + 'a> SymmetricParallelStreamingPro
         processor.encrypt_body_pipeline(key, base_nonce, reader, writer, aad)
     }
 
-    fn decrypt_symmetric_pipeline<'b>(
-        &self,
-        key: TypedSymmetricKey,
-        reader: Box<dyn Read + Send + 'b>,
-        writer: Box<dyn Write + Send + 'b>,
-        aad: Option<&'b [u8]>,
-    ) -> Result<()> {
-        let pending = PendingDecryptor::from_reader(reader)?;
-        pending.decrypt_to_writer(self.algorithm.clone(), key, writer, aad)
+    fn decrypt_symmetric_pipeline<'b, 'p>(
+        &'p self,
+        mut reader: Box<dyn Read + Send + 'b>,
+    ) -> Result<Box<dyn SymmetricParallelStreamingPendingDecryptor<'b> + 'b>>
+    where
+        'a: 'p,
+        'p: 'b,
+    {
+        let header = Header::decode_from_prefixed_reader(&mut reader)?;
+        let pending = PendingDecryptor {
+            source: reader,
+            header,
+            algorithm: self.algorithm.clone(),
+        };
+        Ok(Box::new(pending))
     }
 }
 
@@ -145,12 +133,9 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         processor
-            .decrypt_symmetric_pipeline(
-                key.clone(),
-                Box::new(Cursor::new(&encrypted_data)),
-                Box::new(&mut decrypted_data),
-                None,
-            )
+            .decrypt_symmetric_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .unwrap()
+            .decrypt_to_writer(key.clone(), Box::new(&mut decrypted_data), None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -179,12 +164,9 @@ mod tests {
         // Decrypt
         let mut decrypted_data = Vec::new();
         processor
-            .decrypt_symmetric_pipeline(
-                key.clone(),
-                Box::new(Cursor::new(&encrypted_data)),
-                Box::new(&mut decrypted_data),
-                aad,
-            )
+            .decrypt_symmetric_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .unwrap()
+            .decrypt_to_writer(key.clone(), Box::new(&mut decrypted_data), aad)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -209,12 +191,9 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         processor
-            .decrypt_symmetric_pipeline(
-                key.clone(),
-                Box::new(Cursor::new(&encrypted_data)),
-                Box::new(&mut decrypted_data),
-                None,
-            )
+            .decrypt_symmetric_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .unwrap()
+            .decrypt_to_writer(key.clone(), Box::new(&mut decrypted_data), None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data.as_slice());
@@ -239,12 +218,9 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         processor
-            .decrypt_symmetric_pipeline(
-                key.clone(),
-                Box::new(Cursor::new(&encrypted_data)),
-                Box::new(&mut decrypted_data),
-                None,
-            )
+            .decrypt_symmetric_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .unwrap()
+            .decrypt_to_writer(key.clone(), Box::new(&mut decrypted_data), None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -272,12 +248,10 @@ mod tests {
         encrypted_data[header_len + 10] ^= 1;
 
         let mut decrypted_data = Vec::new();
-        let result = processor.decrypt_symmetric_pipeline(
-            key.clone(),
-            Box::new(Cursor::new(&encrypted_data)),
-            Box::new(&mut decrypted_data),
-            None,
-        );
+        let result = processor
+            .decrypt_symmetric_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .unwrap()
+            .decrypt_to_writer(key.clone(), Box::new(&mut decrypted_data), None);
 
         assert!(result.is_err());
     }
@@ -288,6 +262,7 @@ mod tests {
         let processor = ParallelStreaming::new(wrapper.clone());
         let plaintext = get_test_data(1024);
         let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let wrong_key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
         let mut encrypted_data = Vec::new();
         processor
             .encrypt_symmetric_pipeline(
@@ -300,12 +275,10 @@ mod tests {
             .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let result = processor.decrypt_symmetric_pipeline(
-            key.clone(),
-            Box::new(Cursor::new(&encrypted_data)),
-            Box::new(&mut decrypted_data),
-            None,
-        );
+        let result = processor
+            .decrypt_symmetric_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .unwrap()
+            .decrypt_to_writer(wrong_key, Box::new(&mut decrypted_data), None);
         assert!(result.is_err());
     }
 
@@ -330,33 +303,26 @@ mod tests {
         // Decrypt with correct AAD
         let mut decrypted_data = Vec::new();
         processor
-            .decrypt_symmetric_pipeline(
-                key.clone(),
-                Box::new(Cursor::new(&encrypted_data)),
-                Box::new(&mut decrypted_data),
-                Some(aad),
-            )
+            .decrypt_symmetric_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .unwrap()
+            .decrypt_to_writer(key.clone(), Box::new(&mut decrypted_data), Some(aad))
             .unwrap();
         assert_eq!(plaintext, decrypted_data);
 
         // Decrypt with wrong AAD fails
         let mut decrypted_data_fail = Vec::new();
-        let result = processor.decrypt_symmetric_pipeline(
-            key.clone(),
-            Box::new(Cursor::new(&encrypted_data)),
-            Box::new(&mut decrypted_data_fail),
-            Some(b"wrong aad"),
-        );
+        let result = processor
+            .decrypt_symmetric_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .unwrap()
+            .decrypt_to_writer(key.clone(), Box::new(&mut decrypted_data_fail), Some(b"wrong aad"));
         assert!(result.is_err());
 
         // Decrypt with no AAD fails
         let mut decrypted_data_fail2 = Vec::new();
-        let result2 = processor.decrypt_symmetric_pipeline(
-            key.clone(),
-            Box::new(Cursor::new(&encrypted_data)),
-            Box::new(&mut decrypted_data_fail2),
-            None,
-        );
+        let result2 = processor
+            .decrypt_symmetric_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .unwrap()
+            .decrypt_to_writer(key.clone(), Box::new(&mut decrypted_data_fail2), None);
         assert!(result2.is_err());
     }
 }

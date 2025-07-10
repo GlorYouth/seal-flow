@@ -7,12 +7,14 @@ use super::common::create_header;
 use crate::algorithms::traits::{HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm};
 use crate::body::asynchronous::{DecryptorImpl, EncryptorImpl};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::{DerivationSet, PendingImpl, SignerSet};
+use crate::common::{DerivationSet, SignerSet};
 use crate::error::{Error, FormatError, Result};
-use crate::hybrid::traits::HybridAsynchronousProcessor;
+use crate::hybrid::pending::PendingDecryptor;
+use crate::hybrid::traits::{HybridAsynchronousPendingDecryptor, HybridAsynchronousProcessor};
 use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 use pin_project_lite::pin_project;
 use seal_crypto::zeroize::Zeroizing;
+use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -115,32 +117,16 @@ impl<R: AsyncRead + Unpin> AsyncRead for Decryptor<R> {
     }
 }
 
-/// An asynchronous pending hybrid decryptor, waiting for the private key.
-///
-/// 一个异步的、等待私钥的待处理混合解密器。
-pub struct PendingDecryptor<R: AsyncRead + Unpin> {
-    reader: R,
-    header: Header,
-}
-
-impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
-    /// Creates a new `PendingDecryptor` by asynchronously reading the header.
-    ///
-    /// 通过异步读取标头来创建一个新的 `PendingDecryptor`。
-    pub async fn from_reader(mut reader: R) -> Result<Self> {
-        let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
-        Ok(Self { reader, header })
-    }
-
-    /// Consumes the `PendingDecryptor` and returns a full `Decryptor`.
-    ///
-    /// 消费 `PendingDecryptor` 并返回一个完整的 `Decryptor`。
-    pub fn into_decryptor(
-        self,
-        algorithm: impl HybridAlgorithmTrait,
+impl<'a, 'p, R, H> HybridAsynchronousPendingDecryptor<'a, R> for PendingDecryptor<R, &'p H>
+where
+    R: AsyncRead + Send + Unpin + 'a,
+    H: HybridAsynchronousProcessor + HybridAlgorithmTrait + ?Sized + 'p,
+{
+    fn into_decryptor(
+        self: Box<Self>,
         sk: &TypedAsymmetricPrivateKey,
         aad: Option<&[u8]>,
-    ) -> Result<Decryptor<R>> {
+    ) -> Result<Box<dyn AsyncRead + Send + Unpin + 'a>> {
         let (encapsulated_key, base_nonce, derivation_info) = match &self.header.payload {
             HeaderPayload::Hybrid {
                 stream_info: Some(info),
@@ -155,7 +141,8 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
 
-        let shared_secret = algorithm
+        let shared_secret = self
+            .algorithm
             .asymmetric_algorithm()
             .decapsulate_key(sk, &encapsulated_key)?;
 
@@ -167,17 +154,19 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
 
         let dek = TypedSymmetricKey::from_bytes(
             dek.as_ref(),
-            algorithm.symmetric_algorithm().algorithm(),
+            self.algorithm.symmetric_algorithm().algorithm(),
         )?;
 
-        let algo = Arc::from(algorithm.symmetric_algorithm().clone_box_symmetric());
-        let decryptor = Decryptor::new(self.reader, dek, algo, base_nonce, aad);
+        let algo = Arc::from(
+            self.algorithm
+                .symmetric_algorithm()
+                .clone_box_symmetric(),
+        );
+        let decryptor = Decryptor::new(self.source, dek, algo, base_nonce, aad);
 
-        Ok(decryptor)
+        Ok(Box::new(decryptor))
     }
-}
 
-impl<R: AsyncRead + Unpin> PendingImpl for PendingDecryptor<R> {
     fn header(&self) -> &Header {
         &self.header
     }
@@ -232,18 +221,23 @@ where
         Ok(Box::new(Encryptor::new(writer, dek, algo, base_nonce, aad)))
     }
 
-    fn decrypt_hybrid_async<'a>(
-        &self,
-        private_key: &TypedAsymmetricPrivateKey,
-        reader: Box<dyn AsyncRead + Send + Unpin + 'a>,
-        aad: Option<&'a [u8]>,
-    ) -> Result<Box<dyn AsyncRead + Send + Unpin + 'a>> {
-        // We must block here to read the header and prepare the decryptor,
-        // because the trait is not async.
-        let pending = futures::executor::block_on(PendingDecryptor::from_reader(reader))?;
-        let decryptor =
-            pending.into_decryptor(HybridAlgorithmTrait::clone_box(self), private_key, aad)?;
-        Ok(Box::new(decryptor))
+    fn begin_decrypt_hybrid_async<'a, 'p, R>(
+        &'p self,
+        mut reader: R,
+    ) -> impl Future<Output = Result<Box<dyn HybridAsynchronousPendingDecryptor<'a, R> + 'a>>> + Send
+    where
+        R: AsyncRead + Send + Unpin + 'a,
+        'p: 'a,
+    {
+        async move {
+            let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
+            let pending = PendingDecryptor {
+                source: reader,
+                header,
+                algorithm: self,
+            };
+            Ok(Box::new(pending) as Box<dyn HybridAsynchronousPendingDecryptor<'a, R> + 'a>)
+        }
     }
 }
 
@@ -320,15 +314,14 @@ mod tests {
         // Decrypt
         let reader = Box::new(Cursor::new(encrypted_data));
         let algo_clone = algorithm.clone();
-        let mut decryptor = tokio::task::spawn_blocking(move || {
-            let pending =
-                futures::executor::block_on(PendingDecryptor::from_reader(reader)).unwrap();
+        let mut decryptor = {
+            let pending = algo_clone
+                .begin_decrypt_hybrid_async(reader)
+                .await
+                .unwrap();
             assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
-            pending.into_decryptor(algo_clone, &sk, aad_vec.as_deref())
-        })
-        .await
-        .unwrap()
-        .unwrap();
+            pending.into_decryptor(&sk, aad_vec.as_deref()).unwrap()
+        };
 
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();
@@ -398,13 +391,13 @@ mod tests {
         }
 
         let reader = Box::new(Cursor::new(encrypted_data));
-        let decryptor_result = tokio::task::spawn_blocking(move || {
-            let pending =
-                futures::executor::block_on(PendingDecryptor::from_reader(reader)).unwrap();
-            pending.into_decryptor(algorithm, &sk, None)
-        })
-        .await
-        .unwrap();
+        let decryptor_result = {
+            let pending = algorithm
+                .begin_decrypt_hybrid_async(reader)
+                .await
+                .unwrap();
+            pending.into_decryptor(&sk, None)
+        };
 
         let mut decryptor = decryptor_result.unwrap();
         let result = decryptor.read_to_end(&mut Vec::new()).await;
@@ -442,13 +435,13 @@ mod tests {
         .unwrap();
 
         let reader = Box::new(Cursor::new(encrypted_data));
-        let decryptor_result = tokio::task::spawn_blocking(move || {
-            let pending =
-                futures::executor::block_on(PendingDecryptor::from_reader(reader)).unwrap();
-            pending.into_decryptor(algorithm, &sk2, None)
-        })
-        .await
-        .unwrap();
+        let decryptor_result = {
+            let pending = algorithm
+                .begin_decrypt_hybrid_async(reader)
+                .await
+                .unwrap();
+            pending.into_decryptor(&sk2, None)
+        };
 
         assert!(
             decryptor_result.is_err(),
@@ -499,14 +492,15 @@ mod tests {
         let sk_clone = sk.clone();
         let algo_clone = algorithm.clone();
         let aad2_clone = Some(aad2.to_vec());
-        let mut decryptor = tokio::task::spawn_blocking(move || {
-            let pending =
-                futures::executor::block_on(PendingDecryptor::from_reader(reader1)).unwrap();
-            pending.into_decryptor(algo_clone, &sk_clone, aad2_clone.as_deref())
-        })
-        .await
-        .unwrap()
-        .unwrap();
+        let mut decryptor = {
+            let pending = algo_clone
+                .begin_decrypt_hybrid_async(reader1)
+                .await
+                .unwrap();
+            pending
+                .into_decryptor(&sk_clone, aad2_clone.as_deref())
+                .unwrap()
+        };
         let result = decryptor.read_to_end(&mut Vec::new()).await;
         assert!(result.is_err());
 
@@ -514,14 +508,13 @@ mod tests {
         let algorithm2 = get_test_algorithm();
         let reader2 = Box::new(Cursor::new(encrypted_data));
         let sk2 = sk.clone();
-        let mut decryptor2 = tokio::task::spawn_blocking(move || {
-            let pending2 =
-                futures::executor::block_on(PendingDecryptor::from_reader(reader2)).unwrap();
-            pending2.into_decryptor(algorithm2, &sk2, None)
-        })
-        .await
-        .unwrap()
-        .unwrap();
+        let mut decryptor2 = {
+            let pending2 = algorithm2
+                .begin_decrypt_hybrid_async(reader2)
+                .await
+                .unwrap();
+            pending2.into_decryptor(&sk2, None).unwrap()
+        };
         let result2 = decryptor2.read_to_end(&mut Vec::new()).await;
         assert!(result2.is_err());
     }
@@ -588,14 +581,13 @@ mod tests {
         // Decrypt
         let reader = Box::new(Cursor::new(encrypted_data));
         let algo_clone = algorithm.clone();
-        let mut decryptor = tokio::task::spawn_blocking(move || {
-            let pending =
-                futures::executor::block_on(PendingDecryptor::from_reader(reader)).unwrap();
-            pending.into_decryptor(algo_clone, &sk, None)
-        })
-        .await
-        .unwrap()
-        .unwrap();
+        let mut decryptor = {
+            let pending = algo_clone
+                .begin_decrypt_hybrid_async(reader)
+                .await
+                .unwrap();
+            pending.into_decryptor(&sk, None).unwrap()
+        };
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();
         assert_eq!(plaintext.as_slice(), decrypted_data.as_slice());

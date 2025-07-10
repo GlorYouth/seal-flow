@@ -2,12 +2,13 @@
 //!
 //! 同步、流式混合加密和解密实现。
 use super::common::create_header;
-use super::traits::HybridStreamingProcessor;
+use super::traits::{HybridStreamingPendingDecryptor, HybridStreamingProcessor};
 use crate::algorithms::traits::{HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm};
 use crate::body::traits::StreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::{DerivationSet, PendingImpl, SignerSet};
+use crate::common::{DerivationSet, SignerSet};
 use crate::error::{Error, FormatError, Result};
+use crate::hybrid::pending::PendingDecryptor;
 use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
@@ -43,95 +44,56 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridStreamingProcessor for H {
         StreamingBodyProcessor::encrypt_body_to_stream(&algo, dek, base_nonce, writer, aad)
     }
 
-    fn decrypt_hybrid_from_stream<'a>(
-        &self,
-        private_key: &TypedAsymmetricPrivateKey,
-        mut reader: Box<dyn Read + 'a>,
-        aad: Option<&'a [u8]>,
-    ) -> Result<Box<dyn Read + 'a>> {
+    fn begin_decrypt_hybrid_from_stream<'a, 'p, R>(
+        &'p self,
+        mut reader: R,
+    ) -> Result<Box<dyn HybridStreamingPendingDecryptor<'a, R> + 'a>>
+    where
+        R: Read + 'a,
+        'p: 'a,
+    {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
-        let (encapsulated_key, _chunk_size, base_nonce, derivation_info) = match header.payload {
-            HeaderPayload::Hybrid {
-                encrypted_dek,
-                stream_info: Some(info),
-                derivation_info,
-                ..
-            } => (
-                Zeroizing::new(encrypted_dek.clone()),
-                info.chunk_size,
-                info.base_nonce,
-                derivation_info,
-            ),
-            _ => return Err(Error::Format(FormatError::InvalidHeader)),
+
+        let pending = PendingDecryptor {
+            source: reader,
+            header,
+            algorithm: self,
         };
 
-        let shared_secret = self
-            .asymmetric_algorithm()
-            .decapsulate_key(private_key, &encapsulated_key)?;
-
-        let dek = if let Some(info) = derivation_info {
-            info.derive_key(&shared_secret)?
-        } else {
-            shared_secret
-        };
-
-        let dek =
-            TypedSymmetricKey::from_bytes(dek.as_slice(), self.symmetric_algorithm().algorithm())?;
-
-        let algo = self.symmetric_algorithm();
-        StreamingBodyProcessor::decrypt_body_from_stream(&algo, dek, base_nonce, reader, aad)
+        Ok(Box::new(pending))
     }
 }
 
-/// A pending hybrid decryptor that has read the header and is waiting for the private key.
-///
-/// 一个已读取标头并等待私钥的待定混合解密器。
-pub struct PendingDecryptor<R: Read> {
-    reader: R,
-    header: Header,
-}
-
-impl<R: Read> PendingDecryptor<R> {
-    /// Creates a new `PendingDecryptor` by reading the header from the stream.
-    ///
-    /// 通过从流中读取标头来创建一个新的 `PendingDecryptor`。
-    pub fn from_reader(mut reader: R) -> Result<Self> {
-        let header = Header::decode_from_prefixed_reader(&mut reader)?;
-
-        Ok(Self { reader, header })
-    }
-
-    /// Consumes the pending decryptor and returns a full `Decryptor` by providing the private key.
-    ///
-    /// 通过提供私钥来消费待定解密器并返回一个完整的 `Decryptor`。
-    pub fn into_decryptor<'a>(
-        self,
-        algorithm: impl HybridAlgorithmTrait,
+impl<'a, 'p, R, H> HybridStreamingPendingDecryptor<'a, R> for PendingDecryptor<R, &'p H>
+where
+    R: Read + 'a,
+    H: HybridStreamingProcessor + HybridAlgorithmTrait + ?Sized + 'p,
+{
+    fn into_decryptor(
+        self: Box<Self>,
         sk: &TypedAsymmetricPrivateKey,
         aad: Option<&'a [u8]>,
-    ) -> Result<Box<dyn Read + 'a>>
-    where
-        R: 'a,
-    {
-        let reader = Box::new(self.reader);
+    ) -> Result<Box<dyn Read + 'a>> {
+        let reader = Box::new(self.source);
 
-        let (encapsulated_key, _chunk_size, base_nonce, derivation_info) = match self.header.payload
-        {
-            HeaderPayload::Hybrid {
-                encrypted_dek,
-                stream_info: Some(info),
-                derivation_info,
-                ..
-            } => (
-                Zeroizing::new(encrypted_dek.clone()),
-                info.chunk_size,
-                info.base_nonce,
-                derivation_info,
-            ),
-            _ => return Err(Error::Format(FormatError::InvalidHeader)),
-        };
+        let (encapsulated_key, _chunk_size, base_nonce, derivation_info) =
+            match self.header.payload {
+                HeaderPayload::Hybrid {
+                    encrypted_dek,
+                    stream_info: Some(info),
+                    derivation_info,
+                    ..
+                } => (
+                    Zeroizing::new(encrypted_dek.clone()),
+                    info.chunk_size,
+                    info.base_nonce,
+                    derivation_info,
+                ),
+                _ => return Err(Error::Format(FormatError::InvalidHeader)),
+            };
 
-        let shared_secret = algorithm
+        let shared_secret = self
+            .algorithm
             .asymmetric_algorithm()
             .decapsulate_key(sk, &encapsulated_key)?;
 
@@ -143,15 +105,13 @@ impl<R: Read> PendingDecryptor<R> {
 
         let dek = TypedSymmetricKey::from_bytes(
             dek.as_slice(),
-            algorithm.symmetric_algorithm().algorithm(),
+            self.algorithm.symmetric_algorithm().algorithm(),
         )?;
 
-        let algo = algorithm.symmetric_algorithm();
+        let algo = self.algorithm.symmetric_algorithm();
         StreamingBodyProcessor::decrypt_body_from_stream(&algo, dek, base_nonce, reader, aad)
     }
-}
 
-impl<R: Read> PendingImpl for PendingDecryptor<R> {
     fn header(&self) -> &Header {
         &self.header
     }
@@ -236,15 +196,16 @@ mod tests {
         std::mem::drop(encryptor);
 
         // Decrypt
-        let pending_decryptor =
-            PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let pending_decryptor = algorithm
+            .begin_decrypt_hybrid_from_stream(Cursor::new(&encrypted_data))
+            .unwrap();
         assert_eq!(
             pending_decryptor.header().payload.kek_id(),
             Some(kek_id.as_str())
         );
 
         let mut decryptor = pending_decryptor
-            .into_decryptor(algorithm, &sk, aad)
+            .into_decryptor(&sk, aad)
             .unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
@@ -320,8 +281,10 @@ mod tests {
             encrypted_data[header_len] ^= 1;
         }
 
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let mut decryptor = pending.into_decryptor(algorithm, &sk, None).unwrap();
+        let pending = algorithm
+            .begin_decrypt_hybrid_from_stream(Cursor::new(&encrypted_data))
+            .unwrap();
+        let mut decryptor = pending.into_decryptor(&sk, None).unwrap();
 
         let result = decryptor.read_to_end(&mut Vec::new());
         assert!(result.is_err());
@@ -348,8 +311,10 @@ mod tests {
         std::mem::drop(encryptor);
 
         let (_, sk2) = generate_test_keys();
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending.into_decryptor(algorithm, &sk2, None);
+        let pending = algorithm
+            .begin_decrypt_hybrid_from_stream(Cursor::new(&encrypted_data))
+            .unwrap();
+        let result = pending.into_decryptor(&sk2, None);
         assert!(result.is_err());
     }
 
@@ -375,9 +340,11 @@ mod tests {
         .unwrap();
         std::mem::drop(encryptor);
 
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let pending = algorithm
+            .begin_decrypt_hybrid_from_stream(Cursor::new(&encrypted_data))
+            .unwrap();
         let mut decryptor = pending
-            .into_decryptor(algorithm, &sk, Some(wrong_aad))
+            .into_decryptor(&sk, Some(wrong_aad))
             .unwrap();
 
         let result = decryptor.read_to_end(&mut Vec::new());

@@ -10,11 +10,13 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::body::asynchronous::{DecryptorImpl, EncryptorImpl};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::PendingImpl;
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::common::create_header;
-use crate::symmetric::traits::SymmetricAsynchronousProcessor;
+use crate::symmetric::pending::PendingDecryptor;
+use crate::symmetric::traits::{
+    SymmetricAsynchronousPendingDecryptor, SymmetricAsynchronousProcessor,
+};
 use async_trait::async_trait;
 use pin_project_lite::pin_project;
 use std::io;
@@ -80,26 +82,17 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for Encryptor<W> {
     }
 }
 
-/// An asynchronous decryptor that is pending the provision of a key.
-pub struct PendingDecryptor<R: AsyncRead + Unpin> {
-    reader: R,
-    header: Header,
-}
-
-impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
-    /// Creates a new `PendingDecryptor` by asynchronously reading the header.
-    pub async fn from_reader(mut reader: R) -> Result<Self> {
-        let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
-        Ok(Self { reader, header })
-    }
-
-    /// Consumes the `PendingDecryptor` and returns a full `Decryptor` instance.
-    pub fn into_decryptor<S: SymmetricAlgorithm>(
-        self,
-        algorithm: &S,
+#[async_trait]
+impl<'decr, S> SymmetricAsynchronousPendingDecryptor<'decr>
+    for PendingDecryptor<Box<dyn AsyncRead + Unpin + Send + 'decr>, &'decr S>
+where
+    S: SymmetricAlgorithm + Send + Sync + 'decr,
+{
+    async fn into_decryptor<'a>(
+        self: Box<Self>,
         key: TypedSymmetricKey,
-        aad: Option<&[u8]>,
-    ) -> Result<Decryptor<R>> {
+        aad: Option<&'a [u8]>,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'decr>> {
         let base_nonce = match self.header.payload {
             HeaderPayload::Symmetric {
                 stream_info: Some(info),
@@ -109,13 +102,17 @@ impl<R: AsyncRead + Unpin> PendingDecryptor<R> {
         };
 
         let inner = DecryptorImpl::new(
-            self.reader,
+            self.source,
             key.into(),
-            algorithm.clone_box_symmetric().into(),
+            self.algorithm.clone_box_symmetric().into(),
             base_nonce,
             aad,
         );
-        Ok(Decryptor { inner })
+        Ok(Box::new(Decryptor { inner }))
+    }
+
+    fn header(&self) -> &Header {
+        &self.header
     }
 }
 
@@ -137,25 +134,19 @@ impl<R: AsyncRead + Unpin> AsyncRead for Decryptor<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> PendingImpl for PendingDecryptor<R> {
-    fn header(&self) -> &Header {
-        &self.header
-    }
+pub struct Asynchronous<'s, S: SymmetricAlgorithm> {
+    algorithm: &'s S,
 }
 
-pub struct Asynchronous<'a, S: SymmetricAlgorithm> {
-    algorithm: &'a S,
-}
-
-impl<'a, S: SymmetricAlgorithm> Asynchronous<'a, S> {
-    pub fn new(algorithm: &'a S) -> Self {
+impl<'s, S: SymmetricAlgorithm> Asynchronous<'s, S> {
+    pub fn new(algorithm: &'s S) -> Self {
         Self { algorithm }
     }
 }
 
 #[async_trait]
-impl<'a, S: SymmetricAlgorithm + Send + Sync> SymmetricAsynchronousProcessor
-    for Asynchronous<'a, S>
+impl<'s, S: SymmetricAlgorithm + Send + Sync> SymmetricAsynchronousProcessor
+    for Asynchronous<'s, S>
 {
     async fn encrypt_symmetric_async<'b>(
         &self,
@@ -168,15 +159,21 @@ impl<'a, S: SymmetricAlgorithm + Send + Sync> SymmetricAsynchronousProcessor
         Ok(Box::new(encryptor))
     }
 
-    async fn decrypt_symmetric_async<'b>(
-        &self,
-        key: TypedSymmetricKey,
-        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'b>,
-        aad: Option<&'b [u8]>,
-    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'b>> {
-        let pending = PendingDecryptor::from_reader(reader).await?;
-        let decryptor = pending.into_decryptor(self.algorithm, key, aad)?;
-        Ok(Box::new(decryptor))
+    async fn decrypt_symmetric_async<'a, 'p>(
+        &'p self,
+        mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
+    ) -> Result<Box<dyn SymmetricAsynchronousPendingDecryptor<'a> + Send + 'a>>
+    where
+        's: 'p,
+        'p: 'a,
+    {
+        let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
+        let pending = PendingDecryptor {
+            source: reader,
+            header,
+            algorithm: self.algorithm,
+        };
+        Ok(Box::new(pending))
     }
 }
 
@@ -218,7 +215,10 @@ mod tests {
 
         // Decrypt
         let mut decryptor = processor
-            .decrypt_symmetric_async(key.clone(), Box::new(Cursor::new(encrypted_data)), aad)
+            .decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data)))
+            .await
+            .unwrap()
+            .into_decryptor(key.clone(), aad)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -253,7 +253,10 @@ mod tests {
 
         // Decrypt
         let mut decrypt_stream = processor
-            .decrypt_symmetric_async(key.clone(), Box::new(Cursor::new(&encrypted_data)), aad)
+            .decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
+            .await
+            .unwrap()
+            .into_decryptor(key.clone(), aad)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -317,7 +320,10 @@ mod tests {
         }
 
         let mut decryptor = processor
-            .decrypt_symmetric_async(key.clone(), Box::new(Cursor::new(&encrypted_data)), None)
+            .decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
+            .await
+            .unwrap()
+            .into_decryptor(key.clone(), None)
             .await
             .unwrap();
         let result = decryptor.read_to_end(&mut Vec::new()).await;
@@ -350,7 +356,10 @@ mod tests {
 
         // Decrypt with the wrong key
         let mut decryptor = processor
-            .decrypt_symmetric_async(key2, Box::new(Cursor::new(&encrypted_data)), None)
+            .decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
+            .await
+            .unwrap()
+            .into_decryptor(key2, None)
             .await
             .unwrap();
         let result = decryptor.read_to_end(&mut Vec::new()).await;
@@ -384,11 +393,10 @@ mod tests {
         // Decrypt with the wrong aad
         {
             let mut decryptor = processor
-                .decrypt_symmetric_async(
-                    key.clone(),
-                    Box::new(Cursor::new(&encrypted_data)),
-                    Some(aad2),
-                )
+                .decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
+                .await
+                .unwrap()
+                .into_decryptor(key.clone(), Some(aad2))
                 .await
                 .unwrap();
             let result = decryptor.read_to_end(&mut Vec::new()).await;
@@ -398,7 +406,10 @@ mod tests {
         // Decrypt with no aad
         {
             let mut decryptor = processor
-                .decrypt_symmetric_async(key, Box::new(Cursor::new(&encrypted_data)), None)
+                .decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
+                .await
+                .unwrap()
+                .into_decryptor(key, None)
                 .await
                 .unwrap();
             let result = decryptor.read_to_end(&mut Vec::new()).await;

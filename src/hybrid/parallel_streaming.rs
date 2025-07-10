@@ -3,12 +3,13 @@
 //! 实现并行流式混合加解密方案。
 
 use super::common::create_header;
-use super::traits::HybridParallelStreamingProcessor;
+use super::traits::{HybridParallelStreamingPendingDecryptor, HybridParallelStreamingProcessor};
 use crate::algorithms::traits::HybridAlgorithm as HybridAlgorithmTrait;
 use crate::body::traits::ParallelStreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::{DerivationSet, PendingImpl, SignerSet};
+use crate::common::{DerivationSet, SignerSet};
 use crate::error::{Error, FormatError, Result};
+use crate::hybrid::pending::PendingDecryptor;
 use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
@@ -47,93 +48,36 @@ impl<H: HybridAlgorithmTrait + ?Sized> HybridParallelStreamingProcessor for H {
         )
     }
 
-    fn decrypt_hybrid_pipeline<'a>(
-        &self,
-        private_key: &TypedAsymmetricPrivateKey,
-        mut reader: Box<dyn Read + Send + 'a>,
+    fn begin_decrypt_hybrid_pipeline<'a, 'p, R>(
+        &'p self,
+        mut reader: R,
+    ) -> Result<Box<dyn HybridParallelStreamingPendingDecryptor<'a, R> + 'a>>
+    where
+        R: Read + Send + 'a,
+        'p: 'a,
+    {
+        let header = Header::decode_from_prefixed_reader(&mut reader)?;
+        let pending = PendingDecryptor {
+            source: reader,
+            header,
+            algorithm: self,
+        };
+        Ok(Box::new(pending))
+    }
+}
+
+impl<'a, 'p, R, H> HybridParallelStreamingPendingDecryptor<'a, R> for PendingDecryptor<R, &'p H>
+where
+    R: Read + Send + 'a,
+    H: HybridParallelStreamingProcessor + HybridAlgorithmTrait + ?Sized + 'p,
+{
+    fn decrypt_to_writer(
+        self: Box<Self>,
+        sk: &TypedAsymmetricPrivateKey,
         writer: Box<dyn Write + Send + 'a>,
         aad: Option<&'a [u8]>,
     ) -> Result<()> {
-        let header = Header::decode_from_prefixed_reader(&mut reader)?;
-        let (encapsulated_key, base_nonce, derivation_info) = match &header.payload {
-            HeaderPayload::Hybrid {
-                stream_info: Some(info),
-                encrypted_dek,
-                derivation_info,
-                ..
-            } => (
-                Zeroizing::new(encrypted_dek.clone()),
-                info.base_nonce,
-                derivation_info.clone(),
-            ),
-            _ => return Err(Error::Format(FormatError::InvalidHeader)),
-        };
-
-        let shared_secret = self
-            .asymmetric_algorithm()
-            .decapsulate_key(private_key, &encapsulated_key)?;
-
-        let dek = if let Some(info) = derivation_info {
-            info.derive_key(&shared_secret)?
-        } else {
-            shared_secret
-        };
-
-        let dek =
-            TypedSymmetricKey::from_bytes(dek.as_slice(), self.symmetric_algorithm().algorithm())?;
-
-        let algo = self.symmetric_algorithm().clone_box_symmetric();
-        ParallelStreamingBodyProcessor::decrypt_body_pipeline(
-            &algo, dek, base_nonce, reader, writer, aad,
-        )
-    }
-}
-
-/// A pending decryptor for a parallel hybrid stream, waiting for the private key.
-///
-/// This state is entered after the header has been successfully read from the
-/// stream, allowing the user to inspect the header (e.g., to find the `kek_id`)
-/// before supplying the appropriate private key to proceed with decryption.
-///
-/// 一个用于并行混合流的待定解密器，等待私钥。
-pub struct PendingDecryptor<R>
-where
-    R: Read + Send,
-{
-    reader: R,
-    header: Header,
-}
-
-impl<R> PendingDecryptor<R>
-where
-    R: Read + Send,
-{
-    /// Creates a new `PendingDecryptor` by reading the header from the stream.
-    ///
-    /// 通过从流中读取标头来创建一个新的 `PendingDecryptor`。
-    pub fn from_reader(mut reader: R) -> Result<Self> {
-        let header = Header::decode_from_prefixed_reader(&mut reader)?;
-        Ok(Self { reader, header })
-    }
-
-    /// Consumes the pending decryptor, decrypts the stream with the provided private key,
-    /// and writes the plaintext to the writer.
-    ///
-    /// 消费待定解密器，使用提供的私钥解密流，
-    /// 并将明文写入 writer。
-    pub fn decrypt_to_writer<'a, W>(
-        self,
-        algorithm: impl HybridAlgorithmTrait,
-        sk: &TypedAsymmetricPrivateKey,
-        writer: W,
-        aad: Option<&'a [u8]>,
-    ) -> Result<()>
-    where
-        W: Write + Send + 'a,
-        R: 'a,
-    {
-        let reader = Box::new(self.reader);
-        let writer = Box::new(writer);
+        let reader = Box::new(self.source);
         let (encapsulated_key, base_nonce, derivation_info) = match &self.header.payload {
             HeaderPayload::Hybrid {
                 stream_info: Some(info),
@@ -148,7 +92,8 @@ where
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
 
-        let shared_secret = algorithm
+        let shared_secret = self
+            .algorithm
             .asymmetric_algorithm()
             .decapsulate_key(sk, &encapsulated_key)?;
 
@@ -162,20 +107,15 @@ where
 
         let dek = TypedSymmetricKey::from_bytes(
             dek.as_slice(),
-            algorithm.symmetric_algorithm().algorithm(),
+            self.algorithm.symmetric_algorithm().algorithm(),
         )?;
 
-        let algo = algorithm.symmetric_algorithm().clone_box_symmetric();
+        let algo = self.algorithm.symmetric_algorithm().clone_box_symmetric();
         ParallelStreamingBodyProcessor::decrypt_body_pipeline(
             &algo, dek, base_nonce, reader, writer, aad,
         )
     }
-}
 
-impl<R> PendingImpl for PendingDecryptor<R>
-where
-    R: Read + Send,
-{
     fn header(&self) -> &Header {
         &self.header
     }
@@ -236,10 +176,12 @@ mod tests {
         .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let pending = algorithm
+            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending
-            .decrypt_to_writer(algorithm, &sk, &mut decrypted_data, None)
+            .decrypt_to_writer(&sk, Box::new(&mut decrypted_data), None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -268,10 +210,12 @@ mod tests {
         .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let pending = algorithm
+            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending
-            .decrypt_to_writer(algorithm, &sk, &mut decrypted_data, None)
+            .decrypt_to_writer(&sk, Box::new(&mut decrypted_data), None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
@@ -304,8 +248,10 @@ mod tests {
         encrypted_data[header_len + 10] ^= 1;
 
         let mut decrypted_data = Vec::new();
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending.decrypt_to_writer(algorithm, &sk, &mut decrypted_data, None);
+        let pending = algorithm
+            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .unwrap();
+        let result = pending.decrypt_to_writer(&sk, Box::new(&mut decrypted_data), None);
 
         assert!(result.is_err());
     }
@@ -334,8 +280,10 @@ mod tests {
         .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result = pending.decrypt_to_writer(algorithm, &sk2, &mut decrypted_data, None);
+        let pending = algorithm
+            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .unwrap();
+        let result = pending.decrypt_to_writer(&sk2, Box::new(&mut decrypted_data), None);
         assert!(result.is_err());
     }
 
@@ -363,33 +311,34 @@ mod tests {
 
         // Decrypt with correct AAD
         let mut decrypted_data = Vec::new();
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let pending = algorithm
+            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some("test_kek_id_aad"));
         pending
-            .decrypt_to_writer(algorithm, &sk, &mut decrypted_data, Some(aad))
+            .decrypt_to_writer(&sk, Box::new(&mut decrypted_data), Some(aad))
             .unwrap();
         assert_eq!(plaintext, decrypted_data);
 
         // Decrypt with wrong AAD fails
         let mut decrypted_data_fail = Vec::new();
-        let pending_fail = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let pending_fail = algorithm
+            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .unwrap();
         let result = pending_fail.decrypt_to_writer(
-            get_test_algorithm(),
             &sk,
-            &mut decrypted_data_fail,
+            Box::new(&mut decrypted_data_fail),
             Some(b"wrong aad"),
         );
         assert!(result.is_err());
 
         // Decrypt with no AAD fails
         let mut decrypted_data_fail2 = Vec::new();
-        let pending_fail2 = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
-        let result2 = pending_fail2.decrypt_to_writer(
-            get_test_algorithm(),
-            &sk,
-            &mut decrypted_data_fail2,
-            None,
-        );
+        let pending_fail2 = algorithm
+            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .unwrap();
+        let result2 =
+            pending_fail2.decrypt_to_writer(&sk, Box::new(&mut decrypted_data_fail2), None);
         assert!(result2.is_err());
     }
 
@@ -436,10 +385,12 @@ mod tests {
         .unwrap();
 
         let mut decrypted_data = Vec::new();
-        let pending = PendingDecryptor::from_reader(Cursor::new(&encrypted_data)).unwrap();
+        let pending = algorithm
+            .begin_decrypt_hybrid_pipeline(Cursor::new(&encrypted_data))
+            .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending
-            .decrypt_to_writer(algorithm, &sk, &mut decrypted_data, None)
+            .decrypt_to_writer(&sk, Box::new(&mut decrypted_data), None)
             .unwrap();
 
         assert_eq!(plaintext, decrypted_data);
