@@ -99,12 +99,12 @@ pub trait ParallelStreamingDecryptor {
     /// Automatically resolves the key and decrypts the stream to the provided writer.
     ///
     /// 自动解析密钥并将流解密到提供的写入器。
-    fn resolve_and_decrypt_to_writer<W: Write>(self, writer: W) -> Result<()>;
+    fn resolve_and_decrypt_to_writer<W: Write + Send>(self, writer: W) -> Result<()>;
 
     /// Supplies a key and decrypts the stream to the provided writer.
     ///
     /// 提供密钥并将流解密到提供的写入器。
-    fn with_key_to_writer<W: Write>(self, key: Self::Key, writer: W) -> Result<()>;
+    fn with_key_to_writer<W: Write + Send>(self, key: Self::Key, writer: W) -> Result<()>;
 }
 
 /// A trait for asynchronous streaming decryption operations.
@@ -120,14 +120,14 @@ pub trait AsyncStreamingDecryptor: Sized {
     /// Automatically resolves the key and returns a decrypting async reader.
     ///
     /// 自动解析密钥并返回一个解密的异步读取器。
-    fn resolve_and_decrypt<'s>(self) -> Result<Box<dyn AsyncRead + Unpin + 's>>
+    async fn resolve_and_decrypt<'s>(self) -> Result<Box<dyn AsyncRead + Unpin + Send + 's>>
     where
         Self: 's;
 
     /// Supplies a key and returns a decrypting async reader.
     ///
     /// 提供密钥并返回一个解密的异步读取器。
-    fn with_key<'s>(self, key: Self::Key) -> Result<Box<dyn AsyncRead + Unpin + 's>>
+    async fn with_key<'s>(self, key: Self::Key) -> Result<Box<dyn AsyncRead + Unpin + Send + 's>>
     where
         Self: 's;
 }
@@ -137,7 +137,7 @@ pub trait AsyncStreamingDecryptor: Sized {
 /// A trait for in-memory encryption operations on a pre-configured encryptor.
 ///
 /// 用于预配置加密器上的内存加密操作的 trait。
-pub trait InMemoryEncryptor: Sized {
+pub trait InMemoryEncryptor {
     /// Encrypts the given plaintext in-memory.
     ///
     /// 在内存中加密给定的明文。
@@ -152,43 +152,28 @@ pub trait InMemoryEncryptor: Sized {
 /// A trait for synchronous streaming encryption operations on a pre-configured encryptor.
 ///
 /// 用于预配置加密器上的同步流加密操作的 trait。
-pub trait StreamingEncryptor: Sized {
-    /// Encrypts data from a reader and writes to a writer using parallel processing.
-    ///
-    /// 使用并行处理从 reader 加密数据并写入 writer。
-    fn pipe_parallel<R: Read + Send, W: Write>(self, reader: R, writer: W) -> Result<()>;
-}
-
-/// A trait for creating a synchronous streaming encryptor.
-///
-/// 用于创建同步流式加密器的 trait。
-pub trait IntoWriter: Sized {
-    /// The concrete `Write` encryptor type produced.
-    ///
-    /// 生成的具体 `Write` 加密器类型。
-    type Encryptor<W: Write>: Write;
-
+pub trait StreamingEncryptor {
     /// Creates a streaming encryptor that wraps the given `Write` implementation.
     ///
     /// 创建一个包装了给定 `Write` 实现的流式加密器。
-    fn into_writer<W: Write>(self, writer: W) -> Result<Self::Encryptor<W>>;
+    fn into_writer<'a, W: Write + 'a>(self, writer: W) -> Result<Box<dyn Write + 'a>>;
+
+    /// Encrypts data from a reader and writes to a writer using parallel processing.
+    ///
+    /// 使用并行处理从 reader 加密数据并写入 writer。
+    fn pipe_parallel<R: Read + Send, W: Write + Send>(self, reader: R, writer: W) -> Result<()>;
 }
 
 /// A trait for creating an asynchronous streaming encryptor.
 ///
 /// 用于创建异步流式加密器的 trait。
 #[cfg(feature = "async")]
-pub trait IntoAsyncWriter: Sized {
-    /// The concrete `AsyncWrite` encryptor type produced.
-    ///
-    /// 生成的具体 `AsyncWrite` 加密器类型。
-    type AsyncEncryptor<W: AsyncWrite + Unpin + Send>: AsyncWrite;
-
+pub trait AsyncStreamingEncryptor {
     /// Creates an asynchronous streaming encryptor that wraps the given `AsyncWrite` implementation.
     ///
     /// 创建一个包装了给定 `AsyncWrite` 实现的异步流式加密器。
-    fn into_async_writer<W: AsyncWrite + Unpin + Send>(
+    async fn into_async_writer<'a, W: AsyncWrite + Unpin + Send + 'a>(
         self,
         writer: W,
-    ) -> impl std::future::Future<Output = Result<Self::AsyncEncryptor<W>>> + Send;
+    ) -> Result<Box<dyn AsyncWrite + Unpin + Send + 'a>>;
 }

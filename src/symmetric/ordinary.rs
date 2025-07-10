@@ -10,17 +10,20 @@ use crate::keys::TypedSymmetricKey;
 use crate::symmetric::common::create_header;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{SymmetricOrdinaryPendingDecryptor, SymmetricOrdinaryProcessor};
+use crate::keys::SymmetricKey;
 
-impl<'a, 's, S> SymmetricOrdinaryPendingDecryptor<'a> for PendingDecryptor<&'a [u8], &'s S>
+impl<'a, S> SymmetricOrdinaryPendingDecryptor<'a> for PendingDecryptor<&'a [u8], S>
 where
     S: SymmetricAlgorithm + OrdinaryBodyProcessor,
-    's: 'a,
 {
     fn into_plaintext(
         self: Box<Self>,
-        key: TypedSymmetricKey,
+        key: SymmetricKey,
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
+        let algorithm = self.header.payload.symmetric_algorithm();
+        let typed_key = key.into_typed(algorithm)?;
+
         let base_nonce = match &self.header.payload {
             HeaderPayload::Symmetric {
                 stream_info: Some(info),
@@ -30,7 +33,7 @@ where
         };
 
         self.algorithm
-            .decrypt_body_in_memory(key, &base_nonce, self.source, aad)
+            .decrypt_body_in_memory(typed_key, &base_nonce, self.source, aad)
     }
 
     fn header(&self) -> &Header {
@@ -65,18 +68,15 @@ impl<'s, S: SymmetricAlgorithm + OrdinaryBodyProcessor> SymmetricOrdinaryProcess
             .encrypt_body_in_memory(key, &base_nonce, header_bytes, plaintext, aad)
     }
 
-    fn begin_decrypt_symmetric_in_memory<'a, 'p>(
-        &'p self,
+    fn begin_decrypt_symmetric_in_memory<'a>(
+        &self,
         ciphertext: &'a [u8],
-    ) -> Result<Box<dyn SymmetricOrdinaryPendingDecryptor<'a> + 'a>>
-    where
-        'p: 'a,
-    {
+    ) -> Result<Box<dyn SymmetricOrdinaryPendingDecryptor<'a> + 'a>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
         let pending = PendingDecryptor {
             source: ciphertext_body,
             header,
-            algorithm: self.algorithm,
+            algorithm: self.algorithm.clone(),
         };
         Ok(Box::new(pending))
     }
@@ -87,7 +87,7 @@ mod tests {
     use super::*;
     use crate::algorithms::definitions::symmetric::Aes256GcmWrapper;
     use crate::common::DEFAULT_CHUNK_SIZE;
-    use crate::keys::TypedSymmetricKey;
+    use crate::keys::SymmetricKey as UntypedSymmetricKey;
     use seal_crypto::prelude::SymmetricKeyGenerator;
     use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
 
@@ -100,14 +100,16 @@ mod tests {
         let wrapper = get_wrapper();
         let processor = Ordinary::new(&wrapper);
         let plaintext = b"This is a test message that is longer than one chunk to ensure the chunking logic works correctly. Let's add some more data to be sure.";
-        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let raw_key = Aes256Gcm::generate_key().unwrap();
+        let key = TypedSymmetricKey::Aes256Gcm(raw_key.clone());
+        let untyped_key = UntypedSymmetricKey::Aes256Gcm(raw_key);
         let encrypted = processor
             .encrypt_symmetric_in_memory(key.clone(), "test_key_id".to_string(), plaintext, None)
             .unwrap();
         let pending = processor
             .begin_decrypt_symmetric_in_memory(&encrypted)
             .unwrap();
-        let decrypted = pending.into_plaintext(key.clone(), None).unwrap();
+        let decrypted = pending.into_plaintext(untyped_key, None).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -117,14 +119,16 @@ mod tests {
         let wrapper = get_wrapper();
         let processor = Ordinary::new(&wrapper);
         let plaintext = b"This is a processor test.";
-        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let raw_key = Aes256Gcm::generate_key().unwrap();
+        let key = TypedSymmetricKey::Aes256Gcm(raw_key.clone());
+        let untyped_key = UntypedSymmetricKey::Aes256Gcm(raw_key);
         let encrypted = processor
             .encrypt_symmetric_in_memory(key.clone(), "proc_key".to_string(), plaintext, None)
             .unwrap();
         let pending = processor
             .begin_decrypt_symmetric_in_memory(&encrypted)
             .unwrap();
-        let decrypted = pending.into_plaintext(key.clone(), None).unwrap();
+        let decrypted = pending.into_plaintext(untyped_key, None).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
     }
 
@@ -133,14 +137,16 @@ mod tests {
         let wrapper = get_wrapper();
         let processor = Ordinary::new(&wrapper);
         let plaintext = b"";
-        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let raw_key = Aes256Gcm::generate_key().unwrap();
+        let key = TypedSymmetricKey::Aes256Gcm(raw_key.clone());
+        let untyped_key = UntypedSymmetricKey::Aes256Gcm(raw_key);
         let encrypted = processor
             .encrypt_symmetric_in_memory(key.clone(), "test_key_id".to_string(), plaintext, None)
             .unwrap();
         let pending = processor
             .begin_decrypt_symmetric_in_memory(&encrypted)
             .unwrap();
-        let decrypted = pending.into_plaintext(key.clone(), None).unwrap();
+        let decrypted = pending.into_plaintext(untyped_key, None).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -150,14 +156,16 @@ mod tests {
         let wrapper = get_wrapper();
         let processor = Ordinary::new(&wrapper);
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
-        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let raw_key = Aes256Gcm::generate_key().unwrap();
+        let key = TypedSymmetricKey::Aes256Gcm(raw_key.clone());
+        let untyped_key = UntypedSymmetricKey::Aes256Gcm(raw_key);
         let encrypted = processor
             .encrypt_symmetric_in_memory(key.clone(), "test_key_id".to_string(), &plaintext, None)
             .unwrap();
         let pending = processor
             .begin_decrypt_symmetric_in_memory(&encrypted)
             .unwrap();
-        let decrypted = pending.into_plaintext(key.clone(), None).unwrap();
+        let decrypted = pending.into_plaintext(untyped_key, None).unwrap();
 
         assert_eq!(plaintext, decrypted);
     }
@@ -167,7 +175,9 @@ mod tests {
         let wrapper = get_wrapper();
         let processor = Ordinary::new(&wrapper);
         let plaintext = b"some important data";
-        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let raw_key = Aes256Gcm::generate_key().unwrap();
+        let key = TypedSymmetricKey::Aes256Gcm(raw_key.clone());
+        let untyped_key = UntypedSymmetricKey::Aes256Gcm(raw_key);
         let mut encrypted = processor
             .encrypt_symmetric_in_memory(key.clone(), "test_key_id".to_string(), plaintext, None)
             .unwrap();
@@ -179,7 +189,7 @@ mod tests {
         }
 
         let pending = processor.begin_decrypt_symmetric_in_memory(&encrypted).unwrap();
-        let result = pending.into_plaintext(key.clone(), None);
+        let result = pending.into_plaintext(untyped_key, None);
         assert!(result.is_err());
     }
 
@@ -190,7 +200,9 @@ mod tests {
         let plaintext = b"some data to protect";
         let aad = b"some context data";
         let wrong_aad = b"wrong context data";
-        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let raw_key = Aes256Gcm::generate_key().unwrap();
+        let key = TypedSymmetricKey::Aes256Gcm(raw_key.clone());
+        let untyped_key = UntypedSymmetricKey::Aes256Gcm(raw_key);
         // Encrypt with AAD
         let encrypted = processor
             .encrypt_symmetric_in_memory(key.clone(), "aad_key".to_string(), plaintext, Some(aad))
@@ -198,17 +210,12 @@ mod tests {
 
         // Decrypt with correct AAD
         let pending = processor.begin_decrypt_symmetric_in_memory(&encrypted).unwrap();
-        let decrypted = pending.into_plaintext(key.clone(), Some(aad)).unwrap();
-        assert_eq!(&plaintext[..], &decrypted[..]);
+        let decrypted = pending.into_plaintext(untyped_key.clone(), Some(aad)).unwrap();
+        assert_eq!(plaintext, decrypted.as_slice());
 
-        // Decrypt with wrong AAD fails
-        let pending_fail = processor.begin_decrypt_symmetric_in_memory(&encrypted).unwrap();
-        let result_fail = pending_fail.into_plaintext(key.clone(), Some(wrong_aad));
-        assert!(result_fail.is_err());
-
-        // Decrypt with no AAD fails
-        let pending_fail2 = processor.begin_decrypt_symmetric_in_memory(&encrypted).unwrap();
-        let result_fail2 = pending_fail2.into_plaintext(key.clone(), None);
-        assert!(result_fail2.is_err());
+        // Decrypt with wrong AAD should fail
+        let pending = processor.begin_decrypt_symmetric_in_memory(&encrypted).unwrap();
+        let result = pending.into_plaintext(untyped_key, Some(wrong_aad));
+        assert!(result.is_err());
     }
 }

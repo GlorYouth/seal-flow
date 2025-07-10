@@ -46,14 +46,14 @@ pub mod prelude {
     pub use crate::keys::{
         AsymmetricPrivateKey, AsymmetricPublicKey, SignaturePublicKey, SymmetricKey,
     };
-    // pub use crate::seal::hybrid::{encryptor::HybridEncryptorBuilder, HybridEncryptionOptions};
-    // pub use crate::seal::traits::*;
-    // pub use crate::seal::{HybridSeal, SymmetricSeal};
+    pub use crate::seal::hybrid::{encryptor::HybridEncryptorBuilder, HybridEncryptionOptions};
+    pub use crate::seal::traits::*;
+    pub use crate::seal::{HybridSeal, SymmetricSeal};
     pub use seal_crypto::prelude::*;
 }
 
 pub mod error;
-// pub mod seal;
+pub mod seal;
 
 /// Provides direct access to the mid-level execution flows.
 ///

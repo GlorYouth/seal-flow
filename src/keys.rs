@@ -323,6 +323,10 @@ impl TypedSymmetricKey {
             Self::ChaCha20Poly1305(_) => SymmetricAlgorithmEnum::ChaCha20Poly1305,
         }
     }
+
+    pub fn untyped(&self) -> SymmetricKey {
+        SymmetricKey::new(self.as_ref().to_vec())
+    }
 }
 
 impl AsRef<[u8]> for TypedSymmetricKey {
