@@ -34,7 +34,7 @@ macro_rules! impl_symmetric_algorithm {
         impl SymmetricAlgorithm for $wrapper {
             fn encrypt(
                 &self,
-                key: TypedSymmetricKey,
+                key: &TypedSymmetricKey,
                 nonce: &[u8],
                 plaintext: &[u8],
                 aad: Option<&[u8]>,
@@ -48,7 +48,7 @@ macro_rules! impl_symmetric_algorithm {
 
             fn encrypt_to_buffer(
                 &self,
-                key: TypedSymmetricKey,
+                key: &TypedSymmetricKey,
                 nonce: &[u8],
                 plaintext: &[u8],
                 output: &mut [u8],
@@ -63,7 +63,7 @@ macro_rules! impl_symmetric_algorithm {
 
             fn decrypt(
                 &self,
-                key: TypedSymmetricKey,
+                key: &TypedSymmetricKey,
                 nonce: &[u8],
                 aad: Option<&[u8]>,
                 ciphertext: &[u8],
@@ -77,7 +77,7 @@ macro_rules! impl_symmetric_algorithm {
 
             fn decrypt_to_buffer(
                 &self,
-                key: TypedSymmetricKey,
+                key: &TypedSymmetricKey,
                 nonce: &[u8],
                 ciphertext: &[u8],
                 output: &mut [u8],
@@ -199,7 +199,7 @@ pub mod symmetric {
 
         fn encrypt(
             &self,
-            key: TypedSymmetricKey,
+            key: &TypedSymmetricKey,
             nonce: &[u8],
             plaintext: &[u8],
             aad: Option<&[u8]>,
@@ -209,7 +209,7 @@ pub mod symmetric {
 
         fn encrypt_to_buffer(
             &self,
-            key: TypedSymmetricKey,
+            key: &TypedSymmetricKey,
             nonce: &[u8],
             plaintext: &[u8],
             output: &mut [u8],
@@ -221,7 +221,7 @@ pub mod symmetric {
 
         fn decrypt(
             &self,
-            key: TypedSymmetricKey,
+            key: &TypedSymmetricKey,
             nonce: &[u8],
             aad: Option<&[u8]>,
             ciphertext: &[u8],
@@ -231,7 +231,7 @@ pub mod symmetric {
 
         fn decrypt_to_buffer(
             &self,
-            key: TypedSymmetricKey,
+            key: &TypedSymmetricKey,
             nonce: &[u8],
             ciphertext: &[u8],
             output: &mut [u8],
@@ -607,7 +607,7 @@ pub mod hybrid {
 
         fn encrypt(
             &self,
-            key: TypedSymmetricKey,
+            key: &TypedSymmetricKey,
             nonce: &[u8],
             plaintext: &[u8],
             aad: Option<&[u8]>,
@@ -617,7 +617,7 @@ pub mod hybrid {
 
         fn encrypt_to_buffer(
             &self,
-            key: TypedSymmetricKey,
+            key: &TypedSymmetricKey,
             nonce: &[u8],
             plaintext: &[u8],
             output: &mut [u8],
@@ -629,7 +629,7 @@ pub mod hybrid {
 
         fn decrypt(
             &self,
-            key: TypedSymmetricKey,
+            key: &TypedSymmetricKey,
             nonce: &[u8],
             aad: Option<&[u8]>,
             ciphertext: &[u8],
@@ -640,7 +640,7 @@ pub mod hybrid {
 
         fn decrypt_to_buffer(
             &self,
-            key: TypedSymmetricKey,
+            key: &TypedSymmetricKey,
             nonce: &[u8],
             ciphertext: &[u8],
             output: &mut [u8],

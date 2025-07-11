@@ -10,7 +10,10 @@
 
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::common::buffer::BufferPool;
-use crate::common::{derive_nonce, OrderedChunk, CHANNEL_BOUND, DEFAULT_CHUNK_SIZE};
+use crate::common::{
+    config::ArcConfig,
+    derive_nonce, OrderedChunk,
+};
 use crate::error::{Error, Result};
 use crate::keys::TypedSymmetricKey;
 use bytes::BytesMut;
@@ -66,7 +69,7 @@ pin_project! {
         pub(crate) key: Arc<TypedSymmetricKey>,
         pub(crate) algorithm: SymmetricAlgorithmWrapper,
         pub(crate) base_nonce: [u8; 12],
-        pub(crate) chunk_size: usize,
+        pub(crate) config: ArcConfig,
         pub(crate) buffer: BytesMut,
         pub(crate) chunk_counter: u64,
         pub(crate) next_chunk_to_write: u64,
@@ -83,22 +86,21 @@ impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
     /// Creates a new `EncryptorImpl`.
     ///
     /// 创建一个新的 `EncryptorImpl`。
-    pub(crate) fn new(
+    pub(crate) fn new<'a>(
         writer: W,
-        key: Arc<TypedSymmetricKey>,
         algorithm: SymmetricAlgorithmWrapper,
-        base_nonce: [u8; 12],
-        aad: Option<Vec<u8>>,
+        config: BodyEncryptConfig<'a>,
     ) -> Self {
-        let chunk_size = DEFAULT_CHUNK_SIZE as usize;
+        let BodyEncryptConfig { key, nonce, aad, config, .. } = config;
+        let chunk_size = config.chunk_size() as usize;
         let out_pool = Arc::new(BufferPool::new(chunk_size + algorithm.tag_size()));
 
         Self {
             writer,
             algorithm,
-            key,
-            base_nonce,
-            chunk_size,
+            key: Arc::new(key),
+            base_nonce: *nonce,
+            config,
             buffer: BytesMut::with_capacity(chunk_size * 2),
             chunk_counter: 0,
             next_chunk_to_write: 0,
@@ -122,15 +124,15 @@ impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
 
         // Stage 1: Spawn encryption tasks
         // 阶段 1: 生成加密任务
-        while self.encrypt_tasks.len() < CHANNEL_BOUND {
-            if self.buffer.len() < self.chunk_size && !self.is_shutdown {
+        while self.encrypt_tasks.len() < self.config.channel_bound() {
+            if self.buffer.len() < self.config.chunk_size() as usize && !self.is_shutdown {
                 break;
             }
             if self.buffer.is_empty() {
                 break;
             }
 
-            let chunk_len = std::cmp::min(self.buffer.len(), self.chunk_size);
+            let chunk_len = std::cmp::min(self.buffer.len(), self.config.chunk_size() as usize);
             let in_buffer = self.buffer.split_to(chunk_len);
 
             let algo = Arc::new(self.algorithm.clone());
@@ -146,7 +148,7 @@ impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
 
                 let result = algo
                     .encrypt_to_buffer(
-                        (*key).clone(),
+                        &key,
                         &nonce,
                         &in_buffer,
                         &mut out_buffer,
@@ -339,6 +341,7 @@ pin_project! {
         pub(crate) algorithm: SymmetricAlgorithmWrapper,
         pub(crate) key: Arc<TypedSymmetricKey>,
         pub(crate) base_nonce: [u8; 12],
+        pub(crate) channel_bound: usize,
         pub(crate) encrypted_chunk_size: usize,
         pub(crate) decrypted_chunk_size: usize,
         pub(crate) read_buffer: BytesMut,
@@ -357,21 +360,21 @@ impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
     /// Creates a new `DecryptorImpl`.
     ///
     /// 创建一个新的 `DecryptorImpl`。
-    pub(crate) fn new(
+    pub(crate) fn new<'a>(
         reader: R,
-        key: Arc<TypedSymmetricKey>,
         algorithm: SymmetricAlgorithmWrapper,
-        base_nonce: [u8; 12],
-        aad: Option<&[u8]>,
+        config: BodyDecryptConfig<'a>,
     ) -> Self {
-        let decrypted_chunk_size = DEFAULT_CHUNK_SIZE as usize;
+        let BodyDecryptConfig { key, nonce, aad, config, .. } = config;
+        let decrypted_chunk_size = config.chunk_size() as usize;
         let encrypted_chunk_size = decrypted_chunk_size + algorithm.tag_size();
         let out_pool = Arc::new(BufferPool::new(decrypted_chunk_size));
         Self {
             reader,
             algorithm,
-            key,
-            base_nonce,
+            key: Arc::new(key),
+            base_nonce: *nonce,
+            channel_bound: config.channel_bound(),
             encrypted_chunk_size,
             decrypted_chunk_size,
             read_buffer: BytesMut::with_capacity(encrypted_chunk_size * 2),
@@ -418,7 +421,7 @@ impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
             }
 
             let initial_tasks = self.decrypt_tasks.len();
-            while self.decrypt_tasks.len() < CHANNEL_BOUND {
+            while self.decrypt_tasks.len() < self.channel_bound {
                 if self.read_buffer.len() < self.encrypted_chunk_size && !self.reader_done {
                     break;
                 }
@@ -442,7 +445,7 @@ impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
 
                     let result = algo
                         .decrypt_to_buffer(
-                            (*key).clone(),
+                            &key,
                             &nonce,
                             &in_buffer,
                             &mut out_buffer,
@@ -597,39 +600,31 @@ impl<R: AsyncRead + Unpin> AsyncRead for DecryptorImpl<R> {
 
 use super::traits::AsynchronousBodyProcessor;
 use crate::algorithms::traits::SymmetricAlgorithm;
+use super::config::{BodyDecryptConfig, BodyEncryptConfig};
 
 impl<S: SymmetricAlgorithm + ?Sized> AsynchronousBodyProcessor for S {
     fn encrypt_body_async<'a>(
         &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
         writer: Box<dyn AsyncWrite + Send + Unpin + 'a>,
-        aad: Option<Vec<u8>>,
+        config: BodyEncryptConfig<'a>,
     ) -> Result<Box<dyn AsyncWrite + Send + Unpin + 'a>> {
         let encryptor = EncryptorImpl::new(
             writer,
-            Arc::new(key),
             self.algorithm().into_symmetric_wrapper(),
-            base_nonce,
-            aad,
+            config,
         );
         Ok(Box::new(encryptor))
     }
 
     fn decrypt_body_async<'a>(
         &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
         reader: Box<dyn AsyncRead + Send + Unpin + 'a>,
-        aad: Option<Vec<u8>>,
+        config: BodyDecryptConfig<'a>,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin + 'a>> {
-        let aad_ref = aad.as_deref();
         let decryptor = DecryptorImpl::new(
             reader,
-            Arc::new(key),
             self.algorithm().into_symmetric_wrapper(),
-            base_nonce,
-            aad_ref,
+            config,
         );
         Ok(Box::new(decryptor))
     }

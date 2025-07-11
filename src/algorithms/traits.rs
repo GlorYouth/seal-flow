@@ -128,7 +128,7 @@ pub trait SymmetricAlgorithm: Send + Sync + 'static {
     /// Encrypts the given plaintext.
     fn encrypt(
         &self,
-        key: TypedSymmetricKey,
+        key: &TypedSymmetricKey,
         nonce: &[u8],
         plaintext: &[u8],
         aad: Option<&[u8]>,
@@ -136,7 +136,7 @@ pub trait SymmetricAlgorithm: Send + Sync + 'static {
 
     fn encrypt_to_buffer(
         &self,
-        key: TypedSymmetricKey,
+        key: &TypedSymmetricKey,
         nonce: &[u8],
         plaintext: &[u8],
         output: &mut [u8],
@@ -146,7 +146,7 @@ pub trait SymmetricAlgorithm: Send + Sync + 'static {
     /// Decrypts the given ciphertext.
     fn decrypt(
         &self,
-        key: TypedSymmetricKey,
+        key: &TypedSymmetricKey,
         nonce: &[u8],
         aad: Option<&[u8]>,
         ciphertext: &[u8],
@@ -154,7 +154,7 @@ pub trait SymmetricAlgorithm: Send + Sync + 'static {
 
     fn decrypt_to_buffer(
         &self,
-        key: TypedSymmetricKey,
+        key: &TypedSymmetricKey,
         nonce: &[u8],
         ciphertext: &[u8],
         output: &mut [u8],
@@ -187,10 +187,10 @@ pub trait SymmetricAlgorithm: Send + Sync + 'static {
 }
 
 impl_trait_for_box!(SymmetricAlgorithm {
-    ref fn encrypt(&self, key: TypedSymmetricKey, nonce: &[u8], plaintext: &[u8], aad: Option<&[u8]>) -> Result<Vec<u8>>;
-    ref fn encrypt_to_buffer(&self, key: TypedSymmetricKey, nonce: &[u8], plaintext: &[u8], output: &mut [u8], aad: Option<&[u8]>) -> Result<usize>;
-    ref fn decrypt(&self, key: TypedSymmetricKey, nonce: &[u8], aad: Option<&[u8]>, ciphertext: &[u8]) -> Result<Vec<u8>>;
-    ref fn decrypt_to_buffer(&self, key: TypedSymmetricKey, nonce: &[u8], ciphertext: &[u8], output: &mut [u8], aad: Option<&[u8]>) -> Result<usize>;
+    ref fn encrypt(&self, key: &TypedSymmetricKey, nonce: &[u8], plaintext: &[u8], aad: Option<&[u8]>) -> Result<Vec<u8>>;
+    ref fn encrypt_to_buffer(&self, key: &TypedSymmetricKey, nonce: &[u8], plaintext: &[u8], output: &mut [u8], aad: Option<&[u8]>) -> Result<usize>;
+    ref fn decrypt(&self, key: &TypedSymmetricKey, nonce: &[u8], aad: Option<&[u8]>, ciphertext: &[u8]) -> Result<Vec<u8>>;
+    ref fn decrypt_to_buffer(&self, key: &TypedSymmetricKey, nonce: &[u8], ciphertext: &[u8], output: &mut [u8], aad: Option<&[u8]>) -> Result<usize>;
     ref fn generate_typed_key(&self,) -> Result<TypedSymmetricKey>;
     ref fn generate_untyped_key(&self,) -> Result<UntypedSymmetricKey>;
     ref fn algorithm(&self,) -> common::algorithms::SymmetricAlgorithm;
@@ -306,7 +306,7 @@ impl AsymmetricAlgorithm for Box<dyn HybridAlgorithm> {
 impl SymmetricAlgorithm for Box<dyn HybridAlgorithm> {
     fn encrypt(
         &self,
-        key: TypedSymmetricKey,
+        key: &TypedSymmetricKey,
         nonce: &[u8],
         plaintext: &[u8],
         aad: Option<&[u8]>,
@@ -317,7 +317,7 @@ impl SymmetricAlgorithm for Box<dyn HybridAlgorithm> {
     }
     fn encrypt_to_buffer(
         &self,
-        key: TypedSymmetricKey,
+        key: &TypedSymmetricKey,
         nonce: &[u8],
         plaintext: &[u8],
         output: &mut [u8],
@@ -329,7 +329,7 @@ impl SymmetricAlgorithm for Box<dyn HybridAlgorithm> {
     }
     fn decrypt(
         &self,
-        key: TypedSymmetricKey,
+        key: &TypedSymmetricKey,
         nonce: &[u8],
         aad: Option<&[u8]>,
         ciphertext: &[u8],
@@ -340,7 +340,7 @@ impl SymmetricAlgorithm for Box<dyn HybridAlgorithm> {
     }
     fn decrypt_to_buffer(
         &self,
-        key: TypedSymmetricKey,
+        key: &TypedSymmetricKey,
         nonce: &[u8],
         ciphertext: &[u8],
         output: &mut [u8],

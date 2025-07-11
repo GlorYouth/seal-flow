@@ -6,7 +6,8 @@
 
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
+use crate::body::config::{BodyDecryptConfig, BodyEncryptConfig};
+use crate::common::derive_nonce;
 use crate::error::Result;
 use crate::keys::TypedSymmetricKey;
 use std::io::{self, Read, Write};
@@ -32,24 +33,24 @@ impl<W: Write> EncryptorImpl<W> {
     /// Creates a new `EncryptorImpl`.
     ///
     /// 创建一个新的 `EncryptorImpl`。
-    pub fn new(
+    pub fn new<'a>(
         writer: W,
         algorithm: SymmetricAlgorithmWrapper,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
-        aad: Option<&[u8]>,
+        config: BodyEncryptConfig<'a>,
     ) -> Result<Self> {
-        let encrypted_chunk_buffer = vec![0u8; DEFAULT_CHUNK_SIZE as usize + algorithm.tag_size()];
+        let encrypted_chunk_buffer = vec![0u8; config.chunk_size() as usize + algorithm.tag_size()];
+        let BodyEncryptConfig { key, nonce, aad, config, .. } = config;
+        
         Ok(Self {
             writer,
             algorithm,
             key,
-            base_nonce,
-            chunk_size: DEFAULT_CHUNK_SIZE as usize,
-            buffer: Vec::with_capacity(DEFAULT_CHUNK_SIZE as usize),
+            base_nonce: *nonce,
+            chunk_size: config.chunk_size() as usize,
+            buffer: Vec::with_capacity(config.chunk_size() as usize),
             chunk_counter: 0,
             encrypted_chunk_buffer,
-            aad: aad.map(|d| d.to_vec()),
+            aad,
         })
     }
 
@@ -66,7 +67,7 @@ impl<W: Write> EncryptorImpl<W> {
             let bytes_written = self
                 .algorithm
                 .encrypt_to_buffer(
-                    self.key.clone(),
+                    &self.key,
                     &nonce,
                     &self.buffer,
                     &mut self.encrypted_chunk_buffer,
@@ -99,7 +100,7 @@ impl<W: Write> Write for EncryptorImpl<W> {
                 let bytes_written = self
                     .algorithm
                     .encrypt_to_buffer(
-                        self.key.clone(),
+                        &self.key,
                         &nonce,
                         &self.buffer,
                         &mut self.encrypted_chunk_buffer,
@@ -120,7 +121,7 @@ impl<W: Write> Write for EncryptorImpl<W> {
             let bytes_written = self
                 .algorithm
                 .encrypt_to_buffer(
-                    self.key.clone(),
+                    &self.key,
                     &nonce,
                     chunk,
                     &mut self.encrypted_chunk_buffer,
@@ -168,25 +169,24 @@ impl<R: Read> DecryptorImpl<R> {
     /// Creates a new `DecryptorImpl`.
     ///
     /// 创建一个新的 `DecryptorImpl`。
-    pub fn new(
+    pub fn new<'a>(
         reader: R,
         algorithm: SymmetricAlgorithmWrapper,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
-        aad: Option<&[u8]>,
+        config: BodyDecryptConfig<'a>,
     ) -> Self {
-        let encrypted_chunk_size = DEFAULT_CHUNK_SIZE as usize + algorithm.tag_size();
+        let encrypted_chunk_size = config.chunk_size() as usize + algorithm.tag_size();
+        let BodyDecryptConfig { key, nonce, aad, .. } = config;
         Self {
             reader,
             algorithm,
             key,
-            base_nonce,
+            base_nonce: *nonce,
             encrypted_chunk_size,
             buffer: io::Cursor::new(Vec::new()),
             encrypted_chunk_buffer: vec![0; encrypted_chunk_size],
             chunk_counter: 0,
             is_done: false,
-            aad: aad.map(|d| d.to_vec()),
+            aad,
         }
     }
 }
@@ -231,7 +231,7 @@ impl<R: Read> Read for DecryptorImpl<R> {
         let bytes_written = self
             .algorithm
             .decrypt_to_buffer(
-                self.key.clone(),
+                &self.key,
                 &nonce,
                 &self.encrypted_chunk_buffer[..total_bytes_read],
                 decrypted_buf,
@@ -255,34 +255,26 @@ use super::traits::StreamingBodyProcessor;
 impl<S: SymmetricAlgorithm + ?Sized> StreamingBodyProcessor for S {
     fn encrypt_body_to_stream<'a>(
         &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
         writer: Box<dyn Write + 'a>,
-        aad: Option<&[u8]>,
+        config: BodyEncryptConfig<'a>,
     ) -> Result<Box<dyn Write + 'a>> {
         let encryptor = EncryptorImpl::new(
             writer,
             self.algorithm().into_symmetric_wrapper(),
-            key,
-            base_nonce,
-            aad,
+            config,
         )?;
         Ok(Box::new(encryptor))
     }
 
     fn decrypt_body_from_stream<'a>(
         &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
         reader: Box<dyn Read + 'a>,
-        aad: Option<&[u8]>,
+        config: BodyDecryptConfig<'a>,
     ) -> Result<Box<dyn Read + 'a>> {
         let decryptor = DecryptorImpl::new(
             reader,
             self.algorithm().into_symmetric_wrapper(),
-            key,
-            base_nonce,
-            aad,
+            config,
         );
         Ok(Box::new(decryptor))
     }

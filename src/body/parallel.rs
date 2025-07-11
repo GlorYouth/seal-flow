@@ -5,26 +5,24 @@
 //! 这是对称和混合并行模式的后端。
 
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
+use crate::common::derive_nonce;
 use crate::error::{Error, FormatError, Result};
 use rayon::prelude::*;
 
+use super::config::{BodyDecryptConfig, BodyEncryptConfig};
 use super::traits::ParallelBodyProcessor;
-use crate::keys::TypedSymmetricKey;
 
 impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
     /// Encrypts in-memory data in parallel.
     ///
     /// 并行加密内存中的数据。
-    fn encrypt_body_parallel(
+    fn encrypt_body_parallel<'a>(
         &self,
-        key: TypedSymmetricKey,
-        base_nonce: &[u8; 12],
-        header_bytes: Vec<u8>,
         plaintext: &[u8],
-        aad: Option<&[u8]>,
+        config: BodyEncryptConfig<'a>,
     ) -> Result<Vec<u8>> {
-        let chunk_size = DEFAULT_CHUNK_SIZE as usize;
+        let BodyEncryptConfig { key, nonce, header_bytes, aad, config, .. } = config;
+        let chunk_size = config.chunk_size() as usize;
         let tag_size = self.tag_size();
 
         // Pre-allocate output buffer
@@ -63,11 +61,11 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
                 .zip(plaintext.par_chunks(chunk_size))
                 .enumerate()
                 .try_for_each(|(i, (output_chunk, input_chunk))| -> Result<()> {
-                    let nonce = derive_nonce(base_nonce, i as u64);
+                    let nonce = derive_nonce(nonce, i as u64);
                     let expected_output_len = input_chunk.len() + tag_size;
                     let buffer_slice = &mut output_chunk[..expected_output_len];
 
-                    self.encrypt_to_buffer(key.clone(), &nonce, input_chunk, buffer_slice, aad)
+                    self.encrypt_to_buffer(&key, &nonce, input_chunk, buffer_slice, aad.as_deref())
                         .map(|_| ())
                         .map_err(Error::from)
                 })?;
@@ -79,14 +77,13 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
     /// Decrypts a ciphertext body in parallel.
     ///
     /// 并行解密密文体。
-    fn decrypt_body_parallel(
+    fn decrypt_body_parallel<'a>(
         &self,
-        key: TypedSymmetricKey,
-        base_nonce: &[u8; 12],
         ciphertext_body: &[u8],
-        aad: Option<&[u8]>,
+        config: BodyDecryptConfig<'a>,
     ) -> Result<Vec<u8>> {
-        let chunk_size = DEFAULT_CHUNK_SIZE as usize;
+        let BodyDecryptConfig { key, nonce, aad, config, .. } = config;
+        let chunk_size = config.chunk_size() as usize;
         let tag_len = self.tag_size();
         let encrypted_chunk_size = chunk_size + tag_len;
 
@@ -122,11 +119,11 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
             .zip(ciphertext_body.par_chunks(encrypted_chunk_size))
             .enumerate()
             .map(|(i, (plaintext_chunk, encrypted_chunk))| -> Result<usize> {
-                let nonce = derive_nonce(base_nonce, i as u64);
+                let nonce = derive_nonce(nonce, i as u64);
 
                 // Decrypt the chunk
                 // 解密数据块
-                self.decrypt_to_buffer(key.clone(), &nonce, encrypted_chunk, plaintext_chunk, aad)
+                self.decrypt_to_buffer(&key, &nonce, encrypted_chunk, plaintext_chunk, aad.as_deref())
                     .map_err(Error::from)
             })
             .collect::<Result<Vec<usize>>>()?;

@@ -7,39 +7,39 @@
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::buffer::BufferPool;
-use crate::common::{derive_nonce, OrderedChunk, CHANNEL_BOUND, DEFAULT_CHUNK_SIZE};
+use crate::common::{derive_nonce, OrderedChunk};
 use crate::error::{Error, Result};
-use crate::keys::TypedSymmetricKey;
 use rayon::prelude::*;
 use std::collections::BinaryHeap;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use std::thread;
 
+use super::config::{BodyDecryptConfig, BodyEncryptConfig};
 use super::traits::ParallelStreamingBodyProcessor;
 
 /// The core pipeline for parallel streaming encryption.
 ///
 /// 并行流式加密的核心管道。
-fn encrypt_pipeline<R, W>(
+fn encrypt_pipeline<'a, R, W>(
     algorithm: SymmetricAlgorithmWrapper,
-    key: TypedSymmetricKey,
-    base_nonce: [u8; 12],
     mut reader: R,
     mut writer: W,
-    aad: Option<&[u8]>,
+    config: BodyEncryptConfig<'a>,
 ) -> Result<()>
 where
     R: Read + Send,
     W: Write,
 {
+    let BodyEncryptConfig { key, nonce, aad, config, .. } = config;
+    let key = Arc::new(key);
     let aad_arc = Arc::new(aad.map(|d| d.to_vec()));
-    let pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize));
+    let pool = Arc::new(BufferPool::new(config.chunk_size() as usize));
     let tag_size = algorithm.tag_size();
 
     // 2. Setup channels for producer-consumer pipeline
-    let (raw_chunk_tx, raw_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
-    let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
+    let (raw_chunk_tx, raw_chunk_rx) = crossbeam_channel::bounded(config.channel_bound());
+    let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(config.channel_bound());
     let (io_error_tx, io_error_rx) = crossbeam_channel::unbounded();
 
     thread::scope(|s| {
@@ -89,15 +89,16 @@ where
         let algo_clone = algorithm.clone();
         let aad_clone = Arc::clone(&aad_arc);
         let in_pool = Arc::clone(&pool);
-        let out_pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize + tag_size));
+        let out_pool = Arc::new(BufferPool::new(config.chunk_size() as usize + tag_size));
         let writer_pool = Arc::clone(&out_pool);
+        let key_clone = Arc::clone(&key);
         s.spawn(move || {
             raw_chunk_rx
                 .into_iter()
                 .par_bridge()
                 .for_each(|(index, in_buffer)| {
                     let mut out_buffer = out_pool.acquire();
-                    let nonce = derive_nonce(&base_nonce, index);
+                    let nonce = derive_nonce(nonce, index);
                     let aad_val = aad_clone.as_deref();
 
                     // Resize buffer to its full capacity to get a mutable slice
@@ -107,7 +108,7 @@ where
 
                     let result = algo_clone
                         .encrypt_to_buffer(
-                            key.clone(),
+                            &key_clone,
                             &nonce,
                             &in_buffer,
                             &mut out_buffer,
@@ -196,26 +197,25 @@ where
 /// The core pipeline for parallel streaming decryption.
 ///
 /// 并行流式解密的核心管道。
-fn decrypt_pipeline<R, W>(
+fn decrypt_pipeline<'a, R, W>(
     algorithm: SymmetricAlgorithmWrapper,
-    key: TypedSymmetricKey,
-    base_nonce: [u8; 12],
-    chunk_size: u32,
     mut reader: R,
     mut writer: W,
-    aad: Option<&[u8]>,
+    config: BodyDecryptConfig<'a>,
 ) -> Result<()>
 where
     R: Read + Send,
     W: Write,
 {
-    let encrypted_chunk_size = (chunk_size as usize) + algorithm.tag_size();
+    let BodyDecryptConfig { key, nonce, aad, config, .. } = config;
+    let encrypted_chunk_size = (config.chunk_size() as usize) + algorithm.tag_size();
+    let key = Arc::new(key);
     let aad_arc = Arc::new(aad.map(|d| d.to_vec()));
     let pool = Arc::new(BufferPool::new(encrypted_chunk_size));
 
     // 2. Setup channels
-    let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
-    let (dec_chunk_tx, dec_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
+    let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(config.channel_bound());
+    let (dec_chunk_tx, dec_chunk_rx) = crossbeam_channel::bounded(config.channel_bound());
     let (io_error_tx, io_error_rx) = crossbeam_channel::unbounded();
 
     thread::scope(|s| {
@@ -265,15 +265,16 @@ where
         let algo_clone = algorithm.clone();
         let aad_clone = Arc::clone(&aad_arc);
         let in_pool = Arc::clone(&pool);
-        let out_pool = Arc::new(BufferPool::new(chunk_size as usize));
+        let out_pool = Arc::new(BufferPool::new(config.chunk_size() as usize));
         let writer_pool = Arc::clone(&out_pool);
+        let key_clone = Arc::clone(&key);
         s.spawn(move || {
             enc_chunk_rx
                 .into_iter()
                 .par_bridge()
                 .for_each(|(index, in_buffer)| {
                     let mut out_buffer = out_pool.acquire();
-                    let nonce = derive_nonce(&base_nonce, index);
+                    let nonce = derive_nonce(nonce, index);
                     let aad_val = aad_clone.as_deref();
 
                     // Resize buffer to its full capacity to get a mutable slice
@@ -283,7 +284,7 @@ where
 
                     let result = algo_clone
                         .decrypt_to_buffer(
-                            key.clone(),
+                            &key_clone,
                             &nonce,
                             &in_buffer,
                             &mut out_buffer,
@@ -369,38 +370,29 @@ where
 impl ParallelStreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
     fn encrypt_body_pipeline<'a>(
         &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
         reader: Box<dyn Read + Send + 'a>,
         writer: Box<dyn Write + Send + 'a>,
-        aad: Option<&'a [u8]>,
+        config: BodyEncryptConfig<'a>,
     ) -> Result<()> {
         encrypt_pipeline(
             self.algorithm().into_symmetric_wrapper(),
-            key,
-            base_nonce,
             reader,
             writer,
-            aad,
+            config,
         )
     }
 
     fn decrypt_body_pipeline<'a>(
         &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
         reader: Box<dyn Read + Send + 'a>,
         writer: Box<dyn Write + Send + 'a>,
-        aad: Option<&'a [u8]>,
+        config: BodyDecryptConfig<'a>,
     ) -> Result<()> {
         decrypt_pipeline(
             self.algorithm().into_symmetric_wrapper(),
-            key,
-            base_nonce,
-            DEFAULT_CHUNK_SIZE,
             reader,
             writer,
-            aad,
+            config,
         )
     }
 }

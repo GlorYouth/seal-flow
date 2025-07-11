@@ -7,6 +7,7 @@ use bytes::BytesMut;
 pub mod algorithms;
 pub(crate) mod buffer;
 pub mod header;
+pub mod config;
 
 pub const DEFAULT_CHUNK_SIZE: u32 = 65536;
 
