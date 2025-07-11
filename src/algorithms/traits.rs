@@ -12,10 +12,14 @@ use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;
 
 macro_rules! impl_trait_for_box {
-    ($trait:ident {
-        $(ref fn $method_ref:ident(&self, $($arg_ref:ident: $ty_ref:ty),*) -> $ret_ref:ty;)*
-        $(self fn $method_own:ident(self, $($arg_own:ident: $ty_own:ty),*) -> $ret_own:ty;)*
-    }, $clone_box_name:ident) => {
+    // Internal recursive rules for TT muncher
+    (
+        @impl,
+        $trait:ident,
+        $clone_box_name:ident,
+        { }, // no more methods
+        { $($impls:tt)* } // accumulated impls
+    ) => {
         impl Clone for Box<dyn $trait> {
             fn clone(&self) -> Self {
                 self.$clone_box_name()
@@ -23,16 +27,93 @@ macro_rules! impl_trait_for_box {
         }
 
         impl $trait for Box<dyn $trait> {
-            $(
-                fn $method_ref(&self, $($arg_ref: $ty_ref),*) -> $ret_ref {
-                    self.as_ref().$method_ref($($arg_ref),*)
+            $($impls)*
+        }
+    };
+
+    // Munch a `ref fn`
+    (
+        @impl,
+        $trait:ident,
+        $clone_box_name:ident,
+        {
+            ref fn $method:ident(&self, $($arg:ident: $ty:ty),*) -> $ret:ty;
+            $($rest:tt)*
+        },
+        { $($impls:tt)* }
+    ) => {
+        impl_trait_for_box! {
+            @impl,
+            $trait,
+            $clone_box_name,
+            { $($rest)* },
+            {
+                $($impls)*
+                fn $method(&self, $($arg: $ty),*) -> $ret {
+                    self.as_ref().$method($($arg),*)
                 }
-            )*
-            $(
-                fn $method_own(self, $($arg_own: $ty_own),*) -> $ret_own {
-                    self.$method_own($($arg_own),*)
+            }
+        }
+    };
+
+    // Munch a `self fn` with custom implementation
+    (
+        @impl,
+        $trait:ident,
+        $clone_box_name:ident,
+        {
+            self fn $method:ident(self, $($arg:ident: $ty:ty),*) -> $ret:ty { $($body:tt)+ };
+            $($rest:tt)*
+        },
+        { $($impls:tt)* }
+    ) => {
+        impl_trait_for_box! {
+            @impl,
+            $trait,
+            $clone_box_name,
+            { $($rest)* },
+            {
+                $($impls)*
+                fn $method(self, $($arg: $ty),*) -> $ret {
+                    $($body)+
                 }
-            )*
+            }
+        }
+    };
+
+    // Munch a `self fn` with default `self` return
+    (
+        @impl,
+        $trait:ident,
+        $clone_box_name:ident,
+        {
+            self fn $method:ident(self, $($arg:ident: $ty:ty),*) -> $ret:ty;
+            $($rest:tt)*
+        },
+        { $($impls:tt)* }
+    ) => {
+        impl_trait_for_box! {
+            @impl,
+            $trait,
+            $clone_box_name,
+            { $($rest)* },
+            {
+                $($impls)*
+                fn $method(self, $($arg: $ty),*) -> $ret {
+                    self
+                }
+            }
+        }
+    };
+
+    // Public entry point
+    ($trait:ident { $($methods:tt)* }, $clone_box_name:ident) => {
+        impl_trait_for_box! {
+            @impl,
+            $trait,
+            $clone_box_name,
+            { $($methods)* },
+            { }
         }
     };
 }
@@ -43,8 +124,6 @@ macro_rules! impl_trait_for_box {
 /// 表示一个具体的对称加密算法。
 /// 这是一个对象安全的 trait，它擦除了具体的算法类型。
 pub trait SymmetricAlgorithm: Send + Sync + 'static {
-    /// 克隆自身到一个 Box<dyn SymmetricAlgorithm>
-    fn clone_box_symmetric(&self) -> Box<dyn SymmetricAlgorithm>;
 
     /// Encrypts the given plaintext.
     fn encrypt(
@@ -102,10 +181,12 @@ pub trait SymmetricAlgorithm: Send + Sync + 'static {
     ///
     /// 将算法转换为 boxed trait 对象。
     fn into_symmetric_boxed(self) -> Box<dyn SymmetricAlgorithm>;
+
+    /// 克隆自身到一个 Box<dyn SymmetricAlgorithm>
+    fn clone_box_symmetric(&self) -> Box<dyn SymmetricAlgorithm>;
 }
 
 impl_trait_for_box!(SymmetricAlgorithm {
-    ref fn clone_box_symmetric(&self,) -> Box<dyn SymmetricAlgorithm>;
     ref fn encrypt(&self, key: TypedSymmetricKey, nonce: &[u8], plaintext: &[u8], aad: Option<&[u8]>) -> Result<Vec<u8>>;
     ref fn encrypt_to_buffer(&self, key: TypedSymmetricKey, nonce: &[u8], plaintext: &[u8], output: &mut [u8], aad: Option<&[u8]>) -> Result<usize>;
     ref fn decrypt(&self, key: TypedSymmetricKey, nonce: &[u8], aad: Option<&[u8]>, ciphertext: &[u8]) -> Result<Vec<u8>>;
@@ -117,6 +198,7 @@ impl_trait_for_box!(SymmetricAlgorithm {
     ref fn nonce_size(&self,) -> usize;
     ref fn tag_size(&self,) -> usize;
     self fn into_symmetric_boxed(self,) -> Box<dyn SymmetricAlgorithm>;
+    ref fn clone_box_symmetric(&self,) -> Box<dyn SymmetricAlgorithm>;
 }, clone_box_symmetric);
 
 /// Trait to provide the details for a specific key-based key derivation function (KDF).
@@ -197,9 +279,6 @@ impl AsymmetricAlgorithm for Box<dyn HybridAlgorithm> {
     fn algorithm(&self) -> common::algorithms::AsymmetricAlgorithm {
         self.as_ref().asymmetric_algorithm().algorithm()
     }
-    fn clone_box_asymmetric(&self) -> Box<dyn AsymmetricAlgorithm> {
-        self.clone()
-    }
     fn encapsulate_key(
         &self,
         public_key: &TypedAsymmetricPublicKey,
@@ -216,33 +295,15 @@ impl AsymmetricAlgorithm for Box<dyn HybridAlgorithm> {
     fn generate_keypair(&self) -> Result<TypedAsymmetricKeyPair> {
         self.as_ref().generate_keypair()
     }
+    fn clone_box_asymmetric(&self) -> Box<dyn AsymmetricAlgorithm> {
+        self.clone()
+    }
     fn into_asymmetric_boxed(self) -> Box<dyn AsymmetricAlgorithm> {
         Box::new(self)
     }
 }
 
 impl SymmetricAlgorithm for Box<dyn HybridAlgorithm> {
-    fn algorithm(&self) -> common::algorithms::SymmetricAlgorithm {
-        self.as_ref().symmetric_algorithm().algorithm()
-    }
-    fn clone_box_symmetric(&self) -> Box<dyn SymmetricAlgorithm> {
-        self.clone()
-    }
-    fn key_size(&self) -> usize {
-        self.as_ref().symmetric_algorithm().key_size()
-    }
-    fn nonce_size(&self) -> usize {
-        self.as_ref().symmetric_algorithm().nonce_size()
-    }
-    fn tag_size(&self) -> usize {
-        self.as_ref().symmetric_algorithm().tag_size()
-    }
-    fn generate_typed_key(&self) -> Result<TypedSymmetricKey> {
-        self.as_ref().symmetric_algorithm().generate_typed_key()
-    }
-    fn generate_untyped_key(&self) -> Result<UntypedSymmetricKey> {
-        self.as_ref().symmetric_algorithm().generate_untyped_key()
-    }
     fn encrypt(
         &self,
         key: TypedSymmetricKey,
@@ -289,8 +350,29 @@ impl SymmetricAlgorithm for Box<dyn HybridAlgorithm> {
             .symmetric_algorithm()
             .decrypt_to_buffer(key, nonce, ciphertext, output, aad)
     }
+    fn generate_typed_key(&self) -> Result<TypedSymmetricKey> {
+        self.as_ref().symmetric_algorithm().generate_typed_key()
+    }
+    fn generate_untyped_key(&self) -> Result<UntypedSymmetricKey> {
+        self.as_ref().symmetric_algorithm().generate_untyped_key()
+    }
+    fn algorithm(&self) -> common::algorithms::SymmetricAlgorithm {
+        self.as_ref().symmetric_algorithm().algorithm()
+    }
+    fn key_size(&self) -> usize {
+        self.as_ref().symmetric_algorithm().key_size()
+    }
+    fn nonce_size(&self) -> usize {
+        self.as_ref().symmetric_algorithm().nonce_size()
+    }
+    fn tag_size(&self) -> usize {
+        self.as_ref().symmetric_algorithm().tag_size()
+    }
     fn into_symmetric_boxed(self) -> Box<dyn SymmetricAlgorithm> {
         self
+    }
+    fn clone_box_symmetric(&self) -> Box<dyn SymmetricAlgorithm> {
+        self.clone()
     }
 }
 

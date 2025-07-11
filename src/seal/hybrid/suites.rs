@@ -205,7 +205,6 @@ impl StreamingEncryptor for PqcEncryptor {
     }
 }
 
-#[cfg(feature = "async")]
 impl AsyncStreamingEncryptor for PqcEncryptor {
     /// Creates an asynchronous streaming encryptor that writes to the given `AsyncWrite` implementation using the PQC suite.
     ///

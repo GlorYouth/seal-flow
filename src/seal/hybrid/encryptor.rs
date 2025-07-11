@@ -5,7 +5,7 @@
 use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
 use crate::algorithms::traits::HybridAlgorithm;
 use crate::algorithms::traits::{
-    AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, XofAlgorithm,
+    KdfAlgorithm, SignatureAlgorithm, XofAlgorithm,
 };
 use crate::common::algorithms::{
     AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
@@ -24,7 +24,6 @@ use crate::seal::traits::{
     WithAad,
 };
 use seal_crypto::prelude::*;
-use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use tokio::io::AsyncWrite;

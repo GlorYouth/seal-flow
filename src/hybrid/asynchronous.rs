@@ -6,7 +6,7 @@
 use super::common::create_header;
 use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
 use crate::algorithms::traits::{
-    HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm as SymmetricAlgorithmTrait,
+    HybridAlgorithm as HybridAlgorithmTrait, 
 };
 use crate::body::traits::AsynchronousBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};

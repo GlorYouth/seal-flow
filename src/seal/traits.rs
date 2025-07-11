@@ -110,7 +110,6 @@ pub trait ParallelStreamingDecryptor {
 /// A trait for asynchronous streaming decryption operations.
 ///
 /// 用于异步流式解密操作的 trait。
-#[cfg(feature = "async")]
 pub trait AsyncStreamingDecryptor: Sized {
     /// The specific key type required for decryption.
     ///
@@ -120,14 +119,14 @@ pub trait AsyncStreamingDecryptor: Sized {
     /// Automatically resolves the key and returns a decrypting async reader.
     ///
     /// 自动解析密钥并返回一个解密的异步读取器。
-    async fn resolve_and_decrypt<'s>(self) -> Result<Box<dyn AsyncRead + Unpin + Send + 's>>
+    fn resolve_and_decrypt<'s>(self) -> Result<Box<dyn AsyncRead + Unpin + Send + 's>>
     where
         Self: 's;
 
     /// Supplies a key and returns a decrypting async reader.
     ///
     /// 提供密钥并返回一个解密的异步读取器。
-    async fn with_key<'s>(self, key: Self::Key) -> Result<Box<dyn AsyncRead + Unpin + Send + 's>>
+    fn with_key<'s>(self, key: Self::Key) -> Result<Box<dyn AsyncRead + Unpin + Send + 's>>
     where
         Self: 's;
 }
@@ -167,7 +166,6 @@ pub trait StreamingEncryptor {
 /// A trait for creating an asynchronous streaming encryptor.
 ///
 /// 用于创建异步流式加密器的 trait。
-#[cfg(feature = "async")]
 pub trait AsyncStreamingEncryptor {
     /// Creates an asynchronous streaming encryptor that wraps the given `AsyncWrite` implementation.
     ///
