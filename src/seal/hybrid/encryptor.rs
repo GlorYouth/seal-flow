@@ -378,7 +378,6 @@ impl AsyncStreamingEncryptor for HybridEncryptorWithAlgorithms {
             .pk
             .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
         let processor = crate::hybrid::asynchronous::Asynchronous::new();
-        let aad = self.inner.aad.as_deref();
         processor
             .encrypt_hybrid_async(
                 &self.algorithm,
@@ -386,7 +385,7 @@ impl AsyncStreamingEncryptor for HybridEncryptorWithAlgorithms {
                 Box::new(writer),
                 self.inner.kek_id,
                 self.inner.signer,
-                aad,
+                self.inner.aad.clone(),
                 self.inner.derivation_config,
             )
             .await

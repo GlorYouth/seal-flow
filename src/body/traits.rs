@@ -4,7 +4,6 @@
 
 use crate::error::Result;
 use crate::keys::TypedSymmetricKey;
-use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use std::io::{Read, Write};
 
 pub trait OrdinaryBodyProcessor {
@@ -87,7 +86,7 @@ pub trait AsynchronousBodyProcessor {
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
         writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
-        aad: Option<&'a [u8]>,
+        aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>>;
 
     fn decrypt_body_async<'a>(
@@ -95,6 +94,6 @@ pub trait AsynchronousBodyProcessor {
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
-        aad: Option<&'a [u8]>,
+        aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>>;
 }

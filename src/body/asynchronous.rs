@@ -9,7 +9,6 @@
 #![cfg(feature = "async")]
 
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
-use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::buffer::BufferPool;
 use crate::common::{derive_nonce, OrderedChunk, CHANNEL_BOUND, DEFAULT_CHUNK_SIZE};
 use crate::error::{Error, Result};
@@ -25,7 +24,6 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::task::JoinHandle;
 
-use super::traits::AsynchronousBodyProcessor;
 
 // --- Helper Structs for Encryption ---
 
@@ -91,7 +89,7 @@ impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
         key: Arc<TypedSymmetricKey>,
         algorithm: SymmetricAlgorithmWrapper,
         base_nonce: [u8; 12],
-        aad: Option<&[u8]>,
+        aad: Option<Vec<u8>>,
     ) -> Self {
         let chunk_size = DEFAULT_CHUNK_SIZE as usize;
         let out_pool = Arc::new(BufferPool::new(chunk_size + algorithm.tag_size()));
@@ -593,5 +591,47 @@ impl<R: AsyncRead + Unpin> AsyncRead for DecryptorImpl<R> {
                 return Poll::Pending;
             }
         }
+    }
+}
+
+// --- AsynchronousBodyProcessor Implementation ---
+
+use super::traits::AsynchronousBodyProcessor;
+use crate::algorithms::traits::SymmetricAlgorithm;
+
+impl<S: SymmetricAlgorithm + ?Sized> AsynchronousBodyProcessor for S {
+    fn encrypt_body_async<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
+        aad: Option<Vec<u8>>,
+    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>> {
+        let encryptor = EncryptorImpl::new(
+            writer,
+            Arc::new(key),
+            self.clone(),
+            base_nonce,
+            aad,
+        );
+        Ok(Box::new(encryptor))
+    }
+
+    fn decrypt_body_async<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
+        aad: Option<Vec<u8>>,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>> {
+        let aad_ref = aad.as_deref();
+        let decryptor = DecryptorImpl::new(
+            reader,
+            Arc::new(key),
+            self.clone(),
+            base_nonce,
+            aad_ref,
+        );
+        Ok(Box::new(decryptor))
     }
 }

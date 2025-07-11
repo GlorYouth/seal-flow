@@ -142,7 +142,7 @@ pub trait HybridAsynchronousProcessor {
         writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
         kek_id: String,
         signer: Option<SignerSet>,
-        aad: Option<&'a [u8]>,
+        aad: Option<Vec<u8>>,
         derivation_config: Option<DerivationSet>,
     ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>>;
 

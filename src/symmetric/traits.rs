@@ -126,7 +126,7 @@ pub trait SymmetricAsynchronousProcessor {
         key: TypedSymmetricKey,
         key_id: String,
         writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
-        aad: Option<&'a [u8]>,
+        aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>>;
 
     async fn begin_decrypt_symmetric_async<'a>(
@@ -141,7 +141,7 @@ pub trait SymmetricAsynchronousPendingDecryptor<'decr_life>: Send {
     async fn into_decryptor<'a>(
         self: Box<Self>,
         key: TypedSymmetricKey,
-        aad: Option<&'a [u8]>,
+        aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'decr_life>>;
 
     fn header(&self) -> &Header;

@@ -11,8 +11,6 @@ use crate::keys::TypedSymmetricKey;
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use std::io::{self, Read, Write};
 
-use super::traits::StreamingBodyProcessor;
-
 // --- Encryptor ---
 
 /// The implementation of a synchronous, streaming encryptor.
@@ -246,6 +244,47 @@ impl<R: Read> Read for DecryptorImpl<R> {
         self.chunk_counter += 1;
 
         self.buffer.read(buf)
+    }
+}
+
+// --- StreamingBodyProcessor Implementation ---
+
+use super::traits::StreamingBodyProcessor;
+// 避免重复导入SymmetricAlgorithm
+
+impl<S: SymmetricAlgorithm + ?Sized> StreamingBodyProcessor for S {
+    fn encrypt_body_to_stream<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        writer: Box<dyn Write + 'a>,
+        aad: Option<&[u8]>,
+    ) -> Result<Box<dyn Write + 'a>> {
+        let encryptor = EncryptorImpl::new(
+            writer,
+            self.clone(),
+            key,
+            base_nonce,
+            aad,
+        )?;
+        Ok(Box::new(encryptor))
+    }
+
+    fn decrypt_body_from_stream<'a>(
+        &self,
+        key: TypedSymmetricKey,
+        base_nonce: [u8; 12],
+        reader: Box<dyn Read + 'a>,
+        aad: Option<&[u8]>,
+    ) -> Result<Box<dyn Read + 'a>> {
+        let decryptor = DecryptorImpl::new(
+            reader,
+            self.clone(),
+            key,
+            base_nonce,
+            aad,
+        );
+        Ok(Box::new(decryptor))
     }
 }
 

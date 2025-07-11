@@ -189,15 +189,16 @@ impl HybridAsynchronousProcessor
         mut writer: Box<dyn AsyncWrite + Send + Unpin + 'a>,
         kek_id: String,
         signer: Option<SignerSet>,
-        aad: Option<&'a [u8]>,
+        aad: Option<Vec<u8>>,
         derivation_config: Option<DerivationSet>,
     ) -> Result<Box<dyn AsyncWrite + Send + Unpin + 'a>> {
+        
         let (info, deriver_fn) = derivation_config
             .map(|d| (d.derivation_info, d.deriver_fn))
             .unzip();
 
         let (header, base_nonce, shared_secret) =
-            create_header(algorithm, public_key, kek_id, signer, aad, info)?;
+            create_header(algorithm, public_key, kek_id, signer, aad.as_deref(), info)?;
 
         let dek = if let Some(f) = deriver_fn {
             f(&shared_secret)?
@@ -220,7 +221,7 @@ impl HybridAsynchronousProcessor
 
         let algo = algorithm.symmetric_algorithm().clone_box_symmetric();
         Ok(Box::new(Encryptor::new(
-            writer, dek, algo.into(), base_nonce, aad,
+            writer, dek, algo.into(), base_nonce, aad.as_deref(),
         )))
     }
     
@@ -286,7 +287,7 @@ mod tests {
         {
             let writer = Box::new(&mut encrypted_data);
             let mut encryptor = processor
-                .encrypt_hybrid_async(&algorithm, &pk, writer, kek_id.clone(), None, aad, None)
+                .encrypt_hybrid_async(&algorithm, &pk, writer, kek_id.clone(), None, aad.map(|aad| aad.to_vec()), None)
                 .await
                 .unwrap();
 

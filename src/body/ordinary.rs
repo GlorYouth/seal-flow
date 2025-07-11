@@ -9,7 +9,6 @@ use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::error::Result;
 use crate::keys::TypedSymmetricKey;
-use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 
 impl<S: SymmetricAlgorithm + ?Sized> OrdinaryBodyProcessor for S {
     /// Encrypts in-memory data sequentially.

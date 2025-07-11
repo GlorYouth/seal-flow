@@ -42,7 +42,7 @@ impl<W: AsyncWrite + Unpin> Encryptor<W> {
         algorithm: SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         key_id: String,
-        aad: Option<&[u8]>,
+        aad: Option<Vec<u8>>,
     ) -> Result<Self> {
         let (header, base_nonce) = create_header(&algorithm, key_id)?;
 
@@ -90,7 +90,7 @@ impl<'decr> SymmetricAsynchronousPendingDecryptor<'decr>
     async fn into_decryptor<'a>(
         self: Box<Self>,
         key: TypedSymmetricKey,
-        aad: Option<&'a [u8]>,
+        aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'decr>> {
         let base_nonce = match self.header.payload {
             HeaderPayload::Symmetric {
@@ -150,7 +150,7 @@ impl SymmetricAsynchronousProcessor for Asynchronous
         key: TypedSymmetricKey,
         key_id: String,
         writer: Box<dyn AsyncWrite + Send + Unpin + 'a>,
-        aad: Option<&'a [u8]>,
+        aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn AsyncWrite + Send + Unpin + 'a>> {
         let encryptor = Encryptor::new(writer, algorithm.clone(), key, key_id, aad).await?;
         Ok(Box::new(encryptor))
@@ -183,7 +183,7 @@ mod tests {
         SymmetricAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper()
     }
 
-    async fn test_roundtrip(plaintext: &[u8], aad: Option<&[u8]>) {
+    async fn test_roundtrip(plaintext: &[u8], aad: Option<Vec<u8>>) {
         let wrapper = get_wrapper();
         let processor = Asynchronous::new();
         let key_id = "test_key_id".to_string();
@@ -197,7 +197,7 @@ mod tests {
                     key.clone(),
                     key_id.clone(),
                     Box::new(&mut encrypted_data),
-                    aad,
+                    aad.clone(),
                 )
                 .await
                 .unwrap();
@@ -225,7 +225,7 @@ mod tests {
         let processor = Asynchronous::new();
         let plaintext = b"This is an async processor test.";
         let untyped = wrapper.generate_typed_key().unwrap();
-        let aad = Some(b"async processor aad" as &[u8]);
+        let aad = Some(b"async processor aad".to_vec());
 
         // Encrypt
         let mut encrypted_data = Vec::new();
