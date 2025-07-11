@@ -124,7 +124,6 @@ macro_rules! impl_trait_for_box {
 /// 表示一个具体的对称加密算法。
 /// 这是一个对象安全的 trait，它擦除了具体的算法类型。
 pub trait SymmetricAlgorithm: Send + Sync + 'static {
-
     /// Encrypts the given plaintext.
     fn encrypt(
         &self,

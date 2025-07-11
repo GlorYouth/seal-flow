@@ -62,7 +62,8 @@ impl SymmetricDecryptorBuilder {
     /// 从内存中的字节切片配置解密。
     pub fn slice(self, ciphertext: &[u8]) -> crate::Result<PendingOrdinaryDecryptor> {
         let processor = crate::symmetric::ordinary::Ordinary::new();
-        let mid_level_pending = processor.begin_decrypt_symmetric_in_memory(ciphertext, self.config)?;
+        let mid_level_pending =
+            processor.begin_decrypt_symmetric_in_memory(ciphertext, self.config)?;
         Ok(PendingOrdinaryDecryptor::new(
             mid_level_pending,
             self.key_provider,
@@ -75,7 +76,8 @@ impl SymmetricDecryptorBuilder {
     /// 从内存中的字节切片配置并行解密。
     pub fn slice_parallel(self, ciphertext: &[u8]) -> crate::Result<PendingParallelDecryptor> {
         let processor = crate::symmetric::parallel::Parallel::new();
-        let mid_level_pending = processor.begin_decrypt_symmetric_parallel(ciphertext, self.config)?;
+        let mid_level_pending =
+            processor.begin_decrypt_symmetric_parallel(ciphertext, self.config)?;
         Ok(PendingParallelDecryptor::new(
             mid_level_pending,
             self.key_provider,
@@ -91,7 +93,8 @@ impl SymmetricDecryptorBuilder {
         R: Read + 'a,
     {
         let processor = crate::symmetric::streaming::Streaming::new();
-        let mid_level_pending = processor.begin_decrypt_symmetric_from_stream(Box::new(reader), self.config)?;
+        let mid_level_pending =
+            processor.begin_decrypt_symmetric_from_stream(Box::new(reader), self.config)?;
         Ok(PendingStreamingDecryptor::new(
             mid_level_pending,
             self.key_provider,
@@ -110,7 +113,8 @@ impl SymmetricDecryptorBuilder {
         R: Read + Send + 'a,
     {
         let processor = crate::symmetric::parallel_streaming::ParallelStreaming::new();
-        let mid_level_pending = processor.begin_decrypt_symmetric_pipeline(Box::new(reader), self.config)?;
+        let mid_level_pending =
+            processor.begin_decrypt_symmetric_pipeline(Box::new(reader), self.config)?;
         Ok(PendingParallelStreamingDecryptor::new(
             mid_level_pending,
             self.key_provider,
@@ -332,7 +336,8 @@ impl<'a> PendingParallelStreamingDecryptor<'a> {
         writer: W,
     ) -> crate::Result<()> {
         let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
-        self.inner.decrypt_to_writer(&key, Box::new(writer), self.aad)
+        self.inner
+            .decrypt_to_writer(&key, Box::new(writer), self.aad)
     }
 }
 

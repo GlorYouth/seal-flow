@@ -4,13 +4,16 @@
 
 use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::OrdinaryBodyProcessor;
-use crate::common::{config::{ArcConfig, DecryptorConfig}, RefOrOwned};
 use crate::common::header::{Header, HeaderPayload};
+use crate::common::{
+    config::{ArcConfig, DecryptorConfig},
+    RefOrOwned,
+};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
+use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{SymmetricOrdinaryPendingDecryptor, SymmetricOrdinaryProcessor};
-use crate::symmetric::config::SymmetricConfig;
 
 impl<'a> SymmetricOrdinaryPendingDecryptor<'a> for PendingDecryptor<&'a [u8]> {
     fn into_plaintext(
@@ -90,9 +93,9 @@ impl SymmetricOrdinaryProcessor for Ordinary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
     use crate::common::{RefOrOwned, DEFAULT_CHUNK_SIZE};
     use crate::prelude::SymmetricAlgorithmEnum;
-    use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 
     fn get_wrapper() -> SymmetricAlgorithmWrapper {
         SymmetricAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper()

@@ -163,6 +163,7 @@
 //! assert_eq!(plaintext, &decrypted[..]);
 //! ```
 use crate::common::algorithms::{KdfAlgorithm, SignatureAlgorithm, XofAlgorithm};
+use crate::common::config::ArcConfig;
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
 use decryptor::HybridDecryptorBuilder;
 use encryptor::{HybridEncryptor, HybridEncryptorBuilder};
@@ -403,15 +404,22 @@ impl HybridEncryptionOptions {
 /// 用于创建混合加密和解密执行器的工厂。
 /// 这个结构体是高级混合加密 API 的主要入口点。
 /// 它是无状态的，可以重复用于多个操作。
-#[derive(Default)]
-pub struct HybridSeal;
+pub struct HybridSeal {
+    config: ArcConfig,
+}
+
+impl Default for HybridSeal {
+    fn default() -> Self {
+        Self::new(ArcConfig::default())
+    }
+}
 
 impl HybridSeal {
     /// Creates a new `HybridSeal` factory.
     ///
     /// 创建一个新的 `HybridSeal` 工厂。
-    pub fn new() -> Self {
-        Self
+    pub fn new(config: ArcConfig) -> Self {
+        Self { config }
     }
 
     /// Begins a hybrid encryption operation.
@@ -425,14 +433,14 @@ impl HybridSeal {
     /// to configure advanced options or call an execution method (like `.to_vec()`)
     // to perform the encryption.
     pub fn encrypt_builder(&self) -> HybridEncryptorBuilder {
-        HybridEncryptorBuilder::new()
+        HybridEncryptorBuilder::new(self.config.clone())
     }
 
     /// Begins a hybrid encryption operation with a specified recipient.
     ///
     /// A convenience method that combines builder creation and recipient specification.
     pub fn encrypt(&self, pk: AsymmetricPublicKey, kek_id: String) -> HybridEncryptor {
-        HybridEncryptorBuilder::new().with_recipient(pk, kek_id)
+        HybridEncryptorBuilder::new(self.config.clone()).with_recipient(pk, kek_id)
     }
 
     /// Begins a hybrid encryption operation using a recommended Post-Quantum Cryptography (PQC) suite.
@@ -445,7 +453,7 @@ impl HybridSeal {
     /// 这提供了一个简化的 API，使用 `Kyber768` 进行密钥封装，
     /// 使用 `Aes256Gcm` 进行数据封装，这是为后量子安全推荐的组合。
     pub fn encrypt_pqc_suite(&self) -> PqcEncryptorBuilder {
-        PqcEncryptorBuilder::new()
+        PqcEncryptorBuilder::new(self.config.clone())
     }
 
     /// Begins a hybrid decryption operation.
@@ -463,7 +471,7 @@ impl HybridSeal {
     ///
     /// 该构建器还可以配置一个 `KeyProvider`，以在解密期间自动执行密钥查找过程。
     pub fn decrypt(&self) -> HybridDecryptorBuilder {
-        HybridDecryptorBuilder::new()
+        HybridDecryptorBuilder::new(self.config.clone())
     }
 }
 
@@ -503,7 +511,7 @@ mod tests {
         let sk_wrapped = AsymmetricPrivateKey::new(sk.to_bytes());
         let plaintext = get_test_data();
         let kek_id = "test-kek-id".to_string();
-        let seal = HybridSeal::new();
+        let seal = HybridSeal::new(ArcConfig::default());
 
         let encrypted = seal
             .encrypt(pk_wrapped, kek_id.clone())
@@ -525,7 +533,7 @@ mod tests {
         let sk_wrapped = AsymmetricPrivateKey::new(sk.to_bytes());
         let plaintext = get_test_data();
         let kek_id = "test-kek-id-parallel".to_string();
-        let seal = HybridSeal::new();
+        let seal = HybridSeal::new(ArcConfig::default());
 
         let encrypted = seal
             .encrypt(pk_wrapped, kek_id.clone())
@@ -549,7 +557,7 @@ mod tests {
         key_store.insert("test-kek".to_string(), sk_wrapped.clone());
 
         let plaintext = get_test_data();
-        let seal = HybridSeal::new();
+        let seal = HybridSeal::new(ArcConfig::default());
 
         // Encrypt
         let mut encrypted_data = Vec::new();
@@ -579,7 +587,7 @@ mod tests {
         let sk_wrapped = AsymmetricPrivateKey::new(sk.to_bytes());
         let plaintext = get_test_data();
         let kek_id = "test-kek-id-p-streaming".to_string();
-        let seal = HybridSeal::new();
+        let seal = HybridSeal::new(ArcConfig::default());
 
         let mut encrypted = Vec::new();
         seal.encrypt(pk_wrapped, kek_id.clone())
@@ -604,7 +612,7 @@ mod tests {
         let plaintext = get_test_data();
         let aad = b"test-associated-data-for-hybrid";
         let kek_id = "aad-kek".to_string();
-        let seal = HybridSeal::new();
+        let seal = HybridSeal::new(ArcConfig::default());
 
         // Encrypt with AAD
         let encrypted = seal
@@ -651,7 +659,7 @@ mod tests {
         let plaintext = get_test_data();
         let aad = b"test-signed-aad-memory";
         let kek_id = "test-signed-aad-kek-mem".to_string();
-        let seal = HybridSeal::new();
+        let seal = HybridSeal::new(ArcConfig::default());
 
         // 3. Encrypt with signer and AAD
         let encrypted = seal
@@ -702,7 +710,7 @@ mod tests {
         let kek_id = "test-kdf-kek-id".to_string();
         let salt = b"kdf-salt";
         let info = b"kdf-info";
-        let seal = HybridSeal::new();
+        let seal = HybridSeal::new(ArcConfig::default());
 
         // 2. Encryption with KDF
         let encrypted = seal
@@ -780,7 +788,7 @@ mod tests {
         let kek_id = "test-xof-kek-id".to_string();
         let salt = b"xof-salt";
         let info = b"xof-info";
-        let seal = HybridSeal::new();
+        let seal = HybridSeal::new(ArcConfig::default());
 
         // 2. Encryption with XOF
         let encrypted = seal
@@ -861,7 +869,7 @@ mod tests {
             key_store.insert(TEST_KEK_ID.to_string(), sk_wrapped.clone());
 
             let plaintext = get_test_data();
-            let seal = HybridSeal::new();
+            let seal = HybridSeal::new(ArcConfig::default());
 
             // Encrypt
             let mut encrypted_data = Vec::new();
@@ -902,7 +910,7 @@ mod tests {
             let kek_id = "test-kdf-kek-id-async".to_string();
             let salt = b"kdf-salt-async";
             let info = b"kdf-info-async";
-            let seal = HybridSeal::new();
+            let seal = HybridSeal::new(ArcConfig::default());
 
             // 2. Encryption with KDF
             let encrypted = seal
@@ -948,7 +956,7 @@ mod tests {
             let kek_id = "test-xof-kek-id-async".to_string();
             let salt = b"xof-salt-async";
             let info = b"xof-info-async";
-            let seal = HybridSeal::new();
+            let seal = HybridSeal::new(ArcConfig::default());
 
             // 2. Encryption with XOF
             let encrypted = seal
@@ -997,7 +1005,7 @@ mod tests {
             let plaintext = get_test_data();
             let aad = b"test-signed-aad-async";
             let kek_id = "test-signed-aad-kek-async".to_string();
-            let seal = HybridSeal::new();
+            let seal = HybridSeal::new(ArcConfig::default());
 
             // Encrypt
             let mut encrypted = Vec::new();

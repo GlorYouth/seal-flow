@@ -2,16 +2,18 @@
 //!
 //! 实现并行流式混合加解密方案。
 
-use super::common::create_header;
 use super::traits::{HybridParallelStreamingPendingDecryptor, HybridParallelStreamingProcessor};
 use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
-use crate::algorithms::traits::HybridAlgorithm as HybridAlgorithmTrait;
+use crate::algorithms::traits::HybridAlgorithm;
+use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::ParallelStreamingBodyProcessor;
+use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::{DerivationSet, SignerSet};
+use crate::common::RefOrOwned;
 use crate::error::{Error, FormatError, Result};
+use crate::hybrid::config::HybridConfig;
 use crate::hybrid::pending::PendingDecryptor;
-use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+use crate::keys::{TypedAsymmetricPrivateKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 
@@ -26,41 +28,27 @@ impl ParallelStreaming {
 impl HybridParallelStreamingProcessor for ParallelStreaming {
     fn encrypt_hybrid_pipeline<'a>(
         &self,
-        algorithm: &HybridAlgorithmWrapper,
-        public_key: &TypedAsymmetricPublicKey,
         reader: Box<dyn Read + Send + 'a>,
         mut writer: Box<dyn Write + Send + 'a>,
-        kek_id: String,
-        signer: Option<SignerSet>,
-        aad: Option<&[u8]>,
-        derivation_config: Option<DerivationSet>,
+        config: HybridConfig<'a>,
     ) -> Result<()> {
-        let (info, deriver_fn) = derivation_config
-            .map(|d| (d.derivation_info, d.deriver_fn))
-            .unzip();
-
-        let (header, base_nonce, shared_secret) =
-            create_header(algorithm, public_key, kek_id, signer, aad, info)?;
-
-        let dek = if let Some(f) = deriver_fn {
-            f(&shared_secret)?
-        } else {
-            shared_secret
-        };
-
-        let header_bytes = header.encode_to_vec()?;
+        let algo = config
+            .algorithm
+            .as_ref()
+            .symmetric_algorithm()
+            .clone_box_symmetric();
+        let body_config = config.into_encrypt_config()?;
+        let header_bytes = body_config.header_bytes();
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
-        writer.write_all(&header_bytes)?;
+        writer.write_all(header_bytes)?;
 
-        let algo = algorithm.symmetric_algorithm().clone_box_symmetric();
-        ParallelStreamingBodyProcessor::encrypt_body_pipeline(
-            &algo, dek, base_nonce, reader, writer, aad,
-        )
+        algo.encrypt_body_pipeline(reader, writer, body_config)
     }
 
     fn begin_decrypt_hybrid_pipeline<'a>(
         &self,
         mut reader: Box<dyn Read + Send + 'a>,
+        config: ArcConfig,
     ) -> Result<Box<dyn HybridParallelStreamingPendingDecryptor<'a> + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
         let asym_algo = header
@@ -78,6 +66,7 @@ impl HybridParallelStreamingProcessor for ParallelStreaming {
             source: reader,
             header,
             algorithm,
+            config,
         };
         Ok(Box::new(pending))
     }
@@ -90,22 +79,27 @@ impl<'a> HybridParallelStreamingPendingDecryptor<'a>
         self: Box<Self>,
         sk: &TypedAsymmetricPrivateKey,
         writer: Box<dyn Write + Send + 'a>,
-        aad: Option<&[u8]>,
+        aad: Option<Vec<u8>>,
     ) -> Result<()> {
         let reader = self.source;
-        let (encapsulated_key, base_nonce, derivation_info) = match &self.header.payload {
-            HeaderPayload::Hybrid {
+        let (encapsulated_key, base_nonce, derivation_info, chunk_size) =
+            if let HeaderPayload::Hybrid {
                 stream_info: Some(info),
                 encrypted_dek,
                 derivation_info,
+                chunk_size,
                 ..
-            } => (
-                Zeroizing::new(encrypted_dek.clone()),
-                info.base_nonce,
-                derivation_info.clone(),
-            ),
-            _ => return Err(Error::Format(FormatError::InvalidHeader)),
-        };
+            } = &self.header.payload
+            {
+                (
+                    Zeroizing::new(encrypted_dek.clone()),
+                    info.base_nonce,
+                    derivation_info.clone(),
+                    *chunk_size,
+                )
+            } else {
+                return Err(Error::Format(FormatError::InvalidHeader));
+            };
 
         let shared_secret = self
             .algorithm
@@ -121,14 +115,22 @@ impl<'a> HybridParallelStreamingPendingDecryptor<'a>
         };
 
         let dek = TypedSymmetricKey::from_bytes(
-            dek.as_slice(),
+            dek.as_ref(),
             self.algorithm.symmetric_algorithm().algorithm(),
         )?;
 
+        let body_config = BodyDecryptConfig {
+            key: RefOrOwned::Owned(dek),
+            nonce: base_nonce,
+            aad,
+            config: DecryptorConfig {
+                chunk_size,
+                arc_config: self.config,
+            },
+        };
+
         let algo = self.algorithm.symmetric_algorithm().clone_box_symmetric();
-        ParallelStreamingBodyProcessor::decrypt_body_pipeline(
-            &algo, dek, base_nonce, reader, writer, aad,
-        )
+        algo.decrypt_body_pipeline(reader, writer, body_config)
     }
 
     fn header(&self) -> &Header {
@@ -140,13 +142,12 @@ impl<'a> HybridParallelStreamingPendingDecryptor<'a>
 mod tests {
     use super::*;
     use crate::algorithms::definitions::{
-        asymmetric::Rsa2048Sha256Wrapper, hybrid::HybridAlgorithmWrapper,
-        symmetric::Aes256GcmWrapper,
+        asymmetric::Rsa2048Sha256Wrapper, symmetric::Aes256GcmWrapper,
     };
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
-    use crate::common::DerivationSet;
-    use crate::keys::{TypedAsymmetricPublicKey, TypedSymmetricKey};
+    use crate::common::{DerivationSet, RefOrOwned};
+    use crate::keys::TypedAsymmetricPublicKey;
     use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use std::io::Cursor;
@@ -177,22 +178,27 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
+
+        let config = HybridConfig {
+            algorithm: RefOrOwned::from_ref(&algorithm),
+            public_key: RefOrOwned::from_ref(&pk),
+            kek_id: kek_id.clone(),
+            signer: None,
+            aad: None,
+            derivation_config: None,
+            config: ArcConfig::default(),
+        };
+
         processor
-            .encrypt_hybrid_pipeline(
-                &algorithm,
-                &pk,
-                reader,
-                writer,
-                kek_id.clone(),
-                None,
-                None,
-                None,
-            )
+            .encrypt_hybrid_pipeline(reader, writer, config)
             .unwrap();
 
         let mut decrypted_data = Vec::new();
         let pending = processor
-            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_hybrid_pipeline(
+                Box::new(Cursor::new(&encrypted_data)),
+                ArcConfig::default(),
+            )
             .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending
@@ -213,22 +219,26 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
+
+        let config = HybridConfig {
+            algorithm: RefOrOwned::from_ref(&algorithm),
+            public_key: RefOrOwned::from_ref(&pk),
+            kek_id: kek_id.clone(),
+            signer: None,
+            aad: None,
+            derivation_config: None,
+            config: ArcConfig::default(),
+        };
         processor
-            .encrypt_hybrid_pipeline(
-                &algorithm,
-                &pk,
-                reader,
-                writer,
-                kek_id.clone(),
-                None,
-                None,
-                None,
-            )
+            .encrypt_hybrid_pipeline(reader, writer, config)
             .unwrap();
 
         let mut decrypted_data = Vec::new();
         let pending = processor
-            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_hybrid_pipeline(
+                Box::new(Cursor::new(&encrypted_data)),
+                ArcConfig::default(),
+            )
             .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending
@@ -249,17 +259,19 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
+
+        let config = HybridConfig {
+            algorithm: RefOrOwned::from_ref(&algorithm),
+            public_key: RefOrOwned::from_ref(&pk),
+            kek_id: kek_id.clone(),
+            signer: None,
+            aad: None,
+            derivation_config: None,
+            config: ArcConfig::default(),
+        };
+
         processor
-            .encrypt_hybrid_pipeline(
-                &algorithm,
-                &pk,
-                reader,
-                writer,
-                kek_id.clone(),
-                None,
-                None,
-                None,
-            )
+            .encrypt_hybrid_pipeline(reader, writer, config)
             .unwrap();
 
         // Tamper
@@ -268,7 +280,10 @@ mod tests {
 
         let mut decrypted_data = Vec::new();
         let pending = processor
-            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_hybrid_pipeline(
+                Box::new(Cursor::new(&encrypted_data)),
+                ArcConfig::default(),
+            )
             .unwrap();
         let result = pending.decrypt_to_writer(&sk, Box::new(&mut decrypted_data), None);
 
@@ -287,22 +302,27 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
+
+        let config = HybridConfig {
+            algorithm: RefOrOwned::from_ref(&algorithm),
+            public_key: RefOrOwned::from_ref(&pk),
+            kek_id: kek_id.clone(),
+            signer: None,
+            aad: None,
+            derivation_config: None,
+            config: ArcConfig::default(),
+        };
+
         processor
-            .encrypt_hybrid_pipeline(
-                &algorithm,
-                &pk,
-                reader,
-                writer,
-                kek_id.clone(),
-                None,
-                None,
-                None,
-            )
+            .encrypt_hybrid_pipeline(reader, writer, config)
             .unwrap();
 
         let mut decrypted_data = Vec::new();
         let pending = processor
-            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_hybrid_pipeline(
+                Box::new(Cursor::new(&encrypted_data)),
+                ArcConfig::default(),
+            )
             .unwrap();
         let result = pending.decrypt_to_writer(&sk2, Box::new(&mut decrypted_data), None);
         assert!(result.is_err());
@@ -314,28 +334,33 @@ mod tests {
         let processor = ParallelStreaming::new();
         let (pk, sk) = generate_test_keys();
         let plaintext = get_test_data(1024 * 256); // 256 KiB
-        let aad = b"parallel streaming aad";
+        let aad = b"parallel streaming aad".to_vec();
 
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
+
+        let config = HybridConfig {
+            algorithm: RefOrOwned::from_ref(&algorithm),
+            public_key: RefOrOwned::from_ref(&pk),
+            kek_id: "test_kek_id_aad".to_string(),
+            signer: None,
+            aad: Some(aad.clone()),
+            derivation_config: None,
+            config: ArcConfig::default(),
+        };
+
         processor
-            .encrypt_hybrid_pipeline(
-                &algorithm,
-                &pk,
-                reader,
-                writer,
-                "test_kek_id_aad".to_string(),
-                None,
-                Some(aad),
-                None,
-            )
+            .encrypt_hybrid_pipeline(reader, writer, config)
             .unwrap();
 
         // Decrypt with correct AAD
         let mut decrypted_data = Vec::new();
         let pending = processor
-            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_hybrid_pipeline(
+                Box::new(Cursor::new(&encrypted_data)),
+                ArcConfig::default(),
+            )
             .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some("test_kek_id_aad"));
         pending
@@ -346,19 +371,25 @@ mod tests {
         // Decrypt with wrong AAD fails
         let mut decrypted_data_fail = Vec::new();
         let pending_fail = processor
-            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_hybrid_pipeline(
+                Box::new(Cursor::new(&encrypted_data)),
+                ArcConfig::default(),
+            )
             .unwrap();
         let result = pending_fail.decrypt_to_writer(
             &sk,
             Box::new(&mut decrypted_data_fail),
-            Some(b"wrong aad"),
+            Some(b"wrong aad".to_vec()),
         );
         assert!(result.is_err());
 
         // Decrypt with no AAD fails
         let mut decrypted_data_fail2 = Vec::new();
         let pending_fail2 = processor
-            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_hybrid_pipeline(
+                Box::new(Cursor::new(&encrypted_data)),
+                ArcConfig::default(),
+            )
             .unwrap();
         let result2 =
             pending_fail2.decrypt_to_writer(&sk, Box::new(&mut decrypted_data_fail2), None);
@@ -393,25 +424,30 @@ mod tests {
         let mut encrypted_data = Vec::new();
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
+
+        let config = HybridConfig {
+            algorithm: RefOrOwned::from_ref(&algorithm),
+            public_key: RefOrOwned::from_ref(&pk),
+            kek_id: kek_id.clone(),
+            signer: None,
+            aad: None,
+            derivation_config: Some(DerivationSet {
+                derivation_info: DerivationInfo::Kdf(kdf_info),
+                deriver_fn: kdf_fn,
+            }),
+            config: ArcConfig::default(),
+        };
+
         processor
-            .encrypt_hybrid_pipeline(
-                &algorithm,
-                &pk,
-                reader,
-                writer,
-                kek_id.clone(),
-                None,
-                None,
-                Some(DerivationSet {
-                    derivation_info: DerivationInfo::Kdf(kdf_info),
-                    deriver_fn: kdf_fn,
-                }),
-            )
+            .encrypt_hybrid_pipeline(reader, writer, config)
             .unwrap();
 
         let mut decrypted_data = Vec::new();
         let pending = processor
-            .begin_decrypt_hybrid_pipeline(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_hybrid_pipeline(
+                Box::new(Cursor::new(&encrypted_data)),
+                ArcConfig::default(),
+            )
             .unwrap();
         assert_eq!(pending.header().payload.kek_id(), Some(kek_id.as_str()));
         pending

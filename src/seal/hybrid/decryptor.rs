@@ -1,3 +1,4 @@
+use crate::common::config::ArcConfig;
 use crate::common::header::Header;
 use crate::error::{FormatError, KeyManagementError};
 use crate::hybrid::traits::HybridAsynchronousProcessor;
@@ -144,17 +145,20 @@ pub type PendingAsyncStreamingDecryptor<'a> =
 /// A builder for hybrid decryption operations.
 ///
 /// 混合解密操作的构建器。
-#[derive(Default)]
 pub struct HybridDecryptorBuilder {
     key_provider: Option<Arc<dyn KeyProvider>>,
+    config: ArcConfig,
 }
 
 impl HybridDecryptorBuilder {
     /// Creates a new `HybridDecryptorBuilder`.
     ///
     /// 创建一个新的 `HybridDecryptorBuilder`。
-    pub fn new() -> Self {
-        Self { key_provider: None }
+    pub fn new(config: ArcConfig) -> Self {
+        Self {
+            key_provider: None,
+            config,
+        }
     }
 
     /// Attaches a `KeyProvider` to the builder.
@@ -176,7 +180,8 @@ impl HybridDecryptorBuilder {
     /// 从内存中的字节切片配置解密。
     pub fn slice(self, ciphertext: &[u8]) -> crate::Result<PendingInMemoryDecryptor> {
         let processor = crate::hybrid::ordinary::Ordinary::new();
-        let mid_level_pending = processor.begin_decrypt_hybrid_in_memory(ciphertext)?;
+        let mid_level_pending =
+            processor.begin_decrypt_hybrid_in_memory(ciphertext, self.config)?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
@@ -188,7 +193,7 @@ impl HybridDecryptorBuilder {
         ciphertext: &[u8],
     ) -> crate::Result<PendingInMemoryParallelDecryptor> {
         let processor = crate::hybrid::parallel::Parallel::new();
-        let mid_level_pending = processor.begin_decrypt_hybrid_parallel(ciphertext)?;
+        let mid_level_pending = processor.begin_decrypt_hybrid_parallel(ciphertext, self.config)?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
@@ -200,7 +205,8 @@ impl HybridDecryptorBuilder {
         reader: R,
     ) -> crate::Result<PendingStreamingDecryptor<'a>> {
         let processor = crate::hybrid::streaming::Streaming::new();
-        let mid_level_pending = processor.begin_decrypt_hybrid_from_stream(Box::new(reader))?;
+        let mid_level_pending =
+            processor.begin_decrypt_hybrid_from_stream(Box::new(reader), self.config)?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
@@ -212,7 +218,8 @@ impl HybridDecryptorBuilder {
         reader: R,
     ) -> crate::Result<PendingParallelStreamingDecryptor<'a>> {
         let processor = crate::hybrid::parallel_streaming::ParallelStreaming::new();
-        let mid_level_pending = processor.begin_decrypt_hybrid_pipeline(Box::new(reader))?;
+        let mid_level_pending =
+            processor.begin_decrypt_hybrid_pipeline(Box::new(reader), self.config)?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
@@ -227,7 +234,7 @@ impl HybridDecryptorBuilder {
         let processor = crate::hybrid::asynchronous::Asynchronous::new();
 
         let mid_level_pending = processor
-            .begin_decrypt_hybrid_async(Box::new(reader))
+            .begin_decrypt_hybrid_async(Box::new(reader), self.config)
             .await?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
@@ -266,7 +273,7 @@ impl<'a> PendingInMemoryDecryptor<'a> {
                 .asymmetric_algorithm()
                 .ok_or(FormatError::InvalidHeader)?,
         )?;
-        self.inner.into_plaintext(&typed_key, self.aad.as_deref())
+        self.inner.into_plaintext(&typed_key, self.aad)
     }
 }
 
@@ -303,7 +310,7 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
                 .asymmetric_algorithm()
                 .ok_or(FormatError::InvalidHeader)?,
         )?;
-        self.inner.into_plaintext(&typed_key, self.aad.as_deref())
+        self.inner.into_plaintext(&typed_key, self.aad)
     }
 }
 
@@ -340,7 +347,7 @@ impl<'a> PendingStreamingDecryptor<'a> {
                 .asymmetric_algorithm()
                 .ok_or(FormatError::InvalidHeader)?,
         )?;
-        self.inner.into_decryptor(&typed_key, self.aad.as_deref())
+        self.inner.into_decryptor(&typed_key, self.aad)
     }
 }
 
@@ -385,7 +392,7 @@ impl<'a> PendingParallelStreamingDecryptor<'a> {
                 .ok_or(FormatError::InvalidHeader)?,
         )?;
         self.inner
-            .decrypt_to_writer(&typed_key, Box::new(writer), self.aad.as_deref())
+            .decrypt_to_writer(&typed_key, Box::new(writer), self.aad)
     }
 }
 

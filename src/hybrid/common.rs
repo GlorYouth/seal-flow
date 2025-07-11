@@ -7,7 +7,6 @@ use crate::common::header::{
     DerivationInfo, Header, HeaderPayload, SealMode, SignerInfo, StreamInfo,
 };
 use crate::common::SignerSet;
-use crate::common::DEFAULT_CHUNK_SIZE;
 use crate::error::Result;
 use crate::keys::TypedAsymmetricPublicKey;
 use crate::keys::TypedSymmetricKey;
@@ -25,6 +24,7 @@ pub fn create_header<H: HybridAlgorithm + ?Sized>(
     signer: Option<SignerSet>,
     aad: Option<&[u8]>,
     derivation_info: Option<DerivationInfo>,
+    chunk_size: u32,
 ) -> Result<(Header, [u8; 12], TypedSymmetricKey)> {
     // 1. KEM Encapsulate
     // 1. KEM 封装
@@ -42,10 +42,8 @@ pub fn create_header<H: HybridAlgorithm + ?Sized>(
         kek_algorithm: algorithm.asymmetric_algorithm().algorithm(),
         dek_algorithm: algorithm.symmetric_algorithm().algorithm(),
         encrypted_dek: encapsulated_key.to_bytes(),
-        stream_info: Some(StreamInfo {
-            chunk_size: DEFAULT_CHUNK_SIZE,
-            base_nonce,
-        }),
+        chunk_size,
+        stream_info: Some(StreamInfo { base_nonce }),
         signature: None,
         derivation_info,
     };

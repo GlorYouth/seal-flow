@@ -10,6 +10,7 @@ use crate::algorithms::traits::SignatureAlgorithm;
 use crate::common::algorithms::{
     AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
+use crate::common::config::ArcConfig;
 use crate::keys::provider::EncryptionKeyProvider;
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
 use crate::seal::traits::{
@@ -44,9 +45,9 @@ impl PqcEncryptorBuilder {
     /// Creates a new PQC encryptor builder.
     ///
     /// 创建一个新的 PQC 加密器构建器。
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(config: ArcConfig) -> Self {
         Self {
-            inner: HybridEncryptorBuilder::new(),
+            inner: HybridEncryptorBuilder::new(config),
         }
     }
 

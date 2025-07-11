@@ -1,9 +1,9 @@
-use crate::common::config::ArcConfig;
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
-use crate::keys::TypedSymmetricKey;
 use crate::body::config::BodyEncryptConfig;
-use crate::symmetric::common::create_header;
+use crate::common::config::ArcConfig;
 use crate::common::RefOrOwned;
+use crate::keys::TypedSymmetricKey;
+use crate::symmetric::common::create_header;
 
 pub struct SymmetricConfig<'a> {
     pub algorithm: RefOrOwned<'a, SymmetricAlgorithmWrapper>,
@@ -15,7 +15,11 @@ pub struct SymmetricConfig<'a> {
 
 impl<'a> SymmetricConfig<'a> {
     pub fn into_encrypt_config(self) -> crate::Result<BodyEncryptConfig<'a>> {
-        let (header, base_nonce) = create_header(self.algorithm.as_ref(), self.key_id, self.config.chunk_size())?;
+        let (header, base_nonce) = create_header(
+            self.algorithm.as_ref(),
+            self.key_id,
+            self.config.chunk_size(),
+        )?;
         let header_bytes = header.encode_to_vec()?;
 
         Ok(BodyEncryptConfig {

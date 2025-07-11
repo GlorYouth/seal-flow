@@ -9,15 +9,18 @@
 
 use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::AsynchronousBodyProcessor;
-use crate::common::{config::{ArcConfig, DecryptorConfig}, RefOrOwned};
 use crate::common::header::{Header, HeaderPayload};
+use crate::common::{
+    config::{ArcConfig, DecryptorConfig},
+    RefOrOwned,
+};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
+use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{
     SymmetricAsynchronousPendingDecryptor, SymmetricAsynchronousProcessor,
 };
-use crate::symmetric::config::SymmetricConfig;
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
@@ -49,8 +52,7 @@ impl<'decr> SymmetricAsynchronousPendingDecryptor<'decr>
             },
         };
 
-        self.algorithm
-            .decrypt_body_async(self.source, config)
+        self.algorithm.decrypt_body_async(self.source, config)
     }
 
     fn header(&self) -> &Header {
@@ -346,7 +348,10 @@ mod tests {
 
         // Decrypt with correct AAD
         let mut decryptor = processor
-            .begin_decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data.clone())), config.clone())
+            .begin_decrypt_symmetric_async(
+                Box::new(Cursor::new(encrypted_data.clone())),
+                config.clone(),
+            )
             .await
             .unwrap()
             .into_decryptor(&key, aad)
@@ -358,7 +363,10 @@ mod tests {
 
         // Decrypt with wrong AAD should fail
         let decryptor_result_fail = processor
-            .begin_decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data.clone())), config.clone())
+            .begin_decrypt_symmetric_async(
+                Box::new(Cursor::new(encrypted_data.clone())),
+                config.clone(),
+            )
             .await
             .unwrap()
             .into_decryptor(&key, wrong_aad)

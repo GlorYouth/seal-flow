@@ -7,11 +7,11 @@ use crate::seal::traits::{
 };
 #[cfg(feature = "async")]
 use crate::symmetric::asynchronous::Asynchronous;
+use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::ordinary::Ordinary;
 use crate::symmetric::parallel::Parallel;
 use crate::symmetric::parallel_streaming::ParallelStreaming;
 use crate::symmetric::streaming::Streaming;
-use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::traits::*;
 use std::io::{Read, Write};
 #[cfg(feature = "async")]
@@ -87,7 +87,7 @@ impl InMemoryEncryptor for SymmetricEncryptorWithAlgorithm {
                 key_id: self.inner.key_id,
                 aad: self.inner.aad,
                 config: self.inner.config,
-            }
+            },
         )
     }
 
@@ -105,7 +105,7 @@ impl InMemoryEncryptor for SymmetricEncryptorWithAlgorithm {
                 key_id: self.inner.key_id,
                 aad: self.inner.aad,
                 config: self.inner.config,
-            }
+            },
         )
     }
 }
@@ -125,7 +125,7 @@ impl StreamingEncryptor for SymmetricEncryptorWithAlgorithm {
                 key_id: self.inner.key_id,
                 aad: self.inner.aad,
                 config: self.inner.config,
-            }
+            },
         )
     }
 
@@ -148,7 +148,7 @@ impl StreamingEncryptor for SymmetricEncryptorWithAlgorithm {
                 key_id: self.inner.key_id,
                 aad: self.inner.aad,
                 config: self.inner.config,
-            }
+            },
         )
     }
 }
@@ -173,7 +173,7 @@ impl AsyncStreamingEncryptor for SymmetricEncryptorWithAlgorithm {
                     key_id: self.inner.key_id,
                     aad: self.inner.aad,
                     config: self.inner.config,
-                }
+                },
             )
             .await
     }

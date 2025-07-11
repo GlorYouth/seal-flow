@@ -7,8 +7,8 @@ use std::borrow::Borrow;
 /// 这个模块从 `common` 目录中重新导出公共功能。
 pub mod algorithms;
 pub(crate) mod buffer;
-pub mod header;
 pub mod config;
+pub mod header;
 
 pub const DEFAULT_CHUNK_SIZE: u32 = 65536;
 
@@ -65,7 +65,6 @@ pub struct DerivationSet {
     pub(crate) deriver_fn:
         Box<dyn Fn(&TypedSymmetricKey) -> crate::Result<TypedSymmetricKey> + Send + Sync>,
 }
-
 
 pub enum RefOrOwned<'a, T> {
     Ref(&'a T),

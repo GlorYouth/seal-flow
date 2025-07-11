@@ -7,9 +7,7 @@
 use super::config::{BodyDecryptConfig, BodyEncryptConfig};
 use super::traits::OrdinaryBodyProcessor;
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::{
-    derive_nonce,
-};
+use crate::common::derive_nonce;
 use crate::error::Result;
 
 impl<S: SymmetricAlgorithm + ?Sized> OrdinaryBodyProcessor for S {
@@ -22,19 +20,26 @@ impl<S: SymmetricAlgorithm + ?Sized> OrdinaryBodyProcessor for S {
         config: BodyEncryptConfig,
     ) -> Result<Vec<u8>> {
         let mut encrypted_body = Vec::with_capacity(
-            plaintext.len() + (plaintext.len() / config.chunk_size() as usize + 1) * self.tag_size(),
+            plaintext.len()
+                + (plaintext.len() / config.chunk_size() as usize + 1) * self.tag_size(),
         );
 
         let mut temp_chunk_buffer = vec![0u8; config.chunk_size() as usize + self.tag_size()];
 
         for (i, chunk) in plaintext.chunks(config.chunk_size() as usize).enumerate() {
             let nonce = derive_nonce(config.nonce(), i as u64);
-            let bytes_written =
-                self.encrypt_to_buffer(config.key(), &nonce, chunk, &mut temp_chunk_buffer, config.aad())?;
+            let bytes_written = self.encrypt_to_buffer(
+                config.key(),
+                &nonce,
+                chunk,
+                &mut temp_chunk_buffer,
+                config.aad(),
+            )?;
             encrypted_body.extend_from_slice(&temp_chunk_buffer[..bytes_written]);
         }
 
-        let mut final_output = Vec::with_capacity(4 + config.header_bytes().len() + encrypted_body.len());
+        let mut final_output =
+            Vec::with_capacity(4 + config.header_bytes().len() + encrypted_body.len());
         final_output.extend_from_slice(&(config.header_bytes().len() as u32).to_le_bytes());
         final_output.extend_from_slice(config.header_bytes());
         final_output.extend_from_slice(&encrypted_body);

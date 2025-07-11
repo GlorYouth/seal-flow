@@ -4,15 +4,15 @@
 
 use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
 use crate::algorithms::traits::HybridAlgorithm;
-use crate::algorithms::traits::{
-    KdfAlgorithm, SignatureAlgorithm, XofAlgorithm,
-};
+use crate::algorithms::traits::{KdfAlgorithm, SignatureAlgorithm, XofAlgorithm};
 use crate::common::algorithms::{
     AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
+use crate::common::config::ArcConfig;
 use crate::common::header::{DerivationInfo, KdfInfo, XofInfo};
-use crate::common::{DerivationSet, SignerSet};
+use crate::common::{DerivationSet, RefOrOwned, SignerSet};
 use crate::error::KeyManagementError;
+use crate::hybrid::config::HybridConfig;
 use crate::hybrid::traits::{
     HybridAsynchronousProcessor, HybridOrdinaryProcessor, HybridParallelProcessor,
     HybridParallelStreamingProcessor, HybridStreamingProcessor,
@@ -33,17 +33,20 @@ use tokio::io::AsyncWrite;
 /// A builder for hybrid encryption operations.
 ///
 /// 混合加密操作的构建器。
-#[derive(Default)]
 pub struct HybridEncryptorBuilder {
     key_provider: Option<Arc<dyn EncryptionKeyProvider>>,
+    config: ArcConfig,
 }
 
 impl HybridEncryptorBuilder {
     /// Creates a new `HybridEncryptorBuilder`.
     ///
     /// 创建一个新的 `HybridEncryptorBuilder`。
-    pub fn new() -> Self {
-        Self { key_provider: None }
+    pub fn new(config: ArcConfig) -> Self {
+        Self {
+            key_provider: None,
+            config,
+        }
     }
 
     /// Attaches an `EncryptionKeyProvider` to the builder.
@@ -65,6 +68,7 @@ impl HybridEncryptorBuilder {
             signer: None,
             derivation_config: None,
             key_provider: self.key_provider,
+            config: self.config,
         }
     }
 
@@ -84,6 +88,7 @@ impl HybridEncryptorBuilder {
             signer: None,
             derivation_config: None,
             key_provider: self.key_provider,
+            config: self.config,
         })
     }
 }
@@ -100,6 +105,7 @@ pub struct HybridEncryptor {
     pub(crate) signer: Option<SignerSet>,
     pub(crate) derivation_config: Option<DerivationSet>,
     key_provider: Option<Arc<dyn EncryptionKeyProvider>>,
+    config: ArcConfig,
 }
 
 impl WithAad for HybridEncryptor {
@@ -289,15 +295,16 @@ impl InMemoryEncryptor for HybridEncryptorWithAlgorithms {
             .pk
             .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
 
-        processor.encrypt_hybrid_in_memory(
-            self.algorithm,
-            &pk,
-            plaintext,
-            self.inner.kek_id,
-            self.inner.signer,
-            self.inner.aad.as_deref(),
-            self.inner.derivation_config,
-        )
+        let config = HybridConfig {
+            algorithm: RefOrOwned::Owned(self.algorithm),
+            public_key: RefOrOwned::from_ref(&pk),
+            kek_id: self.inner.kek_id,
+            signer: self.inner.signer,
+            aad: self.inner.aad,
+            derivation_config: self.inner.derivation_config,
+            config: self.inner.config,
+        };
+        processor.encrypt_hybrid_in_memory(plaintext, config)
     }
 
     /// Encrypts the given plaintext in-memory using parallel processing.
@@ -310,15 +317,16 @@ impl InMemoryEncryptor for HybridEncryptorWithAlgorithms {
             .pk
             .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
 
-        processor.encrypt_parallel(
-            &self.algorithm,
-            &pk,
-            plaintext,
-            self.inner.kek_id,
-            self.inner.signer,
-            self.inner.aad.as_deref(),
-            self.inner.derivation_config,
-        )
+        let config = HybridConfig {
+            algorithm: RefOrOwned::Owned(self.algorithm),
+            public_key: RefOrOwned::from_ref(&pk),
+            kek_id: self.inner.kek_id,
+            signer: self.inner.signer,
+            aad: self.inner.aad,
+            derivation_config: self.inner.derivation_config,
+            config: self.inner.config,
+        };
+        processor.encrypt_parallel(plaintext, config)
     }
 }
 
@@ -333,15 +341,16 @@ impl StreamingEncryptorTrait for HybridEncryptorWithAlgorithms {
             .pk
             .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
 
-        processor.encrypt_hybrid_to_stream(
-            &self.algorithm,
-            &pk,
-            Box::new(writer),
-            self.inner.kek_id,
-            self.inner.signer,
-            self.inner.aad.as_deref(),
-            self.inner.derivation_config,
-        )
+        let config = HybridConfig {
+            algorithm: RefOrOwned::Owned(self.algorithm),
+            public_key: RefOrOwned::Owned(pk),
+            kek_id: self.inner.kek_id,
+            signer: self.inner.signer,
+            aad: self.inner.aad,
+            derivation_config: self.inner.derivation_config,
+            config: self.inner.config,
+        };
+        processor.encrypt_hybrid_to_stream(Box::new(writer), config)
     }
 
     /// Encrypts data from a reader and writes to a writer using parallel processing.
@@ -357,16 +366,16 @@ impl StreamingEncryptorTrait for HybridEncryptorWithAlgorithms {
             .inner
             .pk
             .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
-        processor.encrypt_hybrid_pipeline(
-            &self.algorithm,
-            &pk,
-            Box::new(reader),
-            Box::new(writer),
-            self.inner.kek_id,
-            self.inner.signer,
-            self.inner.aad.as_deref(),
-            self.inner.derivation_config,
-        )
+        let config = HybridConfig {
+            algorithm: RefOrOwned::Owned(self.algorithm),
+            public_key: RefOrOwned::from_ref(&pk),
+            kek_id: self.inner.kek_id,
+            signer: self.inner.signer,
+            aad: self.inner.aad,
+            derivation_config: self.inner.derivation_config,
+            config: self.inner.config,
+        };
+        processor.encrypt_hybrid_pipeline(Box::new(reader), Box::new(writer), config)
     }
 }
 
@@ -384,16 +393,17 @@ impl AsyncStreamingEncryptor for HybridEncryptorWithAlgorithms {
             .pk
             .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
         let processor = crate::hybrid::asynchronous::Asynchronous::new();
+        let config = HybridConfig {
+            algorithm: RefOrOwned::Owned(self.algorithm),
+            public_key: RefOrOwned::Owned(pk),
+            kek_id: self.inner.kek_id,
+            signer: self.inner.signer,
+            aad: self.inner.aad,
+            derivation_config: self.inner.derivation_config,
+            config: self.inner.config,
+        };
         processor
-            .encrypt_hybrid_async(
-                &self.algorithm,
-                &pk,
-                Box::new(writer),
-                self.inner.kek_id,
-                self.inner.signer,
-                self.inner.aad.clone(),
-                self.inner.derivation_config,
-            )
+            .encrypt_hybrid_async(Box::new(writer), config)
             .await
     }
 }

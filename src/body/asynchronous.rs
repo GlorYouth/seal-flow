@@ -10,10 +10,7 @@
 
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::common::buffer::BufferPool;
-use crate::common::{
-    config::ArcConfig,
-    derive_nonce, OrderedChunk,
-};
+use crate::common::{config::ArcConfig, derive_nonce, OrderedChunk};
 use crate::error::{Error, Result};
 use crate::keys::TypedSymmetricKey;
 use bytes::BytesMut;
@@ -91,7 +88,13 @@ impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
         algorithm: SymmetricAlgorithmWrapper,
         config: BodyEncryptConfig<'a>,
     ) -> Self {
-        let BodyEncryptConfig { key, nonce, aad, config, .. } = config;
+        let BodyEncryptConfig {
+            key,
+            nonce,
+            aad,
+            config,
+            ..
+        } = config;
         let chunk_size = config.chunk_size() as usize;
         let out_pool = Arc::new(BufferPool::new(chunk_size + algorithm.tag_size()));
 
@@ -365,7 +368,13 @@ impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
         algorithm: SymmetricAlgorithmWrapper,
         config: BodyDecryptConfig<'a>,
     ) -> Self {
-        let BodyDecryptConfig { key, nonce, aad, config, .. } = config;
+        let BodyDecryptConfig {
+            key,
+            nonce,
+            aad,
+            config,
+            ..
+        } = config;
         let decrypted_chunk_size = config.chunk_size() as usize;
         let encrypted_chunk_size = decrypted_chunk_size + algorithm.tag_size();
         let out_pool = Arc::new(BufferPool::new(decrypted_chunk_size));
@@ -598,9 +607,9 @@ impl<R: AsyncRead + Unpin> AsyncRead for DecryptorImpl<R> {
 
 // --- AsynchronousBodyProcessor Implementation ---
 
+use super::config::{BodyDecryptConfig, BodyEncryptConfig};
 use super::traits::AsynchronousBodyProcessor;
 use crate::algorithms::traits::SymmetricAlgorithm;
-use super::config::{BodyDecryptConfig, BodyEncryptConfig};
 
 impl<S: SymmetricAlgorithm + ?Sized> AsynchronousBodyProcessor for S {
     fn encrypt_body_async<'a>(
@@ -608,11 +617,8 @@ impl<S: SymmetricAlgorithm + ?Sized> AsynchronousBodyProcessor for S {
         writer: Box<dyn AsyncWrite + Send + Unpin + 'a>,
         config: BodyEncryptConfig<'a>,
     ) -> Result<Box<dyn AsyncWrite + Send + Unpin + 'a>> {
-        let encryptor = EncryptorImpl::new(
-            writer,
-            self.algorithm().into_symmetric_wrapper(),
-            config,
-        );
+        let encryptor =
+            EncryptorImpl::new(writer, self.algorithm().into_symmetric_wrapper(), config);
         Ok(Box::new(encryptor))
     }
 
@@ -621,11 +627,8 @@ impl<S: SymmetricAlgorithm + ?Sized> AsynchronousBodyProcessor for S {
         reader: Box<dyn AsyncRead + Send + Unpin + 'a>,
         config: BodyDecryptConfig<'a>,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin + 'a>> {
-        let decryptor = DecryptorImpl::new(
-            reader,
-            self.algorithm().into_symmetric_wrapper(),
-            config,
-        );
+        let decryptor =
+            DecryptorImpl::new(reader, self.algorithm().into_symmetric_wrapper(), config);
         Ok(Box::new(decryptor))
     }
 }

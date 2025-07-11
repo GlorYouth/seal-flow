@@ -31,7 +31,13 @@ where
     R: Read + Send,
     W: Write,
 {
-    let BodyEncryptConfig { key, nonce, aad, config, .. } = config;
+    let BodyEncryptConfig {
+        key,
+        nonce,
+        aad,
+        config,
+        ..
+    } = config;
     let key = Arc::new(key);
     let aad_arc = Arc::new(aad.map(|d| d.to_vec()));
     let pool = Arc::new(BufferPool::new(config.chunk_size() as usize));
@@ -207,7 +213,13 @@ where
     R: Read + Send,
     W: Write,
 {
-    let BodyDecryptConfig { key, nonce, aad, config, .. } = config;
+    let BodyDecryptConfig {
+        key,
+        nonce,
+        aad,
+        config,
+        ..
+    } = config;
     let encrypted_chunk_size = (config.chunk_size() as usize) + algorithm.tag_size();
     let key = Arc::new(key);
     let aad_arc = Arc::new(aad.map(|d| d.to_vec()));

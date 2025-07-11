@@ -1,5 +1,8 @@
 use crate::{
-    common::{config::{ArcConfig, DecryptorConfig}, RefOrOwned},
+    common::{
+        config::{ArcConfig, DecryptorConfig},
+        RefOrOwned,
+    },
     keys::TypedSymmetricKey,
 };
 
@@ -31,7 +34,7 @@ impl<'a> BodyEncryptConfig<'a> {
     pub(crate) fn chunk_size(&self) -> usize {
         self.config.chunk_size() as usize
     }
-    
+
     pub(crate) fn channel_bound(&self) -> usize {
         self.config.channel_bound()
     }
@@ -60,7 +63,7 @@ impl<'a> BodyDecryptConfig<'a> {
     pub(crate) fn chunk_size(&self) -> usize {
         self.config.chunk_size() as usize
     }
-    
+
     pub(crate) fn channel_bound(&self) -> usize {
         self.config.channel_bound()
     }

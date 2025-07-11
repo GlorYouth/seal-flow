@@ -3,6 +3,7 @@
 //! 定义用于不同混合加密模式的通用 PendingDecryptor。
 
 use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
+use crate::common::config::ArcConfig;
 use crate::common::header::Header;
 
 /// A generic decryptor that is pending the provision of a key.
@@ -13,4 +14,5 @@ pub struct PendingDecryptor<Source> {
     pub(super) source: Source,
     pub(super) header: Header,
     pub(super) algorithm: HybridAlgorithmWrapper,
+    pub(super) config: ArcConfig,
 }

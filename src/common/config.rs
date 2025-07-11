@@ -16,10 +16,9 @@ impl Default for ConfigIndex {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct ArcConfig {
+pub struct ArcConfig {
     index: Arc<ConfigIndex>,
 }
-
 
 impl ArcConfig {
     pub fn chunk_size(&self) -> u32 {

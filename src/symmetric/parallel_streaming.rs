@@ -5,18 +5,21 @@
 //! 实现并行流式对称加解密方案。
 //! 此模式通过将 I/O 与并行计算重叠，专为高性能处理大文件或数据流而设计。
 
+use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::ParallelStreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
+use crate::common::{
+    config::{ArcConfig, DecryptorConfig},
+    RefOrOwned,
+};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
+use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{
     SymmetricParallelStreamingPendingDecryptor, SymmetricParallelStreamingProcessor,
 };
 use std::io::{Read, Write};
-use crate::body::config::BodyDecryptConfig;
-use crate::common::{config::{ArcConfig, DecryptorConfig}, RefOrOwned};
-use crate::symmetric::config::SymmetricConfig;
 
 impl<'a> SymmetricParallelStreamingPendingDecryptor<'a>
     for PendingDecryptor<Box<dyn Read + Send + 'a>>
@@ -75,9 +78,7 @@ impl SymmetricParallelStreamingProcessor for ParallelStreaming {
         let header_bytes = config.header_bytes();
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(header_bytes)?;
-        algo
-            .as_ref()
-            .encrypt_body_pipeline(reader, writer, config)
+        algo.as_ref().encrypt_body_pipeline(reader, writer, config)
     }
 
     fn begin_decrypt_symmetric_pipeline<'a>(
@@ -347,7 +348,7 @@ mod tests {
                     config: config.clone(),
                     key: RefOrOwned::from_ref(&key),
                     aad: Some(aad.clone()),
-                }
+                },
             )
             .unwrap();
 

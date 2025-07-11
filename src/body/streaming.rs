@@ -39,8 +39,14 @@ impl<W: Write> EncryptorImpl<W> {
         config: BodyEncryptConfig<'a>,
     ) -> Result<Self> {
         let encrypted_chunk_buffer = vec![0u8; config.chunk_size() as usize + algorithm.tag_size()];
-        let BodyEncryptConfig { key, nonce, aad, config, .. } = config;
-        
+        let BodyEncryptConfig {
+            key,
+            nonce,
+            aad,
+            config,
+            ..
+        } = config;
+
         Ok(Self {
             writer,
             algorithm,
@@ -175,7 +181,9 @@ impl<R: Read> DecryptorImpl<R> {
         config: BodyDecryptConfig<'a>,
     ) -> Self {
         let encrypted_chunk_size = config.chunk_size() as usize + algorithm.tag_size();
-        let BodyDecryptConfig { key, nonce, aad, .. } = config;
+        let BodyDecryptConfig {
+            key, nonce, aad, ..
+        } = config;
         Self {
             reader,
             algorithm,
@@ -258,11 +266,8 @@ impl<S: SymmetricAlgorithm + ?Sized> StreamingBodyProcessor for S {
         writer: Box<dyn Write + 'a>,
         config: BodyEncryptConfig<'a>,
     ) -> Result<Box<dyn Write + 'a>> {
-        let encryptor = EncryptorImpl::new(
-            writer,
-            self.algorithm().into_symmetric_wrapper(),
-            config,
-        )?;
+        let encryptor =
+            EncryptorImpl::new(writer, self.algorithm().into_symmetric_wrapper(), config)?;
         Ok(Box::new(encryptor))
     }
 
@@ -271,11 +276,8 @@ impl<S: SymmetricAlgorithm + ?Sized> StreamingBodyProcessor for S {
         reader: Box<dyn Read + 'a>,
         config: BodyDecryptConfig<'a>,
     ) -> Result<Box<dyn Read + 'a>> {
-        let decryptor = DecryptorImpl::new(
-            reader,
-            self.algorithm().into_symmetric_wrapper(),
-            config,
-        );
+        let decryptor =
+            DecryptorImpl::new(reader, self.algorithm().into_symmetric_wrapper(), config);
         Ok(Box::new(decryptor))
     }
 }

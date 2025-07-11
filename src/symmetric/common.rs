@@ -24,9 +24,7 @@ pub fn create_header<S: SymmetricAlgorithm>(
             key_id,
             algorithm: algorithm.algorithm(),
             chunk_size,
-            stream_info: Some(StreamInfo {
-                base_nonce,
-            }),
+            stream_info: Some(StreamInfo { base_nonce }),
         },
     };
     Ok((header, base_nonce))

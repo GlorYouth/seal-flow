@@ -2,17 +2,19 @@
 //!
 //! 为同步、流式对称加密实现 `std::io` trait。
 
+use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::StreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
+use crate::common::{
+    config::{ArcConfig, DecryptorConfig},
+    RefOrOwned,
+};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
+use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{SymmetricStreamingPendingDecryptor, SymmetricStreamingProcessor};
-use crate::body::config::BodyDecryptConfig;
-use crate::common::{config::{ArcConfig, DecryptorConfig}, RefOrOwned};
-use crate::symmetric::config::SymmetricConfig;
 use std::io::{Read, Write};
-
 
 impl<'a> SymmetricStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Read + 'a>> {
     fn into_decryptor(
@@ -38,8 +40,7 @@ impl<'a> SymmetricStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Rea
                 arc_config: self.config,
             },
         };
-        self.algorithm
-            .decrypt_body_from_stream(self.source, config)
+        self.algorithm.decrypt_body_from_stream(self.source, config)
     }
 
     fn header(&self) -> &Header {
@@ -129,7 +130,10 @@ mod tests {
 
         // Decrypt using the new two-step process
         let pending_decryptor = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
+            .begin_decrypt_symmetric_from_stream(
+                Box::new(Cursor::new(&encrypted_data)),
+                config.clone(),
+            )
             .unwrap();
         assert_eq!(
             pending_decryptor.header().payload.key_id(),
@@ -172,7 +176,10 @@ mod tests {
 
         // Decrypt
         let pending = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
+            .begin_decrypt_symmetric_from_stream(
+                Box::new(Cursor::new(&encrypted_data)),
+                config.clone(),
+            )
             .unwrap();
         let mut decrypt_stream = pending.into_decryptor(&key, aad).unwrap();
         let mut decrypted_data = Vec::new();
@@ -237,7 +244,10 @@ mod tests {
         }
 
         let pending = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
+            .begin_decrypt_symmetric_from_stream(
+                Box::new(Cursor::new(&encrypted_data)),
+                config.clone(),
+            )
             .unwrap();
         let mut decryptor = pending.into_decryptor(&key, None).unwrap();
         let result = decryptor.read_to_end(&mut Vec::new());
@@ -276,7 +286,10 @@ mod tests {
 
         // Attempt to decrypt with the wrong key
         let pending_decryptor = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
+            .begin_decrypt_symmetric_from_stream(
+                Box::new(Cursor::new(&encrypted_data)),
+                config.clone(),
+            )
             .unwrap();
 
         let decryptor_result = pending_decryptor.into_decryptor(&wrong_key, None);
@@ -323,7 +336,10 @@ mod tests {
 
         // Decrypt with correct AAD
         let pending = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
+            .begin_decrypt_symmetric_from_stream(
+                Box::new(Cursor::new(&encrypted_data)),
+                config.clone(),
+            )
             .unwrap();
         let mut decryptor = pending.into_decryptor(&key, Some(aad.to_vec())).unwrap();
         let mut decrypted_data = Vec::new();
@@ -332,7 +348,10 @@ mod tests {
 
         // Decrypt with wrong AAD should fail
         let pending_fail = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
+            .begin_decrypt_symmetric_from_stream(
+                Box::new(Cursor::new(&encrypted_data)),
+                config.clone(),
+            )
             .unwrap();
         let decryptor_result = pending_fail.into_decryptor(&key, Some(wrong_aad.to_vec()));
         assert!(
@@ -345,7 +364,10 @@ mod tests {
 
         // Decrypt with no AAD should also fail
         let pending_fail2 = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
+            .begin_decrypt_symmetric_from_stream(
+                Box::new(Cursor::new(&encrypted_data)),
+                config.clone(),
+            )
             .unwrap();
         let decryptor_result2 = pending_fail2.into_decryptor(&key, None);
         assert!(

@@ -21,7 +21,14 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
         plaintext: &[u8],
         config: BodyEncryptConfig<'a>,
     ) -> Result<Vec<u8>> {
-        let BodyEncryptConfig { key, nonce, header_bytes, aad, config, .. } = config;
+        let BodyEncryptConfig {
+            key,
+            nonce,
+            header_bytes,
+            aad,
+            config,
+            ..
+        } = config;
         let chunk_size = config.chunk_size() as usize;
         let tag_size = self.tag_size();
 
@@ -65,9 +72,15 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
                     let expected_output_len = input_chunk.len() + tag_size;
                     let buffer_slice = &mut output_chunk[..expected_output_len];
 
-                    self.encrypt_to_buffer(key.as_ref(), &nonce, input_chunk, buffer_slice, aad.as_deref())
-                        .map(|_| ())
-                        .map_err(Error::from)
+                    self.encrypt_to_buffer(
+                        key.as_ref(),
+                        &nonce,
+                        input_chunk,
+                        buffer_slice,
+                        aad.as_deref(),
+                    )
+                    .map(|_| ())
+                    .map_err(Error::from)
                 })?;
         }
 
@@ -82,7 +95,13 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
         ciphertext_body: &'a [u8],
         config: BodyDecryptConfig<'a>,
     ) -> Result<Vec<u8>> {
-        let BodyDecryptConfig { key, nonce, aad, config, .. } = config;
+        let BodyDecryptConfig {
+            key,
+            nonce,
+            aad,
+            config,
+            ..
+        } = config;
         let chunk_size = config.chunk_size() as usize;
         let tag_len = self.tag_size();
         let encrypted_chunk_size = chunk_size + tag_len;
@@ -123,8 +142,14 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
 
                 // Decrypt the chunk
                 // 解密数据块
-                self.decrypt_to_buffer(key.as_ref(), &nonce, encrypted_chunk, plaintext_chunk, aad.as_deref())
-                    .map_err(Error::from)
+                self.decrypt_to_buffer(
+                    key.as_ref(),
+                    &nonce,
+                    encrypted_chunk,
+                    plaintext_chunk,
+                    aad.as_deref(),
+                )
+                .map_err(Error::from)
             })
             .collect::<Result<Vec<usize>>>()?;
 

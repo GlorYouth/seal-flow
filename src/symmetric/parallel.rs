@@ -2,15 +2,18 @@
 //!
 //! 实现并行（多线程，内存中）对称加密方案。
 
+use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::ParallelBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
+use crate::common::{
+    config::{ArcConfig, DecryptorConfig},
+    RefOrOwned,
+};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
+use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{SymmetricParallelPendingDecryptor, SymmetricParallelProcessor};
-use crate::body::config::BodyDecryptConfig;
-use crate::common::{config::{ArcConfig, DecryptorConfig}, RefOrOwned};
-use crate::symmetric::config::SymmetricConfig;
 
 impl<'a> SymmetricParallelPendingDecryptor<'a> for PendingDecryptor<&'a [u8]> {
     fn into_plaintext(
@@ -90,11 +93,11 @@ impl SymmetricParallelProcessor for Parallel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
     use crate::common::DEFAULT_CHUNK_SIZE;
     use crate::error::CryptoError;
     use crate::error::Error as FlowError;
     use crate::prelude::SymmetricAlgorithmEnum;
-    use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
     fn get_wrapper() -> SymmetricAlgorithmWrapper {
         SymmetricAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper()
     }
