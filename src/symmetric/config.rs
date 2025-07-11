@@ -1,13 +1,13 @@
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::body::config::BodyEncryptConfig;
 use crate::common::config::ArcConfig;
-use crate::common::RefOrOwned;
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::common::create_header;
+use std::borrow::Cow;
 
 pub struct SymmetricConfig<'a> {
-    pub algorithm: RefOrOwned<'a, SymmetricAlgorithmWrapper>,
-    pub key: RefOrOwned<'a, TypedSymmetricKey>,
+    pub algorithm: Cow<'a, SymmetricAlgorithmWrapper>,
+    pub key: Cow<'a, TypedSymmetricKey>,
     pub key_id: String,
     pub aad: Option<Vec<u8>>,
     pub config: ArcConfig,

@@ -9,12 +9,12 @@ use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::ParallelStreamingBodyProcessor;
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::RefOrOwned;
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::config::HybridConfig;
 use crate::hybrid::pending::PendingDecryptor;
 use crate::keys::{TypedAsymmetricPrivateKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
+use std::borrow::Cow;
 use std::io::{Read, Write};
 
 pub struct ParallelStreaming;
@@ -120,7 +120,7 @@ impl<'a> HybridParallelStreamingPendingDecryptor<'a>
         )?;
 
         let body_config = BodyDecryptConfig {
-            key: RefOrOwned::Owned(dek),
+            key: Cow::Owned(dek),
             nonce: base_nonce,
             aad,
             config: DecryptorConfig {
@@ -146,12 +146,12 @@ mod tests {
     };
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
-    use crate::common::{DerivationSet, RefOrOwned};
+    use crate::common::DerivationSet;
     use crate::keys::TypedAsymmetricPublicKey;
     use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
+    use std::borrow::Cow;
     use std::io::Cursor;
-
     fn get_test_data(size: usize) -> Vec<u8> {
         (0..size).map(|i| (i % 256) as u8).collect()
     }
@@ -180,8 +180,8 @@ mod tests {
         let writer = Box::new(&mut encrypted_data);
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::from_ref(&algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: kek_id.clone(),
             signer: None,
             aad: None,
@@ -221,8 +221,8 @@ mod tests {
         let writer = Box::new(&mut encrypted_data);
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::from_ref(&algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: kek_id.clone(),
             signer: None,
             aad: None,
@@ -261,8 +261,8 @@ mod tests {
         let writer = Box::new(&mut encrypted_data);
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::from_ref(&algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: kek_id.clone(),
             signer: None,
             aad: None,
@@ -304,8 +304,8 @@ mod tests {
         let writer = Box::new(&mut encrypted_data);
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::from_ref(&algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: kek_id.clone(),
             signer: None,
             aad: None,
@@ -341,8 +341,8 @@ mod tests {
         let writer = Box::new(&mut encrypted_data);
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::from_ref(&algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id_aad".to_string(),
             signer: None,
             aad: Some(aad.clone()),
@@ -426,8 +426,8 @@ mod tests {
         let writer = Box::new(&mut encrypted_data);
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::from_ref(&algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: kek_id.clone(),
             signer: None,
             aad: None,

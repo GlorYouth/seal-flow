@@ -1,5 +1,5 @@
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
-use crate::common::{config::ArcConfig, RefOrOwned};
+use crate::common::config::ArcConfig;
 use crate::keys::SymmetricKey;
 use crate::prelude::SymmetricAlgorithmEnum;
 use crate::seal::traits::{
@@ -13,6 +13,9 @@ use crate::symmetric::parallel::Parallel;
 use crate::symmetric::parallel_streaming::ParallelStreaming;
 use crate::symmetric::streaming::Streaming;
 use crate::symmetric::traits::*;
+#[cfg(feature = "async")]
+use async_trait::async_trait;
+use std::borrow::Cow;
 use std::io::{Read, Write};
 #[cfg(feature = "async")]
 use tokio::io::AsyncWrite;
@@ -82,8 +85,8 @@ impl InMemoryEncryptor for SymmetricEncryptorWithAlgorithm {
         processor.encrypt_symmetric_in_memory(
             plaintext,
             SymmetricConfig {
-                algorithm: RefOrOwned::from_owned(self.algorithm),
-                key: RefOrOwned::from_ref(&typed_key),
+                algorithm: Cow::Owned(self.algorithm),
+                key: Cow::Borrowed(&typed_key),
                 key_id: self.inner.key_id,
                 aad: self.inner.aad,
                 config: self.inner.config,
@@ -100,8 +103,8 @@ impl InMemoryEncryptor for SymmetricEncryptorWithAlgorithm {
         processor.encrypt_symmetric_parallel(
             plaintext,
             SymmetricConfig {
-                algorithm: RefOrOwned::from_owned(self.algorithm),
-                key: RefOrOwned::from_ref(&typed_key),
+                algorithm: Cow::Owned(self.algorithm),
+                key: Cow::Borrowed(&typed_key),
                 key_id: self.inner.key_id,
                 aad: self.inner.aad,
                 config: self.inner.config,
@@ -120,8 +123,8 @@ impl StreamingEncryptor for SymmetricEncryptorWithAlgorithm {
         processor.encrypt_symmetric_to_stream(
             Box::new(writer),
             SymmetricConfig {
-                algorithm: RefOrOwned::from_owned(self.algorithm),
-                key: RefOrOwned::from_owned(typed_key),
+                algorithm: Cow::Owned(self.algorithm),
+                key: Cow::Owned(typed_key),
                 key_id: self.inner.key_id,
                 aad: self.inner.aad,
                 config: self.inner.config,
@@ -143,8 +146,8 @@ impl StreamingEncryptor for SymmetricEncryptorWithAlgorithm {
             Box::new(reader),
             Box::new(writer),
             SymmetricConfig {
-                algorithm: RefOrOwned::from_owned(self.algorithm),
-                key: RefOrOwned::from_ref(&typed_key),
+                algorithm: Cow::Owned(self.algorithm),
+                key: Cow::Borrowed(&typed_key),
                 key_id: self.inner.key_id,
                 aad: self.inner.aad,
                 config: self.inner.config,
@@ -154,6 +157,7 @@ impl StreamingEncryptor for SymmetricEncryptorWithAlgorithm {
 }
 
 #[cfg(feature = "async")]
+#[async_trait]
 impl AsyncStreamingEncryptor for SymmetricEncryptorWithAlgorithm {
     /// Creates an asynchronous streaming encryptor that wraps the given `AsyncWrite` implementation.
     ///
@@ -168,8 +172,8 @@ impl AsyncStreamingEncryptor for SymmetricEncryptorWithAlgorithm {
             .encrypt_symmetric_async(
                 Box::new(writer),
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_owned(self.algorithm),
-                    key: RefOrOwned::from_owned(typed_key),
+                    algorithm: Cow::Owned(self.algorithm),
+                    key: Cow::Owned(typed_key),
                     key_id: self.inner.key_id,
                     aad: self.inner.aad,
                     config: self.inner.config,

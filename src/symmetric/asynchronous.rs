@@ -9,11 +9,8 @@
 
 use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::AsynchronousBodyProcessor;
+use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::{
-    config::{ArcConfig, DecryptorConfig},
-    RefOrOwned,
-};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::config::SymmetricConfig;
@@ -22,6 +19,7 @@ use crate::symmetric::traits::{
     SymmetricAsynchronousPendingDecryptor, SymmetricAsynchronousProcessor,
 };
 use async_trait::async_trait;
+use std::borrow::Cow;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 #[async_trait]
@@ -43,7 +41,7 @@ impl<'decr> SymmetricAsynchronousPendingDecryptor<'decr>
         };
 
         let config = BodyDecryptConfig {
-            key: RefOrOwned::from_owned(key.clone()),
+            key: Cow::Owned(key.clone()),
             nonce,
             aad,
             config: DecryptorConfig {
@@ -132,10 +130,10 @@ mod tests {
                 .encrypt_symmetric_async(
                     Box::new(&mut encrypted_data),
                     SymmetricConfig {
-                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        algorithm: Cow::Borrowed(&wrapper),
                         key_id: key_id.clone(),
                         config: config.clone(),
-                        key: RefOrOwned::from_owned(key.clone()),
+                        key: Cow::Owned(key.clone()),
                         aad: aad.clone(),
                     },
                 )
@@ -174,10 +172,10 @@ mod tests {
                 .encrypt_symmetric_async(
                     Box::new(&mut encrypted_data),
                     SymmetricConfig {
-                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        algorithm: Cow::Borrowed(&wrapper),
                         key_id: "proc_key".to_string(),
                         config: config.clone(),
-                        key: RefOrOwned::from_ref(&untyped),
+                        key: Cow::Borrowed(&untyped),
                         aad: aad.clone(),
                     },
                 )
@@ -248,10 +246,10 @@ mod tests {
                 .encrypt_symmetric_async(
                     Box::new(&mut encrypted_data),
                     SymmetricConfig {
-                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        algorithm: Cow::Borrowed(&wrapper),
                         key_id: "test_key_id".to_string(),
                         config: config.clone(),
-                        key: RefOrOwned::from_ref(&key),
+                        key: Cow::Borrowed(&key),
                         aad: None,
                     },
                 )
@@ -293,10 +291,10 @@ mod tests {
                 .encrypt_symmetric_async(
                     Box::new(&mut encrypted_data),
                     SymmetricConfig {
-                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        algorithm: Cow::Borrowed(&wrapper),
                         key_id: "key1".to_string(),
                         config: config.clone(),
-                        key: RefOrOwned::from_ref(&correct_key),
+                        key: Cow::Borrowed(&correct_key),
                         aad: None,
                     },
                 )
@@ -333,10 +331,10 @@ mod tests {
                 .encrypt_symmetric_async(
                     Box::new(&mut encrypted_data),
                     SymmetricConfig {
-                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        algorithm: Cow::Borrowed(&wrapper),
                         key_id: "key1".to_string(),
                         config: config.clone(),
-                        key: RefOrOwned::from_ref(&key),
+                        key: Cow::Borrowed(&key),
                         aad: aad.clone(),
                     },
                 )

@@ -7,6 +7,8 @@
 use crate::common::header::Header;
 use crate::error::Result;
 use crate::keys::SignaturePublicKey;
+#[cfg(feature = "async")]
+use async_trait::async_trait;
 use std::io::{Read, Write};
 #[cfg(feature = "async")]
 use tokio::io::AsyncRead;
@@ -166,6 +168,8 @@ pub trait StreamingEncryptor {
 /// A trait for creating an asynchronous streaming encryptor.
 ///
 /// 用于创建异步流式加密器的 trait。
+#[cfg(feature = "async")]
+#[async_trait]
 pub trait AsyncStreamingEncryptor {
     /// Creates an asynchronous streaming encryptor that wraps the given `AsyncWrite` implementation.
     ///

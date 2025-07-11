@@ -1,13 +1,12 @@
+use std::borrow::Cow;
+
 use crate::{
-    common::{
-        config::{ArcConfig, DecryptorConfig},
-        RefOrOwned,
-    },
+    common::config::{ArcConfig, DecryptorConfig},
     keys::TypedSymmetricKey,
 };
 
 pub struct BodyEncryptConfig<'a> {
-    pub key: RefOrOwned<'a, TypedSymmetricKey>,
+    pub key: Cow<'a, TypedSymmetricKey>,
     pub nonce: [u8; 12],
     pub header_bytes: Vec<u8>,
     pub aad: Option<Vec<u8>>,
@@ -41,7 +40,7 @@ impl<'a> BodyEncryptConfig<'a> {
 }
 
 pub struct BodyDecryptConfig<'a> {
-    pub key: RefOrOwned<'a, TypedSymmetricKey>,
+    pub key: Cow<'a, TypedSymmetricKey>,
     pub nonce: [u8; 12],
     pub aad: Option<Vec<u8>>,
     pub config: DecryptorConfig,

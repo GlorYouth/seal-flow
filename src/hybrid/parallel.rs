@@ -9,12 +9,12 @@ use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::ParallelBodyProcessor;
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::RefOrOwned;
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::config::HybridConfig;
 use crate::hybrid::pending::PendingDecryptor;
-use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+use crate::keys::{TypedAsymmetricPrivateKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
+use std::borrow::Cow;
 
 pub struct Parallel;
 
@@ -104,7 +104,7 @@ impl<'a> HybridParallelPendingDecryptor for PendingDecryptor<&'a [u8]> {
         )?;
 
         let body_config = BodyDecryptConfig {
-            key: RefOrOwned::Owned(dek),
+            key: Cow::Owned(dek),
             nonce: base_nonce,
             aad,
             config: DecryptorConfig {
@@ -131,8 +131,8 @@ mod tests {
     };
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
+    use crate::common::DerivationSet;
     use crate::common::DEFAULT_CHUNK_SIZE;
-    use crate::common::{DerivationSet, RefOrOwned};
     use crate::keys::TypedAsymmetricPublicKey;
     use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
@@ -173,8 +173,8 @@ mod tests {
         });
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id_kdf".to_string(),
             signer: None,
             aad: None,
@@ -202,8 +202,8 @@ mod tests {
         let plaintext = b"This is a test message for hybrid parallel encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm.clone()),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id".to_string(),
             signer: None,
             aad: None,
@@ -241,8 +241,8 @@ mod tests {
         let plaintext = b"";
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id".to_string(),
             signer: None,
             aad: None,
@@ -268,8 +268,8 @@ mod tests {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id".to_string(),
             signer: None,
             aad: None,
@@ -296,8 +296,8 @@ mod tests {
         let plaintext = b"some data";
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id".to_string(),
             signer: None,
             aad: None,
@@ -324,8 +324,8 @@ mod tests {
 
         // Encrypt with AAD
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "aad_key".to_string(),
             signer: None,
             aad: Some(aad.clone()),

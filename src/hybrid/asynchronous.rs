@@ -9,7 +9,6 @@ use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::AsynchronousBodyProcessor;
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::RefOrOwned;
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::config::HybridConfig;
 use crate::hybrid::pending::PendingDecryptor;
@@ -17,6 +16,7 @@ use crate::hybrid::traits::{HybridAsynchronousPendingDecryptor, HybridAsynchrono
 use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 use async_trait::async_trait;
 use seal_crypto::zeroize::Zeroizing;
+use std::borrow::Cow;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 #[async_trait]
@@ -64,7 +64,7 @@ impl<'decr_life> HybridAsynchronousPendingDecryptor<'decr_life>
         )?;
 
         let body_config = BodyDecryptConfig {
-            key: RefOrOwned::Owned(dek),
+            key: Cow::Owned(dek),
             nonce: base_nonce,
             aad,
             config: DecryptorConfig {
@@ -179,8 +179,8 @@ mod tests {
         let kek_id = "test-rsa-key".to_string();
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::from_ref(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: kek_id.clone(),
             signer: None,
             aad: aad.clone(),
@@ -253,8 +253,8 @@ mod tests {
         let plaintext = b"some important data";
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::from_ref(&algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test-kek-id".to_string(),
             signer: None,
             aad: None,
@@ -303,8 +303,8 @@ mod tests {
         let plaintext = b"some data";
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::from_ref(&algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test-kek-id".to_string(),
             signer: None,
             aad: None,
@@ -350,8 +350,8 @@ mod tests {
         let aad2 = b"wrong async aad".to_vec();
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::from_ref(&algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "key1".to_string(),
             signer: None,
             aad: Some(aad1.clone()),
@@ -428,8 +428,8 @@ mod tests {
         };
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::from_ref(&algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: kek_id.clone(),
             signer: None,
             aad: None,

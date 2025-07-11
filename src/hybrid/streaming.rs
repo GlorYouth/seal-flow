@@ -8,12 +8,12 @@ use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::StreamingBodyProcessor;
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::RefOrOwned;
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::config::HybridConfig;
 use crate::hybrid::pending::PendingDecryptor;
-use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+use crate::keys::{TypedAsymmetricPrivateKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
+use std::borrow::Cow;
 use std::io::{Read, Write};
 
 pub struct Streaming;
@@ -112,7 +112,7 @@ impl<'a> HybridStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Read +
         )?;
 
         let body_config = BodyDecryptConfig {
-            key: RefOrOwned::Owned(dek),
+            key: Cow::Owned(dek),
             nonce: base_nonce,
             aad,
             config: DecryptorConfig {
@@ -140,6 +140,7 @@ mod tests {
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
     use crate::common::DerivationSet;
+    use crate::keys::TypedAsymmetricPublicKey;
     use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use std::io::Cursor;
@@ -188,8 +189,8 @@ mod tests {
         };
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id,
             signer: None,
             aad: aad.clone(),
@@ -276,8 +277,8 @@ mod tests {
         let plaintext = b"some important data";
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id".to_string(),
             signer: None,
             aad: None,
@@ -317,8 +318,8 @@ mod tests {
         let plaintext = b"some important data";
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id".to_string(),
             signer: None,
             aad: None,
@@ -353,8 +354,8 @@ mod tests {
         let wrong_aad = b"wrong aad".to_vec();
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id".to_string(),
             signer: None,
             aad: Some(aad),

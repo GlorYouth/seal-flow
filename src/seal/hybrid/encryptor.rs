@@ -10,7 +10,7 @@ use crate::common::algorithms::{
 };
 use crate::common::config::ArcConfig;
 use crate::common::header::{DerivationInfo, KdfInfo, XofInfo};
-use crate::common::{DerivationSet, RefOrOwned, SignerSet};
+use crate::common::{DerivationSet, SignerSet};
 use crate::error::KeyManagementError;
 use crate::hybrid::config::HybridConfig;
 use crate::hybrid::traits::{
@@ -23,9 +23,13 @@ use crate::seal::traits::{
     AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor as StreamingEncryptorTrait,
     WithAad,
 };
+#[cfg(feature = "async")]
+use async_trait::async_trait;
 use seal_crypto::prelude::*;
+use std::borrow::Cow;
 use std::io::{Read, Write};
 use std::sync::Arc;
+#[cfg(feature = "async")]
 use tokio::io::AsyncWrite;
 
 // --- Builder ---
@@ -296,8 +300,8 @@ impl InMemoryEncryptor for HybridEncryptorWithAlgorithms {
             .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(self.algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&self.algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: self.inner.kek_id,
             signer: self.inner.signer,
             aad: self.inner.aad,
@@ -318,8 +322,8 @@ impl InMemoryEncryptor for HybridEncryptorWithAlgorithms {
             .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(self.algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&self.algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: self.inner.kek_id,
             signer: self.inner.signer,
             aad: self.inner.aad,
@@ -342,8 +346,8 @@ impl StreamingEncryptorTrait for HybridEncryptorWithAlgorithms {
             .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(self.algorithm),
-            public_key: RefOrOwned::Owned(pk),
+            algorithm: Cow::Owned(self.algorithm),
+            public_key: Cow::Owned(pk),
             kek_id: self.inner.kek_id,
             signer: self.inner.signer,
             aad: self.inner.aad,
@@ -367,8 +371,8 @@ impl StreamingEncryptorTrait for HybridEncryptorWithAlgorithms {
             .pk
             .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(self.algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&self.algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: self.inner.kek_id,
             signer: self.inner.signer,
             aad: self.inner.aad,
@@ -380,6 +384,7 @@ impl StreamingEncryptorTrait for HybridEncryptorWithAlgorithms {
 }
 
 #[cfg(feature = "async")]
+#[async_trait]
 impl AsyncStreamingEncryptor for HybridEncryptorWithAlgorithms {
     /// Creates an asynchronous streaming encryptor that wraps the given `AsyncWrite` implementation.
     ///
@@ -394,8 +399,8 @@ impl AsyncStreamingEncryptor for HybridEncryptorWithAlgorithms {
             .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
         let processor = crate::hybrid::asynchronous::Asynchronous::new();
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(self.algorithm),
-            public_key: RefOrOwned::Owned(pk),
+            algorithm: Cow::Owned(self.algorithm),
+            public_key: Cow::Owned(pk),
             kek_id: self.inner.kek_id,
             signer: self.inner.signer,
             aad: self.inner.aad,

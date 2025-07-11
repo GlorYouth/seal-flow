@@ -7,11 +7,8 @@
 
 use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::ParallelStreamingBodyProcessor;
+use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::{
-    config::{ArcConfig, DecryptorConfig},
-    RefOrOwned,
-};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::config::SymmetricConfig;
@@ -19,6 +16,7 @@ use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{
     SymmetricParallelStreamingPendingDecryptor, SymmetricParallelStreamingProcessor,
 };
+use std::borrow::Cow;
 use std::io::{Read, Write};
 
 impl<'a> SymmetricParallelStreamingPendingDecryptor<'a>
@@ -40,7 +38,7 @@ impl<'a> SymmetricParallelStreamingPendingDecryptor<'a>
         };
 
         let config = BodyDecryptConfig {
-            key: RefOrOwned::from_ref(key),
+            key: Cow::Borrowed(key),
             nonce,
             aad,
             config: DecryptorConfig {
@@ -131,10 +129,10 @@ mod tests {
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    algorithm: Cow::Borrowed(&wrapper),
                     key_id: "test_key".to_string(),
                     config: config.clone(),
-                    key: RefOrOwned::from_ref(&key),
+                    key: Cow::Borrowed(&key),
                     aad: None,
                 },
             )
@@ -167,10 +165,10 @@ mod tests {
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    algorithm: Cow::Borrowed(&wrapper),
                     key_id: "proc_key".to_string(),
                     config: config.clone(),
-                    key: RefOrOwned::from_ref(&key),
+                    key: Cow::Borrowed(&key),
                     aad: aad.clone(),
                 },
             )
@@ -202,10 +200,10 @@ mod tests {
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    algorithm: Cow::Borrowed(&wrapper),
                     key_id: "test_key".to_string(),
                     config: config.clone(),
-                    key: RefOrOwned::from_ref(&key),
+                    key: Cow::Borrowed(&key),
                     aad: None,
                 },
             )
@@ -236,10 +234,10 @@ mod tests {
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    algorithm: Cow::Borrowed(&wrapper),
                     key_id: "test_key".to_string(),
                     config: config.clone(),
-                    key: RefOrOwned::from_ref(&key),
+                    key: Cow::Borrowed(&key),
                     aad: None,
                 },
             )
@@ -270,10 +268,10 @@ mod tests {
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    algorithm: Cow::Borrowed(&wrapper),
                     key_id: "test_key".to_string(),
                     config: config.clone(),
-                    key: RefOrOwned::from_ref(&key),
+                    key: Cow::Borrowed(&key),
                     aad: None,
                 },
             )
@@ -308,10 +306,10 @@ mod tests {
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    algorithm: Cow::Borrowed(&wrapper),
                     key_id: "test_key".to_string(),
                     config: config.clone(),
-                    key: RefOrOwned::from_ref(&correct_key),
+                    key: Cow::Borrowed(&correct_key),
                     aad: None,
                 },
             )
@@ -343,10 +341,10 @@ mod tests {
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    algorithm: Cow::Borrowed(&wrapper),
                     key_id: "test_key_aad".to_string(),
                     config: config.clone(),
-                    key: RefOrOwned::from_ref(&key),
+                    key: Cow::Borrowed(&key),
                     aad: Some(aad.clone()),
                 },
             )

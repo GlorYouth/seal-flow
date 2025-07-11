@@ -1,13 +1,14 @@
 use crate::algorithms::hybrid::HybridAlgorithmWrapper;
 use crate::body::config::BodyEncryptConfig;
 use crate::common::config::ArcConfig;
-use crate::common::{DerivationSet, RefOrOwned, SignerSet};
+use crate::common::{DerivationSet, SignerSet};
 use crate::hybrid::common::create_header;
 use crate::keys::TypedAsymmetricPublicKey;
+use std::borrow::Cow;
 
 pub struct HybridConfig<'a> {
-    pub algorithm: RefOrOwned<'a, HybridAlgorithmWrapper>,
-    pub public_key: RefOrOwned<'a, TypedAsymmetricPublicKey>,
+    pub algorithm: Cow<'a, HybridAlgorithmWrapper>,
+    pub public_key: Cow<'a, TypedAsymmetricPublicKey>,
     pub kek_id: String,
     pub signer: Option<SignerSet>,
     pub aad: Option<Vec<u8>>,
@@ -41,7 +42,7 @@ impl<'a> HybridConfig<'a> {
         let header_bytes = header.encode_to_vec()?;
 
         let body_config = BodyEncryptConfig {
-            key: RefOrOwned::Owned(dek),
+            key: Cow::Owned(dek),
             nonce: base_nonce,
             header_bytes,
             aad: self.aad,

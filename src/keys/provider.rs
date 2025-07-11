@@ -20,7 +20,7 @@ pub enum KeyProviderError {
 /// 一个通过 ID 动态查找加密密钥的 trait。
 ///
 /// 用户可以为自己的密钥管理系统实现此 trait，以便与解密器无缝集成。
-pub trait KeyProvider {
+pub trait KeyProvider: Send + Sync {
     /// Looks up a symmetric key by its ID.
     /// Used for symmetric decryption.
     ///
@@ -57,7 +57,7 @@ pub trait KeyProvider {
 /// 一个通过 ID 动态查找加密密钥以进行加密的 trait。
 ///
 /// 用户可以为自己的密钥管理系统实现此 trait，以便与加密器无缝集成。
-pub trait EncryptionKeyProvider {
+pub trait EncryptionKeyProvider: Send + Sync {
     /// Looks up an asymmetric public key by its ID.
     /// Used for hybrid encryption (recipient's KEM key).
     ///

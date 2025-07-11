@@ -9,12 +9,12 @@ use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::OrdinaryBodyProcessor;
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::RefOrOwned;
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::config::HybridConfig;
 use crate::hybrid::pending::PendingDecryptor;
-use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+use crate::keys::{TypedAsymmetricPrivateKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
+use std::borrow::Cow;
 
 pub struct Ordinary;
 
@@ -110,7 +110,7 @@ impl<'a> HybridOrdinaryPendingDecryptor for PendingDecryptor<&'a [u8]> {
         )?;
 
         let body_config = BodyDecryptConfig {
-            key: RefOrOwned::Owned(dek),
+            key: Cow::Owned(dek),
             nonce: base_nonce,
             aad,
             config: DecryptorConfig {
@@ -137,9 +137,11 @@ mod tests {
     };
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
-    use crate::common::{DerivationSet, RefOrOwned};
+    use crate::common::DerivationSet;
+    use crate::keys::TypedAsymmetricPublicKey;
     use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
+    use std::borrow::Cow;
 
     fn get_test_algorithm() -> HybridAlgorithmWrapper {
         HybridAlgorithmWrapper::new(Rsa2048Sha256Wrapper::new(), Aes256GcmWrapper::new())
@@ -177,8 +179,8 @@ mod tests {
         });
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id".to_string(),
             signer: None,
             aad: None,
@@ -208,8 +210,8 @@ mod tests {
         let plaintext = b"This is a test message for hybrid ordinary encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id".to_string(),
             signer: None,
             aad: None,
@@ -237,8 +239,8 @@ mod tests {
         let plaintext = b"";
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id".to_string(),
             signer: None,
             aad: None,
@@ -266,8 +268,8 @@ mod tests {
         let plaintext = vec![42u8; crate::common::DEFAULT_CHUNK_SIZE as usize];
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id".to_string(),
             signer: None,
             aad: None,
@@ -295,8 +297,8 @@ mod tests {
         let plaintext = b"some important data";
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id".to_string(),
             signer: None,
             aad: None,
@@ -329,8 +331,8 @@ mod tests {
         let plaintext = b"some data";
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "test_kek_id".to_string(),
             signer: None,
             aad: None,
@@ -358,8 +360,8 @@ mod tests {
         let aad = b"some important context".to_vec();
 
         let config = HybridConfig {
-            algorithm: RefOrOwned::Owned(algorithm),
-            public_key: RefOrOwned::from_ref(&pk),
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
             kek_id: "aad_kek_id".to_string(),
             signer: None,
             aad: Some(aad.clone()),

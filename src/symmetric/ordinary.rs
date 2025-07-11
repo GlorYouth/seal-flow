@@ -4,16 +4,14 @@
 
 use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::OrdinaryBodyProcessor;
+use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::common::header::{Header, HeaderPayload};
-use crate::common::{
-    config::{ArcConfig, DecryptorConfig},
-    RefOrOwned,
-};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{SymmetricOrdinaryPendingDecryptor, SymmetricOrdinaryProcessor};
+use std::borrow::Cow;
 
 impl<'a> SymmetricOrdinaryPendingDecryptor<'a> for PendingDecryptor<&'a [u8]> {
     fn into_plaintext(
@@ -31,7 +29,7 @@ impl<'a> SymmetricOrdinaryPendingDecryptor<'a> for PendingDecryptor<&'a [u8]> {
         };
 
         let config = BodyDecryptConfig {
-            key: RefOrOwned::from_ref(key),
+            key: Cow::Borrowed(key),
             nonce,
             aad,
             config: DecryptorConfig {
@@ -94,7 +92,7 @@ impl SymmetricOrdinaryProcessor for Ordinary {
 mod tests {
     use super::*;
     use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
-    use crate::common::{RefOrOwned, DEFAULT_CHUNK_SIZE};
+    use crate::common::DEFAULT_CHUNK_SIZE;
     use crate::prelude::SymmetricAlgorithmEnum;
 
     fn get_wrapper() -> SymmetricAlgorithmWrapper {
@@ -112,10 +110,10 @@ mod tests {
             .encrypt_symmetric_in_memory(
                 plaintext,
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    algorithm: Cow::Borrowed(&wrapper),
                     key_id: "test_key_id".to_string(),
                     config: config.clone(),
-                    key: RefOrOwned::from_ref(&key),
+                    key: Cow::Borrowed(&key),
                     aad: None,
                 },
             )
@@ -139,10 +137,10 @@ mod tests {
             .encrypt_symmetric_in_memory(
                 plaintext,
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    algorithm: Cow::Borrowed(&wrapper),
                     key_id: "proc_key".to_string(),
                     config: config.clone(),
-                    key: RefOrOwned::from_ref(&key),
+                    key: Cow::Borrowed(&key),
                     aad: None,
                 },
             )
@@ -165,10 +163,10 @@ mod tests {
             .encrypt_symmetric_in_memory(
                 plaintext,
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    algorithm: Cow::Borrowed(&wrapper),
                     key_id: "test_key_id".to_string(),
                     config: config.clone(),
-                    key: RefOrOwned::from_ref(&key),
+                    key: Cow::Borrowed(&key),
                     aad: None,
                 },
             )
@@ -192,10 +190,10 @@ mod tests {
             .encrypt_symmetric_in_memory(
                 &plaintext,
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    algorithm: Cow::Borrowed(&wrapper),
                     key_id: "test_key_id".to_string(),
                     config: config.clone(),
-                    key: RefOrOwned::from_ref(&key),
+                    key: Cow::Borrowed(&key),
                     aad: None,
                 },
             )
@@ -219,10 +217,10 @@ mod tests {
             .encrypt_symmetric_in_memory(
                 plaintext,
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    algorithm: Cow::Borrowed(&wrapper),
                     key_id: "test_key_id".to_string(),
                     config: config.clone(),
-                    key: RefOrOwned::from_ref(&key),
+                    key: Cow::Borrowed(&key),
                     aad: None,
                 },
             )
@@ -255,10 +253,10 @@ mod tests {
             .encrypt_symmetric_in_memory(
                 plaintext,
                 SymmetricConfig {
-                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    algorithm: Cow::Borrowed(&wrapper),
                     key_id: "aad_key".to_string(),
                     config: config.clone(),
-                    key: RefOrOwned::from_ref(&key),
+                    key: Cow::Borrowed(&key),
                     aad: Some(aad.to_vec()),
                 },
             )

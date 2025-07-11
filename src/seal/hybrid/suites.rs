@@ -16,6 +16,8 @@ use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
 use crate::seal::traits::{
     AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor, WithAad,
 };
+#[cfg(feature = "async")]
+use async_trait::async_trait;
 
 use super::encryptor::{HybridEncryptor, HybridEncryptorBuilder};
 
@@ -206,6 +208,8 @@ impl StreamingEncryptor for PqcEncryptor {
     }
 }
 
+#[cfg(feature = "async")]
+#[async_trait]
 impl AsyncStreamingEncryptor for PqcEncryptor {
     /// Creates an asynchronous streaming encryptor that writes to the given `AsyncWrite` implementation using the PQC suite.
     ///
