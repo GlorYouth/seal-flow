@@ -2,30 +2,33 @@
 //!
 //! 定义不同消息体处理模式的 trait。
 
+#[cfg(feature = "async")]
+use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::common::header::Header;
 use crate::error::Result;
-use crate::keys::{SymmetricKey, TypedSymmetricKey};
+use crate::keys::TypedSymmetricKey;
 use std::io::{Read, Write};
 
 pub trait SymmetricOrdinaryProcessor {
     fn encrypt_symmetric_in_memory(
         &self,
+        algorithm: &SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         key_id: String,
         plaintext: &[u8],
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>>;
 
-    fn begin_decrypt_symmetric_in_memory<'a>(
+    fn begin_decrypt_symmetric_in_memory(
         &self,
-        ciphertext: &'a [u8],
-    ) -> Result<Box<dyn SymmetricOrdinaryPendingDecryptor<'a> + 'a>>;
+        ciphertext: &[u8],
+    ) -> Result<Box<dyn SymmetricOrdinaryPendingDecryptor>>;
 }
 
-pub trait SymmetricOrdinaryPendingDecryptor<'a> {
+pub trait SymmetricOrdinaryPendingDecryptor {
     fn into_plaintext(
         self: Box<Self>,
-        key: SymmetricKey,
+        key: TypedSymmetricKey,
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>>;
 
@@ -33,26 +36,27 @@ pub trait SymmetricOrdinaryPendingDecryptor<'a> {
 }
 
 pub trait SymmetricStreamingProcessor {
-    fn encrypt_symmetric_to_stream<'a>(
+    fn encrypt_symmetric_to_stream(
         &self,
+        algorithm: &SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         key_id: String,
-        writer: Box<dyn Write + 'a>,
+        writer: Box<dyn Write>,
         aad: Option<&[u8]>,
-    ) -> Result<Box<dyn Write + 'a>>;
+    ) -> Result<Box<dyn Write>>;
 
-    fn begin_decrypt_symmetric_from_stream<'a>(
+    fn begin_decrypt_symmetric_from_stream(
         &self,
-        reader: Box<dyn Read + 'a>,
-    ) -> Result<Box<dyn SymmetricStreamingPendingDecryptor<'a> + 'a>>;
+        reader: Box<dyn Read>,
+    ) -> Result<Box<dyn SymmetricStreamingPendingDecryptor>>;
 }
 
-pub trait SymmetricStreamingPendingDecryptor<'a> {
+pub trait SymmetricStreamingPendingDecryptor {
     fn into_decryptor(
         self: Box<Self>,
-        key: SymmetricKey,
+        key: TypedSymmetricKey,
         aad: Option<&[u8]>,
-    ) -> Result<Box<dyn Read + 'a>>;
+    ) -> Result<Box<dyn Read>>;
 
     fn header(&self) -> &Header;
 }
@@ -60,21 +64,22 @@ pub trait SymmetricStreamingPendingDecryptor<'a> {
 pub trait SymmetricParallelProcessor {
     fn encrypt_symmetric_parallel(
         &self,
+        algorithm: &SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         key_id: String,
         plaintext: &[u8],
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>>;
-    fn begin_decrypt_symmetric_parallel<'a>(
+    fn begin_decrypt_symmetric_parallel(
         &self,
-        ciphertext: &'a [u8],
-    ) -> Result<Box<dyn SymmetricParallelPendingDecryptor<'a> + 'a>>;
+        ciphertext: &[u8],
+    ) -> Result<Box<dyn SymmetricParallelPendingDecryptor>>;
 }
 
-pub trait SymmetricParallelPendingDecryptor<'a> {
+pub trait SymmetricParallelPendingDecryptor {
     fn into_plaintext(
         self: Box<Self>,
-        key: SymmetricKey,
+        key: TypedSymmetricKey,
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>>;
 
@@ -82,27 +87,28 @@ pub trait SymmetricParallelPendingDecryptor<'a> {
 }
 
 pub trait SymmetricParallelStreamingProcessor {
-    fn encrypt_symmetric_pipeline<'a>(
+    fn encrypt_symmetric_pipeline(
         &self,
+        algorithm: &SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         key_id: String,
-        reader: Box<dyn Read + Send + 'a>,
-        writer: Box<dyn Write + Send + 'a>,
-        aad: Option<&'a [u8]>,
+        reader: Box<dyn Read + Send>,
+        writer: Box<dyn Write + Send>,
+        aad: Option<&[u8]>,
     ) -> Result<()>;
 
-    fn begin_decrypt_symmetric_pipeline<'a>(
+    fn begin_decrypt_symmetric_pipeline(
         &self,
-        reader: Box<dyn Read + Send + 'a>,
-    ) -> Result<Box<dyn SymmetricParallelStreamingPendingDecryptor<'a> + 'a>>;
+        reader: Box<dyn Read + Send>,
+    ) -> Result<Box<dyn SymmetricParallelStreamingPendingDecryptor>>;
 }
 
-pub trait SymmetricParallelStreamingPendingDecryptor<'a> {
+pub trait SymmetricParallelStreamingPendingDecryptor {
     fn decrypt_to_writer(
         self: Box<Self>,
-        key: SymmetricKey,
-        writer: Box<dyn Write + Send + 'a>,
-        aad: Option<&'a [u8]>,
+        key: TypedSymmetricKey,
+        writer: Box<dyn Write + Send>,
+        aad: Option<&[u8]>,
     ) -> Result<()>;
 
     fn header(&self) -> &Header;
@@ -116,6 +122,7 @@ use async_trait::async_trait;
 pub trait SymmetricAsynchronousProcessor {
     async fn encrypt_symmetric_async<'a>(
         &self,
+        algorithm: &'a SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         key_id: String,
         writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
@@ -133,7 +140,7 @@ pub trait SymmetricAsynchronousProcessor {
 pub trait SymmetricAsynchronousPendingDecryptor<'decr_life>: Send {
     async fn into_decryptor<'a>(
         self: Box<Self>,
-        key: SymmetricKey,
+        key: TypedSymmetricKey,
         aad: Option<&'a [u8]>,
     ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'decr_life>>;
 

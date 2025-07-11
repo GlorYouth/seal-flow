@@ -5,13 +5,15 @@
 use crate::common::header::Header;
 use crate::common::{DerivationSet, SignerSet};
 use crate::error::Result;
-use crate::keys::{AsymmetricPrivateKey, TypedAsymmetricPublicKey};
+use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey};
+use crate::algorithms::hybrid::HybridAlgorithmWrapper;
 use std::io::{Read, Write};
 
 /// Trait for ordinary (in-memory) hybrid encryption.
 pub trait HybridOrdinaryProcessor {
     fn encrypt_hybrid_in_memory(
         &self,
+        algorithm: HybridAlgorithmWrapper,
         public_key: &TypedAsymmetricPublicKey,
         plaintext: &[u8],
         kek_id: String,
@@ -20,17 +22,17 @@ pub trait HybridOrdinaryProcessor {
         derivation_config: Option<DerivationSet>,
     ) -> Result<Vec<u8>>;
 
-    fn begin_decrypt_hybrid_in_memory<'a>(
+    fn begin_decrypt_hybrid_in_memory(
         &self,
-        ciphertext: &'a [u8],
-    ) -> Result<Box<dyn HybridOrdinaryPendingDecryptor<'a> + 'a>>;
+        ciphertext: &[u8],
+    ) -> Result<Box<dyn HybridOrdinaryPendingDecryptor>>;
 }
 
 /// A pending decryptor for in-memory hybrid-encrypted data.
-pub trait HybridOrdinaryPendingDecryptor<'a> {
+pub trait HybridOrdinaryPendingDecryptor {
     fn into_plaintext(
         self: Box<Self>,
-        private_key: &AsymmetricPrivateKey,
+        private_key: &TypedAsymmetricPrivateKey,
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>>;
     fn header(&self) -> &Header;
@@ -38,29 +40,30 @@ pub trait HybridOrdinaryPendingDecryptor<'a> {
 
 /// Trait for streaming hybrid encryption.
 pub trait HybridStreamingProcessor {
-    fn encrypt_hybrid_to_stream<'a>(
+    fn encrypt_hybrid_to_stream(
         &self,
+        algorithm: &HybridAlgorithmWrapper,
         public_key: &TypedAsymmetricPublicKey,
-        writer: Box<dyn Write + 'a>,
+        writer: Box<dyn Write>,
         kek_id: String,
         signer: Option<SignerSet>,
-        aad: Option<&'a [u8]>,
+        aad: Option<&[u8]>,
         derivation_config: Option<DerivationSet>,
-    ) -> Result<Box<dyn Write + 'a>>;
+    ) -> Result<Box<dyn Write>>;
 
-    fn begin_decrypt_hybrid_from_stream<'a>(
+    fn begin_decrypt_hybrid_from_stream(
         &self,
-        reader: Box<dyn Read + 'a>,
-    ) -> Result<Box<dyn HybridStreamingPendingDecryptor<'a> + 'a>>;
+        reader: Box<dyn Read>,
+    ) -> Result<Box<dyn HybridStreamingPendingDecryptor>>;
 }
 
 /// A pending decryptor for streaming hybrid-encrypted data.
-pub trait HybridStreamingPendingDecryptor<'a> {
+pub trait HybridStreamingPendingDecryptor {
     fn into_decryptor(
         self: Box<Self>,
-        private_key: &AsymmetricPrivateKey,
-        aad: Option<&'a [u8]>,
-    ) -> Result<Box<dyn Read + 'a>>;
+        private_key: &TypedAsymmetricPrivateKey,
+        aad: Option<&[u8]>,
+    ) -> Result<Box<dyn Read>>;
     fn header(&self) -> &Header;
 }
 
@@ -68,6 +71,7 @@ pub trait HybridStreamingPendingDecryptor<'a> {
 pub trait HybridParallelProcessor {
     fn encrypt_parallel(
         &self,
+        algorithm: &HybridAlgorithmWrapper,
         public_key: &TypedAsymmetricPublicKey,
         plaintext: &[u8],
         kek_id: String,
@@ -76,17 +80,17 @@ pub trait HybridParallelProcessor {
         derivation_config: Option<DerivationSet>,
     ) -> Result<Vec<u8>>;
 
-    fn begin_decrypt_hybrid_parallel<'a>(
+    fn begin_decrypt_hybrid_parallel(
         &self,
-        ciphertext: &'a [u8],
-    ) -> Result<Box<dyn HybridParallelPendingDecryptor<'a> + 'a>>;
+        ciphertext: &[u8],
+    ) -> Result<Box<dyn HybridParallelPendingDecryptor>>;
 }
 
 /// A pending decryptor for parallel in-memory hybrid-encrypted data.
-pub trait HybridParallelPendingDecryptor<'a> {
+pub trait HybridParallelPendingDecryptor {
     fn into_plaintext(
         self: Box<Self>,
-        private_key: &AsymmetricPrivateKey,
+        private_key: &TypedAsymmetricPrivateKey,
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>>;
     fn header(&self) -> &Header;
@@ -94,30 +98,31 @@ pub trait HybridParallelPendingDecryptor<'a> {
 
 /// Trait for parallel streaming hybrid encryption.
 pub trait HybridParallelStreamingProcessor {
-    fn encrypt_hybrid_pipeline<'a>(
+    fn encrypt_hybrid_pipeline(
         &self,
+        algorithm: &HybridAlgorithmWrapper,
         public_key: &TypedAsymmetricPublicKey,
-        reader: Box<dyn Read + Send + 'a>,
-        writer: Box<dyn Write + Send + 'a>,
+        reader: Box<dyn Read + Send>,
+        writer: Box<dyn Write + Send>,
         kek_id: String,
         signer: Option<SignerSet>,
-        aad: Option<&'a [u8]>,
+        aad: Option<&[u8]>,
         derivation_config: Option<DerivationSet>,
     ) -> Result<()>;
 
-    fn begin_decrypt_hybrid_pipeline<'a>(
+    fn begin_decrypt_hybrid_pipeline(
         &self,
-        reader: Box<dyn Read + Send + 'a>,
-    ) -> Result<Box<dyn HybridParallelStreamingPendingDecryptor<'a> + 'a>>;
+        reader: Box<dyn Read + Send>,
+    ) -> Result<Box<dyn HybridParallelStreamingPendingDecryptor>>;
 }
 
 /// A pending decryptor for parallel streaming hybrid-encrypted data.
-pub trait HybridParallelStreamingPendingDecryptor<'a> {
+pub trait HybridParallelStreamingPendingDecryptor {
     fn decrypt_to_writer(
         self: Box<Self>,
-        private_key: &AsymmetricPrivateKey,
-        writer: Box<dyn Write + Send + 'a>,
-        aad: Option<&'a [u8]>,
+        private_key: &TypedAsymmetricPrivateKey,
+        writer: Box<dyn Write + Send>,
+        aad: Option<&[u8]>,
     ) -> Result<()>;
     fn header(&self) -> &Header;
 }
@@ -126,11 +131,13 @@ pub trait HybridParallelStreamingPendingDecryptor<'a> {
 #[cfg(feature = "async")]
 use async_trait::async_trait;
 
+
 #[cfg(feature = "async")]
 #[async_trait]
 pub trait HybridAsynchronousProcessor {
     async fn encrypt_hybrid_async<'a>(
         &self,
+        algorithm: &HybridAlgorithmWrapper,
         public_key: &TypedAsymmetricPublicKey,
         writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
         kek_id: String,
@@ -151,7 +158,7 @@ pub trait HybridAsynchronousProcessor {
 pub trait HybridAsynchronousPendingDecryptor<'decr_life>: Send {
     async fn into_decryptor<'a>(
         self: Box<Self>,
-        private_key: &'a AsymmetricPrivateKey,
+        private_key: &'a TypedAsymmetricPrivateKey,
         aad: Option<&'a [u8]>,
     ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'decr_life>>;
     fn header(&self) -> &Header;

@@ -2,11 +2,12 @@
 //!
 //! 为同步、流式对称加密实现 `std::io` trait。
 
+use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::body::streaming::{DecryptorImpl, EncryptorImpl};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, FormatError, Result};
-use crate::keys::{SymmetricKey, TypedSymmetricKey};
+use crate::keys::TypedSymmetricKey;
 use crate::symmetric::common::create_header;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{SymmetricStreamingPendingDecryptor, SymmetricStreamingProcessor};
@@ -18,19 +19,19 @@ pub struct Encryptor<W: Write> {
 }
 
 impl<W: Write> Encryptor<W> {
-    pub fn new<S: SymmetricAlgorithm>(
+    pub fn new(
         mut writer: W,
-        algorithm: &S,
+        algorithm: SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         key_id: String,
         aad: Option<&[u8]>,
     ) -> Result<Self> {
-        let (header, base_nonce) = create_header(algorithm, key_id)?;
+        let (header, base_nonce) = create_header(&algorithm, key_id)?;
         let header_bytes = header.encode_to_vec()?;
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
         let inner =
-            EncryptorImpl::new(writer, algorithm.clone_box_symmetric(), key, base_nonce, aad)?;
+        EncryptorImpl::new(writer, algorithm, key, base_nonce, aad)?;
         Ok(Self { inner })
     }
 
@@ -43,17 +44,12 @@ impl<W: Write> Encryptor<W> {
     }
 }
 
-impl<'a, S> SymmetricStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Read + 'a>, S>
-where
-    S: SymmetricAlgorithm,
-{
+impl SymmetricStreamingPendingDecryptor for PendingDecryptor<Box<dyn Read>> {
     fn into_decryptor(
         self: Box<Self>,
-        key: SymmetricKey,
+        key: TypedSymmetricKey,
         aad: Option<&[u8]>,
-    ) -> Result<Box<dyn Read + 'a>> {
-        let algorithm = self.header.payload.symmetric_algorithm();
-        let typed_key = key.into_typed(algorithm)?;
+    ) -> Result<Box<dyn Read>> {
 
         let base_nonce = match &self.header.payload {
             HeaderPayload::Symmetric {
@@ -64,8 +60,8 @@ where
         };
         let inner = DecryptorImpl::new(
             self.source,
-            self.algorithm.clone_box_symmetric(),
-            typed_key,
+            self.algorithm,
+            key,
             base_nonce,
             aad,
         );
@@ -88,40 +84,41 @@ impl<R: Read> Read for Decryptor<R> {
     }
 }
 
-pub struct Streaming<'s, S: SymmetricAlgorithm> {
-    algorithm: &'s S,
+pub struct Streaming {
 }
 
-impl<'s, S: SymmetricAlgorithm> Streaming<'s, S> {
-    pub fn new(algorithm: &'s S) -> Self {
-        Self { algorithm }
+impl Streaming {
+    pub fn new() -> Self {
+        Self {  }
     }
 }
 
-impl<'s, S: SymmetricAlgorithm> SymmetricStreamingProcessor for Streaming<'s, S> {
-    fn encrypt_symmetric_to_stream<'b>(
+impl SymmetricStreamingProcessor for Streaming {
+    fn encrypt_symmetric_to_stream(
         &self,
+        algorithm: &SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         key_id: String,
-        writer: Box<dyn Write + 'b>,
+        writer: Box<dyn Write>,
         aad: Option<&[u8]>,
-    ) -> Result<Box<dyn Write + 'b>> {
-        let encryptor = Encryptor::new(Box::new(writer), self.algorithm, key, key_id, aad)?;
+    ) -> Result<Box<dyn Write>> {
+        let encryptor = Encryptor::new(Box::new(writer), algorithm.clone(), key, key_id, aad)?;
         Ok(Box::new(StreamEncryptor {
             encryptor: Some(encryptor),
             _marker: std::marker::PhantomData,
         }))
     }
 
-    fn begin_decrypt_symmetric_from_stream<'a>(
+    fn begin_decrypt_symmetric_from_stream(
         &self,
-        mut reader: Box<dyn Read + 'a>,
-    ) -> Result<Box<dyn SymmetricStreamingPendingDecryptor<'a> + 'a>> {
+        mut reader: Box<dyn Read>,
+    ) -> Result<Box<dyn SymmetricStreamingPendingDecryptor>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
+        let algorithm = header.payload.symmetric_algorithm().into_symmetric_wrapper();
         let pending = PendingDecryptor {
             source: reader,
             header,
-            algorithm: self.algorithm.clone(),
+            algorithm,
         };
         Ok(Box::new(pending))
     }
@@ -157,29 +154,25 @@ impl<W: Write> Drop for StreamEncryptor<'_, W> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::symmetric::Aes256GcmWrapper;
-    use crate::keys::{SymmetricKey as UntypedSymmetricKey, TypedSymmetricKey};
-    use seal_crypto::prelude::SymmetricKeyGenerator;
-    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
+    use crate::prelude::SymmetricAlgorithmEnum;    
     use std::io::Cursor;
     use std::io::Write;
 
-    fn get_wrapper() -> Aes256GcmWrapper {
-        Aes256GcmWrapper::new()
+    fn get_wrapper() -> SymmetricAlgorithmWrapper {
+        SymmetricAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper()
     }
 
     fn test_streaming_roundtrip(plaintext: &[u8], aad: Option<&[u8]>) {
         let wrapper = get_wrapper();
-        let processor = Streaming::new(&wrapper);
+        let processor = Streaming::new();
         let key_id = "test_key_id".to_string();
-        let raw_key = Aes256Gcm::generate_key().unwrap();
-        let key = TypedSymmetricKey::Aes256Gcm(raw_key.clone());
-        let untyped_key = UntypedSymmetricKey::Aes256Gcm(raw_key);
+        let key = wrapper.generate_typed_key().unwrap();
         // Encrypt
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
                 .encrypt_symmetric_to_stream(
+                    &wrapper,
                     key.clone(),
                     key_id.clone(),
                     Box::new(&mut encrypted_data),
@@ -198,7 +191,7 @@ mod tests {
             Some(key_id.as_str())
         );
 
-        let mut decryptor = pending_decryptor.into_decryptor(untyped_key, aad).unwrap();
+        let mut decryptor = pending_decryptor.into_decryptor(key, aad).unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
 
@@ -208,9 +201,9 @@ mod tests {
     #[test]
     fn test_processor_roundtrip() {
         let wrapper = get_wrapper();
-        let processor = Streaming::new(&wrapper);
+        let processor = Streaming::new();
         let plaintext = b"This is a processor test for streaming.";
-        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let key = wrapper.generate_typed_key().unwrap();
         let aad = Some(b"streaming aad" as &[u8]);
 
         // Encrypt
@@ -218,6 +211,7 @@ mod tests {
         {
             let mut encrypt_stream = processor
                 .encrypt_symmetric_to_stream(
+                    &wrapper,
                     key.clone(),
                     "proc_key".to_string(),
                     Box::new(&mut encrypted_data),
@@ -266,13 +260,14 @@ mod tests {
     #[test]
     fn test_tampered_ciphertext_fails() {
         let wrapper = get_wrapper();
-        let processor = Streaming::new(&wrapper);
+        let processor = Streaming::new();
         let plaintext = b"some important data";
-        let key = TypedSymmetricKey::Aes256Gcm(Aes256Gcm::generate_key().unwrap());
+        let key = wrapper.generate_typed_key().unwrap();
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
                 .encrypt_symmetric_to_stream(
+                    &wrapper,
                     key.clone(),
                     "test_key_id".to_string(),
                     Box::new(&mut encrypted_data),
@@ -299,16 +294,11 @@ mod tests {
     #[test]
     fn test_wrong_key_fails() {
         let wrapper = get_wrapper();
-        let processor = Streaming::new(&wrapper);
+        let processor = Streaming::new();
         let key_id = "test_key_id".to_string();
 
-        let correct_raw_key = Aes256Gcm::generate_key().unwrap();
-        let correct_key = TypedSymmetricKey::Aes256Gcm(correct_raw_key.clone());
-        let correct_untyped_key = UntypedSymmetricKey::Aes256Gcm(correct_raw_key);
-
-        let wrong_raw_key = Aes256Gcm::generate_key().unwrap();
-        let _wrong_key = TypedSymmetricKey::Aes256Gcm(wrong_raw_key.clone());
-        let wrong_untyped_key = UntypedSymmetricKey::Aes256Gcm(wrong_raw_key);
+        let correct_key = wrapper.generate_typed_key().unwrap();
+        let wrong_key = wrapper.generate_typed_key().unwrap();
 
         let plaintext = b"some data";
 
@@ -317,6 +307,7 @@ mod tests {
         {
             let mut encryptor = processor
                 .encrypt_symmetric_to_stream(
+                    &wrapper,
                     correct_key.clone(),
                     key_id.clone(),
                     Box::new(&mut encrypted_data),
@@ -331,7 +322,7 @@ mod tests {
             .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
 
-        let decryptor_result = pending_decryptor.into_decryptor(wrong_untyped_key, None);
+        let decryptor_result = pending_decryptor.into_decryptor(wrong_key, None);
 
         // We expect an error during the creation of the decryptor,
         // or on the first read.
@@ -346,11 +337,9 @@ mod tests {
     #[test]
     fn test_wrong_aad_fails() {
         let wrapper = get_wrapper();
-        let processor = Streaming::new(&wrapper);
+        let processor = Streaming::new();
         let key_id = "test_key_id".to_string();
-        let raw_key = Aes256Gcm::generate_key().unwrap();
-        let key = TypedSymmetricKey::Aes256Gcm(raw_key.clone());
-        let untyped_key = UntypedSymmetricKey::Aes256Gcm(raw_key);
+        let key = wrapper.generate_typed_key().unwrap();
         let plaintext = b"some data";
         let aad = b"correct aad";
         let wrong_aad = b"wrong aad";
@@ -360,6 +349,7 @@ mod tests {
         {
             let mut encryptor = processor
                 .encrypt_symmetric_to_stream(
+                    &wrapper,
                     key.clone(),
                     key_id.clone(),
                     Box::new(&mut encrypted_data),
@@ -374,7 +364,7 @@ mod tests {
             .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
         let mut decryptor = pending
-            .into_decryptor(untyped_key.clone(), Some(aad))
+            .into_decryptor(key.clone(), Some(aad))
             .unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
@@ -384,7 +374,7 @@ mod tests {
         let pending_fail = processor
             .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
-        let decryptor_result = pending_fail.into_decryptor(untyped_key.clone(), Some(wrong_aad));
+        let decryptor_result = pending_fail.into_decryptor(key.clone(), Some(wrong_aad));
         assert!(
             decryptor_result.is_err()
                 || decryptor_result
@@ -397,7 +387,7 @@ mod tests {
         let pending_fail2 = processor
             .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
-        let decryptor_result2 = pending_fail2.into_decryptor(untyped_key, None);
+        let decryptor_result2 = pending_fail2.into_decryptor(key, None);
         assert!(
             decryptor_result2.is_err()
                 || decryptor_result2

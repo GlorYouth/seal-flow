@@ -4,6 +4,7 @@
 
 use crate::error::Result;
 use crate::keys::TypedSymmetricKey;
+use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use std::io::{Read, Write};
 
 pub trait OrdinaryBodyProcessor {

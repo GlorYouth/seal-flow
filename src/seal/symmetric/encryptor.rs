@@ -1,8 +1,6 @@
-use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::body::traits::{
-    OrdinaryBodyProcessor, ParallelBodyProcessor, ParallelStreamingBodyProcessor,
-};
 use crate::keys::SymmetricKey;
+use crate::prelude::SymmetricAlgorithmEnum;
+use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::seal::traits::{
     AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor, WithAad,
 };
@@ -13,8 +11,6 @@ use crate::symmetric::parallel::Parallel;
 use crate::symmetric::parallel_streaming::ParallelStreaming;
 use crate::symmetric::streaming::Streaming;
 use std::io::{Read, Write};
-use std::marker::PhantomData;
-use std::sync::Arc;
 #[cfg(feature = "async")]
 use tokio::io::AsyncWrite;
 
@@ -47,12 +43,13 @@ impl SymmetricEncryptor {
     ///
     /// 这将返回一个为给定算法特化的新加密器实例，
     /// 然后可用于执行实际的加密操作。
-    pub fn execute_with<S: SymmetricAlgorithm + 'static>(
+    pub fn execute_with(
         self,
-    ) -> SymmetricEncryptorWithAlgorithm<S> {
+        algorithm: SymmetricAlgorithmEnum,
+    ) -> SymmetricEncryptorWithAlgorithm {
         SymmetricEncryptorWithAlgorithm {
+            algorithm: algorithm.into_symmetric_wrapper(),
             inner: self,
-            _phantom: PhantomData,
         }
     }
 }
@@ -66,22 +63,19 @@ impl SymmetricEncryptor {
 ///
 /// 该结构提供了最终的加密方法（`to_vec`、`into_writer`等），
 /// 无需进一步指定泛型算法。
-pub struct SymmetricEncryptorWithAlgorithm<S: SymmetricAlgorithm> {
+pub struct SymmetricEncryptorWithAlgorithm {
+    algorithm: SymmetricAlgorithmWrapper,
     inner: SymmetricEncryptor,
-    _phantom: PhantomData<S>,
 }
 
-impl<S> InMemoryEncryptor for SymmetricEncryptorWithAlgorithm<S>
-where
-    S: SymmetricAlgorithm + OrdinaryBodyProcessor + Default,
+impl InMemoryEncryptor for SymmetricEncryptorWithAlgorithm
 {
     /// Encrypts the given plaintext in-memory.
     ///
     /// 在内存中加密给定的明文。
     fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
-        let algorithm = S::default();
-        let processor = Ordinary::new(&algorithm);
-        let typed_key = self.inner.key.into_typed(algorithm.algorithm())?;
+        let processor = Ordinary::new();
+        let typed_key = self.inner.key.into_typed(self.algorithm.algorithm())?;
         processor.encrypt_symmetric_in_memory(
             typed_key,
             self.inner.key_id,
@@ -94,9 +88,8 @@ where
     ///
     /// 使用并行处理在内存中加密给定的明文。
     fn to_vec_parallel(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
-        let algorithm = S::default();
-        let processor = Parallel::new(&algorithm);
-        let typed_key = self.inner.key.into_typed(algorithm.algorithm())?;
+        let processor = Parallel::new();
+        let typed_key = self.inner.key.into_typed(self.algorithm.algorithm())?;
         processor.encrypt_symmetric_parallel(
             typed_key,
             self.inner.key_id,
@@ -106,18 +99,16 @@ where
     }
 }
 
-impl<S> StreamingEncryptor for SymmetricEncryptorWithAlgorithm<S>
-where
-    S: SymmetricAlgorithm + Default + ParallelStreamingBodyProcessor,
+impl StreamingEncryptor for SymmetricEncryptorWithAlgorithm
 {
     /// Creates a streaming encryptor that wraps the given `Write` implementation.
     ///
     /// 创建一个包装了给定 `Write` 实现的流式加密器。
     fn into_writer<'a, W: Write + 'a>(self, writer: W) -> crate::Result<Box<dyn Write + 'a>> {
-        let algorithm = S::default();
-        let processor = Streaming::new(&algorithm);
-        let typed_key = self.inner.key.into_typed(algorithm.algorithm())?;
+        let processor = Streaming::new();
+        let typed_key = self.inner.key.into_typed(self.algorithm.algorithm())?;
         processor.encrypt_symmetric_to_stream(
+            &self.algorithm,
             typed_key,
             self.inner.key_id,
             Box::new(writer),
@@ -133,10 +124,10 @@ where
         R: Read + Send,
         W: Write + Send,
     {
-        let algorithm = Arc::new(S::default());
-        let processor = ParallelStreaming::new(algorithm.clone());
-        let typed_key = self.inner.key.into_typed(algorithm.algorithm())?;
+        let processor = ParallelStreaming::new();
+        let typed_key = self.inner.key.into_typed(self.algorithm.algorithm())?;
         processor.encrypt_symmetric_pipeline(
+            &self.algorithm,
             typed_key,
             self.inner.key_id,
             Box::new(reader),
@@ -147,9 +138,7 @@ where
 }
 
 #[cfg(feature = "async")]
-impl<S> AsyncStreamingEncryptor for SymmetricEncryptorWithAlgorithm<S>
-where
-    S: SymmetricAlgorithm + Default + Send + Sync,
+impl AsyncStreamingEncryptor for SymmetricEncryptorWithAlgorithm
 {
     /// Creates an asynchronous streaming encryptor that wraps the given `AsyncWrite` implementation.
     ///
@@ -158,11 +147,11 @@ where
         self,
         writer: W,
     ) -> crate::Result<Box<dyn AsyncWrite + Unpin + Send + 'a>> {
-        let algorithm = S::default();
-        let processor = Asynchronous::new(&algorithm);
-        let typed_key = self.inner.key.into_typed(algorithm.algorithm())?;
+        let processor = Asynchronous::new();
+        let typed_key = self.inner.key.into_typed(self.algorithm.algorithm())?;
         processor
             .encrypt_symmetric_async(
+                &self.algorithm,
                 typed_key,
                 self.inner.key_id,
                 Box::new(writer),

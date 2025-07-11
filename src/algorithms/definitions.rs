@@ -6,6 +6,7 @@ use super::traits::{
 };
 use crate::common;
 use crate::error::{Error, FormatError, Result};
+use crate::keys::{SymmetricKey as UntypedSymmetricKey, TypedSymmetricKey};
 
 macro_rules! impl_symmetric_algorithm {
     ($wrapper:ident, $algo:ty, $key_variant:path, $algo_enum:path) => {
@@ -15,6 +16,12 @@ macro_rules! impl_symmetric_algorithm {
         impl $wrapper {
             pub fn new() -> Self {
                 Self
+            }
+        }
+
+        impl Default for $wrapper {
+            fn default() -> Self {
+                Self::new()
             }
         }
 
@@ -97,6 +104,24 @@ macro_rules! impl_symmetric_algorithm {
             fn tag_size(&self) -> usize {
                 <$algo>::TAG_SIZE
             }
+
+            fn generate_typed_key(&self) -> Result<TypedSymmetricKey> {
+                use seal_crypto::prelude::SymmetricKeyGenerator;
+                <$algo>::generate_key()
+                    .map_err(Error::from)
+                    .map(|k| $key_variant(k))
+            }
+
+            fn generate_untyped_key(&self) -> Result<UntypedSymmetricKey> {
+                use seal_crypto::prelude::{SymmetricKeyGenerator, Key};
+                <$algo>::generate_key()
+                    .map_err(Error::from)
+                    .map(|k| UntypedSymmetricKey::new(k.to_bytes()))
+            }
+
+            fn into_symmetric_boxed(self) -> Box<dyn SymmetricAlgorithm> {
+                Box::new(self)
+            }
         }
     };
 }
@@ -109,6 +134,123 @@ pub mod symmetric {
     pub use seal_crypto::schemes::symmetric::chacha20_poly1305::{
         ChaCha20Poly1305, XChaCha20Poly1305,
     };
+
+    #[derive(Clone)]
+    pub struct SymmetricAlgorithmWrapper {
+        pub(crate) algorithm: Box<dyn SymmetricAlgorithm>,
+    }
+
+    impl SymmetricAlgorithmWrapper {
+        pub fn new(algorithm: Box<dyn SymmetricAlgorithm>) -> Self {
+            Self { algorithm }
+        }
+
+        pub fn from_enum(algorithm: common::algorithms::SymmetricAlgorithm) -> Self {
+            match algorithm {
+                common::algorithms::SymmetricAlgorithm::Aes128Gcm => Self::new(Box::new(Aes128GcmWrapper::new())),
+                common::algorithms::SymmetricAlgorithm::Aes256Gcm => Self::new(Box::new(Aes256GcmWrapper::new())),
+                common::algorithms::SymmetricAlgorithm::ChaCha20Poly1305 => Self::new(Box::new(ChaCha20Poly1305Wrapper::new())),
+                common::algorithms::SymmetricAlgorithm::XChaCha20Poly1305 => Self::new(Box::new(XChaCha20Poly1305Wrapper::new())),
+            }
+        }
+
+        pub fn generate_typed_key(&self) -> Result<TypedSymmetricKey> {
+            self.algorithm.generate_typed_key()
+        }
+
+        pub fn generate_untyped_key(&self) -> Result<UntypedSymmetricKey> {
+            self.algorithm.generate_untyped_key()
+        }
+    }
+
+    impl SymmetricAlgorithm for SymmetricAlgorithmWrapper {
+        fn algorithm(&self) -> common::algorithms::SymmetricAlgorithm {
+            self.algorithm.algorithm()
+        }
+
+        fn clone_box_symmetric(&self) -> Box<dyn SymmetricAlgorithm> {
+            Box::new(self.clone())
+        }
+
+        fn key_size(&self) -> usize {
+            self.algorithm.key_size()
+        }
+
+        fn nonce_size(&self) -> usize {
+            self.algorithm.nonce_size()
+        }
+
+        fn tag_size(&self) -> usize {
+            self.algorithm.tag_size()
+        }
+
+        fn generate_typed_key(&self) -> Result<TypedSymmetricKey> {
+            self.algorithm.generate_typed_key()
+        }
+
+        fn generate_untyped_key(&self) -> Result<UntypedSymmetricKey> {
+            self.algorithm.generate_untyped_key()
+        }
+
+        fn into_symmetric_boxed(self) -> Box<dyn SymmetricAlgorithm> {
+            Box::new(self)
+        }
+
+        fn encrypt(
+            &self,
+            key: TypedSymmetricKey,
+            nonce: &[u8],
+            plaintext: &[u8],
+            aad: Option<&[u8]>,
+        ) -> Result<Vec<u8>> {
+            self.algorithm.encrypt(key, nonce, plaintext, aad)
+        }
+
+        fn encrypt_to_buffer(
+            &self,
+            key: TypedSymmetricKey,
+            nonce: &[u8],
+            plaintext: &[u8],
+            output: &mut [u8],
+            aad: Option<&[u8]>,
+        ) -> Result<usize> {
+            self.algorithm.encrypt_to_buffer(key, nonce, plaintext, output, aad)
+        }
+
+        fn decrypt(
+            &self,
+            key: TypedSymmetricKey,
+            nonce: &[u8],
+            aad: Option<&[u8]>,
+            ciphertext: &[u8],
+        ) -> Result<Vec<u8>> {
+            self.algorithm.decrypt(key, nonce, aad, ciphertext)
+        }
+
+        fn decrypt_to_buffer(
+            &self,
+            key: TypedSymmetricKey,
+            nonce: &[u8],
+            ciphertext: &[u8],
+            output: &mut [u8],
+            aad: Option<&[u8]>,
+        ) -> Result<usize> {
+            self.algorithm.decrypt_to_buffer(key, nonce, ciphertext, output, aad)
+        }
+
+    }
+
+    impl From<common::algorithms::SymmetricAlgorithm> for SymmetricAlgorithmWrapper {
+        fn from(algorithm: common::algorithms::SymmetricAlgorithm) -> Self {
+            Self::from_enum(algorithm)
+        }
+    }
+
+    impl From<Box<dyn SymmetricAlgorithm>> for SymmetricAlgorithmWrapper {
+        fn from(algorithm: Box<dyn SymmetricAlgorithm>) -> Self {
+            Self::new(algorithm)
+        }
+    }
 
     impl_symmetric_algorithm!(
         Aes128GcmWrapper,
@@ -187,6 +329,10 @@ macro_rules! impl_asymmetric_algorithm {
             fn clone_box_asymmetric(&self) -> Box<dyn AsymmetricAlgorithm> {
                 Box::new(self.clone())
             }
+
+            fn into_asymmetric_boxed(self) -> Box<dyn AsymmetricAlgorithm> {
+                Box::new(self)
+            }
         }
     };
 }
@@ -204,6 +350,75 @@ pub mod asymmetric {
     pub use seal_crypto::schemes::asymmetric::traditional::rsa::{Rsa2048, Rsa4096};
     use seal_crypto::schemes::hash::Sha256;
     use seal_crypto::zeroize::Zeroizing;
+
+    pub struct AsymmetricAlgorithmWrapper {
+        pub(crate) algorithm: Box<dyn AsymmetricAlgorithm>,
+    }
+
+    impl AsymmetricAlgorithmWrapper {
+        pub fn new(algorithm: Box<dyn AsymmetricAlgorithm>) -> Self {
+            Self { algorithm }
+        }
+
+        pub fn from_enum(algorithm: common::algorithms::AsymmetricAlgorithm) -> Self {
+            match algorithm {
+                common::algorithms::AsymmetricAlgorithm::Rsa2048Sha256 => Self::new(Box::new(Rsa2048Sha256Wrapper::new())),
+                common::algorithms::AsymmetricAlgorithm::Rsa4096Sha256 => Self::new(Box::new(Rsa4096Sha256Wrapper::new())),
+                common::algorithms::AsymmetricAlgorithm::Kyber512 => Self::new(Box::new(Kyber512Wrapper::new())),
+                common::algorithms::AsymmetricAlgorithm::Kyber768 => Self::new(Box::new(Kyber768Wrapper::new())),
+                common::algorithms::AsymmetricAlgorithm::Kyber1024 => Self::new(Box::new(Kyber1024Wrapper::new())),
+            }
+        }
+
+        pub fn generate_keypair(&self) -> Result<TypedAsymmetricKeyPair> {
+            self.algorithm.generate_keypair()
+        }
+    }
+
+    impl AsymmetricAlgorithm for AsymmetricAlgorithmWrapper {
+        fn algorithm(&self) -> common::algorithms::AsymmetricAlgorithm {
+            self.algorithm.algorithm()
+        }
+
+        fn encapsulate_key(
+            &self,
+            public_key: &TypedAsymmetricPublicKey,
+        ) -> Result<(Zeroizing<Vec<u8>>, Vec<u8>)> {
+            self.algorithm.encapsulate_key(public_key)
+        }
+        
+        fn decapsulate_key(
+            &self,
+            private_key: &TypedAsymmetricPrivateKey,
+            encapsulated_key: &Zeroizing<Vec<u8>>,
+        ) -> Result<Zeroizing<Vec<u8>>> {
+            self.algorithm.decapsulate_key(private_key, encapsulated_key)
+        }
+
+        fn generate_keypair(&self) -> Result<TypedAsymmetricKeyPair> {
+            self.algorithm.generate_keypair()
+        }
+
+        fn clone_box_asymmetric(&self) -> Box<dyn AsymmetricAlgorithm> {
+            Box::new(self.clone())
+        }
+
+        fn into_asymmetric_boxed(self) -> Box<dyn AsymmetricAlgorithm> {
+            Box::new(self.algorithm)
+        }
+    }
+
+    impl From<common::algorithms::AsymmetricAlgorithm> for AsymmetricAlgorithmWrapper {
+        fn from(algorithm: common::algorithms::AsymmetricAlgorithm) -> Self {
+            Self::from_enum(algorithm)
+        }
+    }
+
+    impl From<Box<dyn AsymmetricAlgorithm>> for AsymmetricAlgorithmWrapper {
+        fn from(algorithm: Box<dyn AsymmetricAlgorithm>) -> Self {
+            Self::new(algorithm)
+        }
+    }
 
     impl_asymmetric_algorithm!(
         Rsa2048Sha256Wrapper,
@@ -242,23 +457,25 @@ pub mod asymmetric {
 }
 
 pub mod hybrid {
+    use crate::algorithms::asymmetric::AsymmetricAlgorithmWrapper;
+    use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
     use crate::algorithms::traits::{
         AsymmetricAlgorithm, HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm,
     };
-    use crate::keys::{TypedAsymmetricKeyPair, TypedSymmetricKey};
+    use crate::keys::{TypedAsymmetricKeyPair, TypedSymmetricKey, SymmetricKey as UntypedSymmetricKey};
     use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey};
     use crate::zeroize::Zeroizing;
 
     #[derive(Clone)]
-    pub struct HybridAlgorithm {
+    pub struct HybridAlgorithmWrapper {
         asymmetric_algorithm: Box<dyn AsymmetricAlgorithm>,
         symmetric_algorithm: Box<dyn SymmetricAlgorithm>,
     }
 
-    impl HybridAlgorithm {
+    impl HybridAlgorithmWrapper {
         pub fn new(
-            asymmetric_algorithm: Box<dyn AsymmetricAlgorithm>,
-            symmetric_algorithm: Box<dyn SymmetricAlgorithm>,
+            asymmetric_algorithm: impl Into<Box<dyn AsymmetricAlgorithm>>,
+            symmetric_algorithm: impl Into<Box<dyn SymmetricAlgorithm>>,
         ) -> Self {
             Self {
                 asymmetric_algorithm,
@@ -267,7 +484,7 @@ pub mod hybrid {
         }
     }
 
-    impl HybridAlgorithmTrait for HybridAlgorithm {
+    impl HybridAlgorithmTrait for HybridAlgorithmWrapper {
         fn asymmetric_algorithm(&self) -> &dyn AsymmetricAlgorithm {
             self.asymmetric_algorithm.as_ref()
         }
@@ -281,7 +498,7 @@ pub mod hybrid {
         }
     }
 
-    impl AsymmetricAlgorithm for HybridAlgorithm {
+    impl AsymmetricAlgorithm for HybridAlgorithmWrapper {
         fn algorithm(&self) -> crate::common::algorithms::AsymmetricAlgorithm {
             self.asymmetric_algorithm.algorithm()
         }
@@ -309,9 +526,13 @@ pub mod hybrid {
         fn generate_keypair(&self) -> crate::Result<TypedAsymmetricKeyPair> {
             self.asymmetric_algorithm.generate_keypair()
         }
+
+        fn into_asymmetric_boxed(self) -> Box<dyn AsymmetricAlgorithm> {
+            Box::new(self.asymmetric_algorithm)
+        }
     }
 
-    impl SymmetricAlgorithm for HybridAlgorithm {
+    impl SymmetricAlgorithm for HybridAlgorithmWrapper {
         fn algorithm(&self) -> crate::common::algorithms::SymmetricAlgorithm {
             self.symmetric_algorithm.algorithm()
         }
@@ -361,6 +582,14 @@ pub mod hybrid {
                 .decrypt_to_buffer(key, nonce, ciphertext, output, aad)
         }
 
+        fn generate_typed_key(&self) -> crate::Result<TypedSymmetricKey> {
+            self.symmetric_algorithm.generate_typed_key()
+        }
+
+        fn generate_untyped_key(&self) -> crate::Result<UntypedSymmetricKey> {
+            self.symmetric_algorithm.generate_untyped_key()
+        }
+
         fn clone_box_symmetric(&self) -> Box<dyn SymmetricAlgorithm> {
             Box::new(self.clone())
         }
@@ -375,6 +604,10 @@ pub mod hybrid {
 
         fn tag_size(&self) -> usize {
             self.symmetric_algorithm.tag_size()
+        }
+
+        fn into_symmetric_boxed(self) -> Box<dyn SymmetricAlgorithm> {
+            Box::new(self.symmetric_algorithm)
         }
     }
 }

@@ -1,65 +1,56 @@
+//! High-level API for building and executing hybrid encryption operations.
+//!
+//! 用于构建和执行混合加密操作的高级 API。
+
+use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
 use crate::algorithms::traits::{
-    AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm,
+    AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, XofAlgorithm,
 };
 use crate::common::algorithms::{
-    KdfAlgorithm as KdfAlgorithmEnum, SignatureAlgorithm as SignatureAlgorithmEnum,
-    XofAlgorithm as XofAlgorithmEnum,
+    AsymmetricAlgorithm as AsymmetricAlgorithmEnum,
+    SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
 use crate::common::header::{DerivationInfo, KdfInfo, XofInfo};
 use crate::common::{DerivationSet, SignerSet};
 use crate::error::KeyManagementError;
+use crate::hybrid::traits::{
+    HybridAsynchronousProcessor, HybridOrdinaryProcessor, HybridParallelProcessor,
+    HybridParallelStreamingProcessor, HybridStreamingProcessor,
+};
 use crate::keys::provider::EncryptionKeyProvider;
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
-use crate::seal::hybrid::{DerivationOptions, HybridEncryptionOptions};
 use crate::seal::traits::{
-    InMemoryEncryptor, IntoAsyncWriter, IntoWriter, StreamingEncryptor as StreamingEncryptorTrait,
+    AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor as StreamingEncryptorTrait,
+    WithAad,
 };
 use seal_crypto::prelude::*;
-use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
-    Dilithium2, Dilithium3, Dilithium5,
-};
-use seal_crypto::schemes::asymmetric::traditional::ecc::{EcdsaP256, Ed25519};
-use seal_crypto::schemes::kdf::hkdf::{HkdfSha256, HkdfSha384, HkdfSha512};
-use seal_crypto::schemes::xof::shake::{Shake128, Shake256};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
-use std::marker::PhantomData;
 use std::sync::Arc;
 use tokio::io::AsyncWrite;
+use crate::algorithms::traits::HybridAlgorithm;
+
+// --- Builder ---
 
 /// A builder for hybrid encryption operations.
 ///
-/// This builder allows for flexible configuration of the encryption process,
-/// including the use of a key provider.
-///
 /// 混合加密操作的构建器。
-///
-/// 该构建器允许灵活配置加密过程，包括使用密钥提供程序。
 #[derive(Default)]
-pub struct HybridEncryptorBuilder<S: SymmetricAlgorithm> {
+pub struct HybridEncryptorBuilder {
     key_provider: Option<Arc<dyn EncryptionKeyProvider>>,
-    _phantom: PhantomData<S>,
 }
 
-impl<S: SymmetricAlgorithm> HybridEncryptorBuilder<S> {
+impl HybridEncryptorBuilder {
     /// Creates a new `HybridEncryptorBuilder`.
     ///
     /// 创建一个新的 `HybridEncryptorBuilder`。
     pub fn new() -> Self {
-        Self {
-            key_provider: None,
-            _phantom: PhantomData,
-        }
+        Self { key_provider: None }
     }
 
     /// Attaches an `EncryptionKeyProvider` to the builder.
     ///
-    /// This allows the encryptor to resolve recipient keys and signing keys
-    /// using key IDs.
-    ///
     /// 将一个 `EncryptionKeyProvider` 附加到构建器上。
-    ///
-    /// 这允许加密器使用密钥 ID 来解析接收方密钥和签名密钥。
     pub fn with_key_provider(mut self, provider: Arc<dyn EncryptionKeyProvider>) -> Self {
         self.key_provider = Some(provider);
         self
@@ -68,26 +59,21 @@ impl<S: SymmetricAlgorithm> HybridEncryptorBuilder<S> {
     /// Configures the encryptor with a recipient's public key provided directly.
     ///
     /// 使用直接提供的接收方公钥配置加密器。
-    pub fn with_recipient(self, pk: AsymmetricPublicKey, kek_id: String) -> HybridEncryptor<S> {
+    pub fn with_recipient(self, pk: AsymmetricPublicKey, kek_id: String) -> HybridEncryptor {
         HybridEncryptor {
             pk,
             kek_id,
             aad: None,
             signer: None,
             derivation_config: None,
-            _phantom: PhantomData,
             key_provider: self.key_provider,
         }
     }
 
     /// Configures the encryptor with a recipient's key ID.
     ///
-    /// The public key will be resolved using the attached `EncryptionKeyProvider`.
-    ///
     /// 使用接收方的密钥 ID 配置加密器。
-    ///
-    /// 将使用附加的 `EncryptionKeyProvider` 解析公钥。
-    pub fn with_recipient_id(self, kek_id: &str) -> crate::Result<HybridEncryptor<S>> {
+    pub fn with_recipient_id(self, kek_id: &str) -> crate::Result<HybridEncryptor> {
         let provider = self
             .key_provider
             .as_ref()
@@ -99,114 +85,39 @@ impl<S: SymmetricAlgorithm> HybridEncryptorBuilder<S> {
             aad: None,
             signer: None,
             derivation_config: None,
-            _phantom: PhantomData,
             key_provider: self.key_provider,
         })
     }
 }
 
+// --- Encryptor Context ---
+
 /// A context for hybrid encryption operations, allowing selection of execution mode.
 ///
 /// 混合加密操作的上下文，允许选择执行模式。
-pub struct HybridEncryptor<S>
-where
-    S: SymmetricAlgorithm,
-{
+pub struct HybridEncryptor {
     pub(crate) pk: AsymmetricPublicKey,
     pub(crate) kek_id: String,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) signer: Option<SignerSet>,
     pub(crate) derivation_config: Option<DerivationSet>,
-    pub(crate) _phantom: PhantomData<S>,
     key_provider: Option<Arc<dyn EncryptionKeyProvider>>,
 }
 
-impl<S> HybridEncryptor<S>
-where
-    S: SymmetricAlgorithm,
-{
-    /// Applies a set of pre-configured options to the encryptor.
-    ///
-    /// 将一组预先配置的选项应用于加密器。
-    pub fn with_options(mut self, options: HybridEncryptionOptions) -> Self {
-        if let Some(aad) = options.aad {
-            self = self.with_aad(aad);
-        }
-
-        if let Some(signer_opts) = options.signer {
-            match signer_opts.algorithm {
-                SignatureAlgorithmEnum::Dilithium2 => {
-                    self = self.with_signer::<Dilithium2>(signer_opts.key, signer_opts.key_id)
-                }
-                SignatureAlgorithmEnum::Dilithium3 => {
-                    self = self.with_signer::<Dilithium3>(signer_opts.key, signer_opts.key_id)
-                }
-                SignatureAlgorithmEnum::Dilithium5 => {
-                    self = self.with_signer::<Dilithium5>(signer_opts.key, signer_opts.key_id)
-                }
-                SignatureAlgorithmEnum::Ed25519 => {
-                    self = self.with_signer::<Ed25519>(signer_opts.key, signer_opts.key_id)
-                }
-                SignatureAlgorithmEnum::EcdsaP256 => {
-                    self = self.with_signer::<EcdsaP256>(signer_opts.key, signer_opts.key_id)
-                }
-            }
-        }
-
-        if let Some(derivation_opts) = options.derivation {
-            self = match derivation_opts {
-                DerivationOptions::Kdf(opts) => match opts.algorithm {
-                    KdfAlgorithmEnum::HkdfSha256 => self.with_kdf::<HkdfSha256>(
-                        HkdfSha256::default(),
-                        opts.salt,
-                        opts.info,
-                        opts.output_len,
-                    ),
-                    KdfAlgorithmEnum::HkdfSha384 => self.with_kdf::<HkdfSha384>(
-                        HkdfSha384::default(),
-                        opts.salt,
-                        opts.info,
-                        opts.output_len,
-                    ),
-                    KdfAlgorithmEnum::HkdfSha512 => self.with_kdf::<HkdfSha512>(
-                        HkdfSha512::default(),
-                        opts.salt,
-                        opts.info,
-                        opts.output_len,
-                    ),
-                },
-                DerivationOptions::Xof(opts) => match opts.algorithm {
-                    XofAlgorithmEnum::Shake128 => self.with_xof::<Shake128>(
-                        Shake128::default(),
-                        opts.salt,
-                        opts.info,
-                        opts.output_len,
-                    ),
-                    XofAlgorithmEnum::Shake256 => self.with_xof::<Shake256>(
-                        Shake256::default(),
-                        opts.salt,
-                        opts.info,
-                        opts.output_len,
-                    ),
-                },
-            };
-        }
-
-        self
-    }
-
+impl WithAad for HybridEncryptor {
     /// Sets the Associated Data (AAD) for this encryption operation.
     ///
     /// 为此加密操作设置关联数据 (AAD)。
-    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
+    fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.aad = Some(aad.into());
         self
     }
+}
 
-    /// Use a Key Derivation Function (KDF) to derive the Data Encryption Key (DEK)
-    /// from the shared secret generated by the Key Encapsulation Mechanism (KEM).
+impl HybridEncryptor {
+    /// Use a Key Derivation Function (KDF) to derive the Data Encryption Key (DEK).
     ///
-    /// 使用密钥派生函数 (KDF) 从密钥封装机制 (KEM) 生成的共享秘密中派生数据加密密钥 (DEK)。
+    /// 使用密钥派生函数 (KDF) 派生数据加密密钥 (DEK)。
     pub fn with_kdf<Kdf>(
         mut self,
         deriver: Kdf,
@@ -308,10 +219,8 @@ where
     }
 
     /// Signs the encryption metadata (header) with the given private key.
-    /// The signature ensures the integrity and authenticity of the encryption parameters.
     ///
     /// 使用给定的私钥对加密元数据（标头）进行签名。
-    /// 签名确保了加密参数的完整性和真实性。
     pub fn with_signer<SignerAlgo>(
         mut self,
         signing_key: AsymmetricPrivateKey,
@@ -337,53 +246,45 @@ where
         self
     }
 
-    /// Configures the encryptor to use a specific asymmetric algorithm.
+    /// Configures the encryptor to use specific asymmetric and symmetric algorithms.
     ///
-    /// This returns a new encryptor instance that is specialized for the given
-    /// algorithm, which can then be used to perform the actual encryption.
-    ///
-    /// 配置加密器以使用特定的非对称算法。
-    ///
-    /// 这将返回一个为给定算法特化的新加密器实例，
-    /// 然后可用于执行实际的加密操作。
-    pub fn with_algorithm<A: AsymmetricAlgorithm>(self) -> HybridEncryptorWithAlgorithms<A, S> {
+    /// 配置加密器以使用特定的非对称和对称算法。
+    pub fn execute_with(
+        self,
+        asymmetric: AsymmetricAlgorithmEnum,
+        symmetric: SymmetricAlgorithmEnum,
+    ) -> HybridEncryptorWithAlgorithms {
+        let asym_algo = asymmetric.into_asymmetric_wrapper();
+        let sym_algo = symmetric.into_symmetric_wrapper();
+        let algorithm = HybridAlgorithmWrapper::new(asym_algo, sym_algo);
         HybridEncryptorWithAlgorithms {
+            algorithm,
             inner: self,
-            _phantom_a: PhantomData,
         }
     }
 }
 
-/// A hybrid encryptor that has been configured with specific asymmetric and symmetric algorithms.
+/// A hybrid encryptor that has been configured with specific algorithms.
 ///
-/// This struct provides the final encryption methods (`to_vec`, `into_writer`, etc.)
-/// without requiring further generic algorithm specification.
-///
-/// 已配置特定非对称和对称算法的混合加密器。
-///
-/// 该结构提供了最终的加密方法（`to_vec`、`into_writer`等），
-/// 无需进一步指定泛型算法。
-pub struct HybridEncryptorWithAlgorithms<A, S>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-{
-    inner: HybridEncryptor<S>,
-    _phantom_a: PhantomData<A>,
+/// 已配置特定算法的混合加密器。
+pub struct HybridEncryptorWithAlgorithms {
+    algorithm: HybridAlgorithmWrapper,
+    inner: HybridEncryptor,
 }
 
-impl<A, S> InMemoryEncryptor for HybridEncryptorWithAlgorithms<A, S>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-{
+impl InMemoryEncryptor for HybridEncryptorWithAlgorithms {
     /// Encrypts the given plaintext in-memory.
     ///
     /// 在内存中加密给定的明文。
     fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
-        let pk = A::PublicKey::from_bytes(self.inner.pk.as_bytes())?;
+        let processor = crate::hybrid::ordinary::Ordinary::new();
+        let pk = self
+            .inner
+            .pk
+            .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
 
-        crate::hybrid::ordinary::encrypt::<A, S>(
+        processor.encrypt_hybrid_in_memory(
+            self.algorithm,
             &pk,
             plaintext,
             self.inner.kek_id,
@@ -397,8 +298,14 @@ where
     ///
     /// 使用并行处理在内存中加密给定的明文。
     fn to_vec_parallel(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
-        let pk = A::PublicKey::from_bytes(self.inner.pk.as_bytes())?;
-        crate::hybrid::parallel::encrypt::<A, S>(
+        let processor = crate::hybrid::parallel::Parallel::new();
+        let pk = self
+            .inner
+            .pk
+            .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
+
+        processor.encrypt_parallel(
+            &self.algorithm,
             &pk,
             plaintext,
             self.inner.kek_id,
@@ -409,48 +316,46 @@ where
     }
 }
 
-impl<A, S> StreamingEncryptorTrait for HybridEncryptorWithAlgorithms<A, S>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-{
-    /// Encrypts data from a reader and writes to a writer using parallel processing.
+impl StreamingEncryptorTrait for HybridEncryptorWithAlgorithms {
+    /// Creates a streaming encryptor that wraps the given `Write` implementation.
     ///
-    /// 使用并行处理从 reader 加密数据并写入 writer。
-    fn pipe_parallel<R, W>(self, reader: R, writer: W) -> crate::Result<()>
-    where
-        R: Read + Send,
-        W: Write,
-    {
-        let pk = A::PublicKey::from_bytes(self.inner.pk.as_bytes())?;
-        crate::hybrid::parallel_streaming::encrypt::<A, S, R, W>(
+    /// 创建一个包装了给定 `Write` 实现的流式加密器。
+    fn into_writer<'a, W: Write + 'a>(self, writer: W) -> crate::Result<Box<dyn Write + 'a>> {
+        let processor = crate::hybrid::streaming::Streaming::new();
+        let pk = self
+            .inner
+            .pk
+            .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
+
+        processor.encrypt_hybrid_to_stream(
+            &self.algorithm,
             &pk,
-            reader,
-            writer,
+            Box::new(writer),
             self.inner.kek_id,
             self.inner.signer,
             self.inner.aad.as_deref(),
             self.inner.derivation_config,
         )
     }
-}
 
-impl<A, S> IntoWriter for HybridEncryptorWithAlgorithms<A, S>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-{
-    type Encryptor<W: Write> = crate::hybrid::streaming::Encryptor<W, A, S>;
-
-    fn into_writer<W: Write>(
-        self,
-        writer: W,
-    ) -> crate::Result<crate::hybrid::streaming::Encryptor<W, A, S>> {
-        let pk = A::PublicKey::from_bytes(self.inner.pk.as_bytes())?;
-
-        crate::hybrid::streaming::Encryptor::new(
-            writer,
+    /// Encrypts data from a reader and writes to a writer using parallel processing.
+    ///
+    /// 使用并行处理从 reader 加密数据并写入 writer。
+    fn pipe_parallel<R, W>(self, reader: R, writer: W) -> crate::Result<()>
+    where
+        R: Read + Send,
+        W: Write + Send,
+    {
+        let processor = crate::hybrid::parallel_streaming::ParallelStreaming::new();
+        let pk = self
+            .inner
+            .pk
+            .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
+        processor.encrypt_hybrid_pipeline(
+            &self.algorithm,
             &pk,
+            Box::new(reader),
+            Box::new(writer),
             self.inner.kek_id,
             self.inner.signer,
             self.inner.aad.as_deref(),
@@ -460,35 +365,30 @@ where
 }
 
 #[cfg(feature = "async")]
-impl<A, S> IntoAsyncWriter for HybridEncryptorWithAlgorithms<A, S>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-{
-    type AsyncEncryptor<W: AsyncWrite + Unpin + Send> =
-        crate::hybrid::asynchronous::Encryptor<W, A, S>;
-
-    fn into_async_writer<W: AsyncWrite + Unpin + Send>(
+impl AsyncStreamingEncryptor for HybridEncryptorWithAlgorithms {
+    /// Creates an asynchronous streaming encryptor that wraps the given `AsyncWrite` implementation.
+    ///
+    /// 创建一个包装了给定 `AsyncWrite` 实现的异步流式加密器。
+    async fn into_async_writer<'a, W: AsyncWrite + Unpin + Send + 'a>(
         self,
         writer: W,
-    ) -> impl std::future::Future<Output = crate::Result<Self::AsyncEncryptor<W>>> + Send {
-        let pk_bytes = self.inner.pk;
-        let kek_id = self.inner.kek_id;
-        let signer = self.inner.signer;
-        let aad = self.inner.aad;
-        let derivation_config = self.inner.derivation_config;
-
-        async move {
-            let pk = A::PublicKey::from_bytes(pk_bytes.as_bytes())?;
-            crate::hybrid::asynchronous::Encryptor::new(
-                writer,
-                pk,
-                kek_id,
-                signer,
-                aad.as_deref(),
-                derivation_config,
+    ) -> crate::Result<Box<dyn AsyncWrite + Unpin + Send + 'a>> {
+        let pk = self
+            .inner
+            .pk
+            .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
+        let processor = crate::hybrid::asynchronous::Asynchronous::new();
+        let aad = self.inner.aad.as_deref();
+        processor
+            .encrypt_hybrid_async(
+                &self.algorithm,
+                &pk,
+                Box::new(writer),
+                self.inner.kek_id,
+                self.inner.signer,
+                aad,
+                self.inner.derivation_config,
             )
             .await
-        }
     }
 }

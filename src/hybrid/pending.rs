@@ -2,14 +2,15 @@
 //!
 //! 定义用于不同混合加密模式的通用 PendingDecryptor。
 
+use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
 use crate::common::header::Header;
 
 /// A generic decryptor that is pending the provision of a key.
 ///
 /// It holds the data source (e.g., a byte slice or a reader), the parsed header,
 /// and the algorithm instance needed for decryption.
-pub(super) struct PendingDecryptor<Source, Algo> {
+pub struct PendingDecryptor<Source> {
     pub(super) source: Source,
     pub(super) header: Header,
-    pub(super) algorithm: Algo,
+    pub(super) algorithm: HybridAlgorithmWrapper,
 } 

@@ -7,6 +7,7 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::error::{Error, FormatError, Result};
+use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use rayon::prelude::*;
 
 use super::traits::ParallelBodyProcessor;

@@ -571,6 +571,31 @@ impl AsymmetricPublicKey {
     pub fn into_bytes(self) -> zeroize::Zeroizing<Vec<u8>> {
         self.0
     }
+
+    pub fn into_typed(self, algorithm: AsymmetricAlgorithmEnum) -> Result<TypedAsymmetricPublicKey, Error> {
+        match algorithm {
+            AsymmetricAlgorithmEnum::Rsa2048Sha256 => {
+                let pk = <Rsa2048<Sha256> as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPublicKey::Rsa2048Sha256(pk))
+            }
+            AsymmetricAlgorithmEnum::Rsa4096Sha256 => {
+                let pk = <Rsa4096<Sha256> as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPublicKey::Rsa4096Sha256(pk))
+            }
+            AsymmetricAlgorithmEnum::Kyber512 => {
+                let pk = <Kyber512 as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPublicKey::Kyber512(pk))
+            }
+            AsymmetricAlgorithmEnum::Kyber768 => {
+                let pk = <Kyber768 as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPublicKey::Kyber768(pk))
+            }
+            AsymmetricAlgorithmEnum::Kyber1024 => {
+                let pk = <Kyber1024 as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPublicKey::Kyber1024(pk))
+            }
+        }
+    }
 }
 
 /// A byte wrapper for a signature public key.

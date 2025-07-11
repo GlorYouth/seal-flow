@@ -9,6 +9,7 @@ use crate::common::buffer::BufferPool;
 use crate::common::{derive_nonce, OrderedChunk, CHANNEL_BOUND, DEFAULT_CHUNK_SIZE};
 use crate::error::{Error, Result};
 use crate::keys::TypedSymmetricKey;
+use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use rayon::prelude::*;
 use std::collections::BinaryHeap;
 use std::io::{Read, Write};
@@ -21,7 +22,7 @@ use super::traits::ParallelStreamingBodyProcessor;
 ///
 /// 并行流式加密的核心管道。
 fn encrypt_pipeline<R, W>(
-    algorithm: Box<dyn SymmetricAlgorithm>,
+    algorithm: SymmetricAlgorithmWrapper,
     key: TypedSymmetricKey,
     base_nonce: [u8; 12],
     mut reader: R,
@@ -196,7 +197,7 @@ where
 ///
 /// 并行流式解密的核心管道。
 fn decrypt_pipeline<R, W>(
-    algorithm: Box<dyn SymmetricAlgorithm>,
+    algorithm: SymmetricAlgorithmWrapper,
     key: TypedSymmetricKey,
     base_nonce: [u8; 12],
     chunk_size: u32,

@@ -116,7 +116,7 @@
 //!
 //! assert_eq!(plaintext, &decrypted[..]);
 //! ```
-use crate::keys::SymmetricKey;
+use crate::{algorithms::symmetric::SymmetricAlgorithmWrapper, keys::SymmetricKey, prelude::SymmetricAlgorithmEnum};
 use decryptor::SymmetricDecryptorBuilder;
 use encryptor::SymmetricEncryptor;
 
@@ -130,14 +130,13 @@ pub mod encryptor;
 /// 用于创建对称加密和解密执行器的工厂。
 /// 这个结构体是高级对称 API 的主要入口点。
 /// 它是无状态的，可以重复用于多个操作。
-#[derive(Default)]
 pub struct SymmetricSeal;
 
 impl SymmetricSeal {
     /// Creates a new `SymmetricSeal` factory.
     ///
     /// 创建一个新的 `SymmetricSeal` 工厂。
-    pub fn new() -> Self {
+    pub fn new(algorithm: SymmetricAlgorithmEnum) -> Self {
         Self
     }
 
@@ -195,7 +194,7 @@ mod tests {
     use std::io::{Cursor, Read, Write};
     #[cfg(feature = "async")]
     use tokio::io::AsyncReadExt;
-
+    use crate::prelude::{InMemoryEncryptor, StreamingEncryptor};
     use crate::seal::traits::{InMemoryDecryptor, WithAad};
     const TEST_KEY_ID: &str = "test-key";
 
@@ -209,13 +208,13 @@ mod tests {
         let key = SymmetricKey::new(typed_key.to_bytes());
         let plaintext = get_test_data();
 
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::new(SymmetricAlgorithmEnum::Aes256Gcm);
         let encrypted = seal
             .encrypt(key.clone(), TEST_KEY_ID.to_string())
-            .execute_with::<Aes256Gcm>()
+            .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
             .to_vec(plaintext)
             .unwrap();
-        let pending = seal.decrypt().slice::<Aes256Gcm>(&encrypted).unwrap();
+        let pending = seal.decrypt().slice(&encrypted).unwrap();
         assert_eq!(pending.key_id(), Some(TEST_KEY_ID));
         let decrypted = pending.with_key_to_vec(key).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
@@ -227,14 +226,14 @@ mod tests {
         let key = SymmetricKey::new(typed_key.to_bytes());
         let plaintext = get_test_data();
         let key_id = "test-key-id-2".to_string();
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::new(SymmetricAlgorithmEnum::Aes256Gcm);
 
         let encrypted = seal
             .encrypt(key.clone(), key_id.clone())
-            .execute_with::<Aes256Gcm>()
+            .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
             .to_vec_parallel(plaintext)?;
 
-        let pending = seal.decrypt().slice_parallel::<Aes256Gcm>(&encrypted)?;
+        let pending = seal.decrypt().slice_parallel(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
         let decrypted = pending.with_key_to_vec(key)?;
 
@@ -250,13 +249,13 @@ mod tests {
         key_store.insert(TEST_KEY_ID.to_string(), typed_key.clone());
 
         let plaintext = get_test_data();
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::new(SymmetricAlgorithmEnum::Aes256Gcm);
 
         // Encrypt
         let mut encrypted_data = Vec::new();
         let mut encryptor = seal
             .encrypt(key.clone(), TEST_KEY_ID.to_string())
-            .execute_with::<Aes256Gcm>()
+            .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
             .into_writer(&mut encrypted_data)
             .unwrap();
         encryptor.write_all(plaintext).unwrap();
@@ -265,7 +264,7 @@ mod tests {
         // Decrypt
         let pending = seal
             .decrypt()
-            .reader::<Aes256Gcm, _>(Cursor::new(&encrypted_data))
+            .reader(Cursor::new(&encrypted_data))
             .unwrap();
         let key_id = pending.key_id().unwrap();
         let _decryption_key = key_store.get(key_id).unwrap();
@@ -282,16 +281,16 @@ mod tests {
         let key = SymmetricKey::new(typed_key.to_bytes());
         let plaintext = get_test_data();
         let key_id = "test-key-id-p-streaming".to_string();
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::new(SymmetricAlgorithmEnum::Aes256Gcm);
 
         let mut encrypted = Vec::new();
         seal.encrypt(key.clone(), key_id.clone())
-            .execute_with::<Aes256Gcm>()
+            .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
             .pipe_parallel(Cursor::new(plaintext), &mut encrypted)?;
 
         let pending = seal
             .decrypt()
-            .reader_parallel::<Aes256Gcm, _>(Cursor::new(&encrypted))?;
+            .reader_parallel(Cursor::new(&encrypted))?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
 
         let mut decrypted = Vec::new();
@@ -308,16 +307,16 @@ mod tests {
         let key = SymmetricKey::new(typed_key.to_bytes());
         let plaintext = get_test_data();
         let key_id = "test-key-id-bytes".to_string();
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::new(SymmetricAlgorithmEnum::Aes256Gcm);
 
         // 使用原始密钥加密
         let encrypted = seal
             .encrypt(key.clone(), key_id.clone())
-            .execute_with::<Aes256Gcm>()
+            .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
             .to_vec(plaintext)?;
 
         // 使用密钥字节解密
-        let pending = seal.decrypt().slice::<Aes256Gcm>(&encrypted)?;
+        let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
         let decrypted = pending.with_key_to_vec(key)?;
 
@@ -332,16 +331,16 @@ mod tests {
         let plaintext = get_test_data();
         let aad = b"test-associated-data";
         let key_id = "aad-key".to_string();
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::new(SymmetricAlgorithmEnum::Aes256Gcm);
 
         let encrypted = seal
             .encrypt(key.clone(), key_id.clone())
             .with_aad(aad)
-            .execute_with::<Aes256Gcm>()
+            .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
             .to_vec(plaintext)?;
 
         // Decrypt with correct AAD
-        let pending = seal.decrypt().with_aad(aad).slice::<Aes256Gcm>(&encrypted)?;
+        let pending = seal.decrypt().with_aad(aad).slice(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
         let decrypted = pending.with_key_to_vec(key.clone())?;
         assert_eq!(plaintext, decrypted.as_slice());
@@ -350,12 +349,12 @@ mod tests {
         let pending_fail = seal
             .decrypt()
             .with_aad(b"wrong-aad")
-            .slice::<Aes256Gcm>(&encrypted)?;
+            .slice(&encrypted)?;
         let result = pending_fail.with_key_to_vec(key.clone());
         assert!(result.is_err());
 
         // Decrypt with no AAD fails
-        let pending_fail2 = seal.decrypt().slice::<Aes256Gcm>(&encrypted)?;
+        let pending_fail2 = seal.decrypt().slice(&encrypted)?;
         let result2 = pending_fail2.with_key_to_vec(key);
         assert!(result2.is_err());
 
@@ -367,6 +366,7 @@ mod tests {
         use super::*;
         use std::collections::HashMap;
         use tokio::io::AsyncWriteExt;
+        use crate::prelude::AsyncStreamingEncryptor;
 
         #[tokio::test]
         async fn test_asynchronous_streaming_roundtrip() {
@@ -376,13 +376,13 @@ mod tests {
             key_store.insert(TEST_KEY_ID.to_string(), typed_key.clone());
             let plaintext = get_test_data();
 
-            let seal = SymmetricSeal::new();
+            let seal = SymmetricSeal::new(SymmetricAlgorithmEnum::Aes256Gcm);
 
             // Encrypt
             let mut encrypted_data = Vec::new();
             let mut encryptor = seal
                 .encrypt(key.clone(), TEST_KEY_ID.to_string())
-                .execute_with::<Aes256Gcm>()
+                .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
                 .into_async_writer(&mut encrypted_data)
                 .await
                 .unwrap();
@@ -392,7 +392,7 @@ mod tests {
             // Decrypt
             let pending = seal
                 .decrypt()
-                .async_reader::<Aes256Gcm, _>(Cursor::new(&encrypted_data))
+                .async_reader(Cursor::new(&encrypted_data))
                 .await
                 .unwrap();
             let key_id = pending.key_id().unwrap();

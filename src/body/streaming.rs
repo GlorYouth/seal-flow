@@ -8,6 +8,7 @@ use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::error::Result;
 use crate::keys::TypedSymmetricKey;
+use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use std::io::{self, Read, Write};
 
 use super::traits::StreamingBodyProcessor;
@@ -19,7 +20,7 @@ use super::traits::StreamingBodyProcessor;
 /// 同步、流式加密器的实现。
 pub struct EncryptorImpl<W: Write> {
     writer: W,
-    algorithm: Box<dyn SymmetricAlgorithm>,
+    algorithm: SymmetricAlgorithmWrapper,
     key: TypedSymmetricKey,
     base_nonce: [u8; 12],
     chunk_size: usize,
@@ -35,7 +36,7 @@ impl<W: Write> EncryptorImpl<W> {
     /// 创建一个新的 `EncryptorImpl`。
     pub fn new(
         writer: W,
-        algorithm: Box<dyn SymmetricAlgorithm>,
+        algorithm: SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
         aad: Option<&[u8]>,
@@ -154,7 +155,7 @@ impl<W: Write> Write for EncryptorImpl<W> {
 /// 同步、流式解密器的实现。
 pub struct DecryptorImpl<R: Read> {
     reader: R,
-    algorithm: Box<dyn SymmetricAlgorithm>,
+    algorithm: SymmetricAlgorithmWrapper,
     key: TypedSymmetricKey,
     base_nonce: [u8; 12],
     encrypted_chunk_size: usize,
@@ -171,7 +172,7 @@ impl<R: Read> DecryptorImpl<R> {
     /// 创建一个新的 `DecryptorImpl`。
     pub fn new(
         reader: R,
-        algorithm: Box<dyn SymmetricAlgorithm>,
+        algorithm: SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
         aad: Option<&[u8]>,
@@ -248,50 +249,3 @@ impl<R: Read> Read for DecryptorImpl<R> {
     }
 }
 
-impl StreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
-    fn encrypt_body_to_stream<'a>(
-        &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
-        writer: Box<dyn Write + 'a>,
-        aad: Option<&[u8]>,
-    ) -> Result<Box<dyn Write + 'a>> {
-        let encryptor = EncryptorImpl::new(writer, self.clone(), key, base_nonce, aad)?;
-        Ok(Box::new(encryptor))
-    }
-
-    fn decrypt_body_from_stream<'a>(
-        &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
-        reader: Box<dyn Read + 'a>,
-        aad: Option<&[u8]>,
-    ) -> Result<Box<dyn Read + 'a>> {
-        let decryptor = DecryptorImpl::new(reader, self.clone(), key, base_nonce, aad);
-        Ok(Box::new(decryptor))
-    }
-}
-
-impl StreamingBodyProcessor for &dyn SymmetricAlgorithm {
-    fn encrypt_body_to_stream<'a>(
-        &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
-        writer: Box<dyn Write + 'a>,
-        aad: Option<&[u8]>,
-    ) -> Result<Box<dyn Write + 'a>> {
-        let encryptor = EncryptorImpl::new(writer, self.clone_box_symmetric(), key, base_nonce, aad)?;
-        Ok(Box::new(encryptor))
-    }
-
-    fn decrypt_body_from_stream<'a>(
-        &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
-        reader: Box<dyn Read + 'a>,
-        aad: Option<&[u8]>,
-    ) -> Result<Box<dyn Read + 'a>> {
-        let decryptor = DecryptorImpl::new(reader, self.clone_box_symmetric(), key, base_nonce, aad);
-        Ok(Box::new(decryptor))
-    }
-}

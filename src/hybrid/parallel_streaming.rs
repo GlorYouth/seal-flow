@@ -4,36 +4,31 @@
 
 use super::common::create_header;
 use super::traits::{HybridParallelStreamingPendingDecryptor, HybridParallelStreamingProcessor};
+use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
 use crate::algorithms::traits::HybridAlgorithm as HybridAlgorithmTrait;
 use crate::body::traits::ParallelStreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::pending::PendingDecryptor;
-use crate::keys::{AsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+use crate::keys::{TypedAsymmetricPublicKey, TypedSymmetricKey, TypedAsymmetricPrivateKey};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
-use std::sync::Arc;
 
-pub struct ParallelStreaming<'h, H: HybridAlgorithmTrait> {
-    algorithm: Arc<H>,
-    _marker: std::marker::PhantomData<&'h H>,
-}
+pub struct ParallelStreaming;
 
-impl<'h, H: HybridAlgorithmTrait> ParallelStreaming<'h, H> {
-    pub fn new(algorithm: Arc<H>) -> Self {
-        Self {
-            algorithm,
-            _marker: std::marker::PhantomData,
-        }
+impl ParallelStreaming {
+    pub fn new() -> Self {
+        Self
     }
 }
 
-impl<'h, H: HybridAlgorithmTrait + Send + Sync + 'h> HybridParallelStreamingProcessor
-    for ParallelStreaming<'h, H>
+impl HybridParallelStreamingProcessor
+    for ParallelStreaming
 {
     fn encrypt_hybrid_pipeline<'a>(
         &self,
+        algorithm: &HybridAlgorithmWrapper,
         public_key: &TypedAsymmetricPublicKey,
         reader: Box<dyn Read + Send + 'a>,
         mut writer: Box<dyn Write + Send + 'a>,
@@ -47,7 +42,7 @@ impl<'h, H: HybridAlgorithmTrait + Send + Sync + 'h> HybridParallelStreamingProc
             .unzip();
 
         let (header, base_nonce, shared_secret) =
-            create_header(&*self.algorithm, public_key, kek_id, signer, aad, info)?;
+            create_header(algorithm, public_key, kek_id, signer, aad, info)?;
 
         let dek = if let Some(f) = deriver_fn {
             f(&shared_secret)?
@@ -59,7 +54,7 @@ impl<'h, H: HybridAlgorithmTrait + Send + Sync + 'h> HybridParallelStreamingProc
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
 
-        let algo = self.algorithm.symmetric_algorithm().clone_box_symmetric();
+        let algo = algorithm.symmetric_algorithm().clone_box_symmetric();
         ParallelStreamingBodyProcessor::encrypt_body_pipeline(
             &algo, dek, base_nonce, reader, writer, aad,
         )
@@ -68,26 +63,27 @@ impl<'h, H: HybridAlgorithmTrait + Send + Sync + 'h> HybridParallelStreamingProc
     fn begin_decrypt_hybrid_pipeline<'a>(
         &self,
         mut reader: Box<dyn Read + Send + 'a>,
-    ) -> Result<Box<dyn HybridParallelStreamingPendingDecryptor<'a> + 'a>> {
+    ) -> Result<Box<dyn HybridParallelStreamingPendingDecryptor + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
+        let asym_algo = header.payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?.into_asymmetric_wrapper();
+        let sym_algo = header.payload.symmetric_algorithm().into_symmetric_wrapper();
+        let algorithm = HybridAlgorithmWrapper::new(asym_algo, sym_algo);
+
         let pending = PendingDecryptor {
             source: reader,
             header,
-            algorithm: self.algorithm.clone(),
+            algorithm,
         };
         Ok(Box::new(pending))
     }
 }
 
-impl<'a, H> HybridParallelStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Read + Send + 'a>, Arc<H>>
-where
-    H: HybridAlgorithmTrait + Send + Sync + 'a,
-{
+impl<'a> HybridParallelStreamingPendingDecryptor for PendingDecryptor<Box<dyn Read + Send>> {
     fn decrypt_to_writer(
         self: Box<Self>,
-        sk: &AsymmetricPrivateKey,
-        writer: Box<dyn Write + Send + 'a>,
-        aad: Option<&'a [u8]>,
+        sk: &TypedAsymmetricPrivateKey,
+        writer: Box<dyn Write + Send>,
+        aad: Option<&[u8]>,
     ) -> Result<()> {
         let reader = Box::new(self.source);
         let (encapsulated_key, base_nonce, derivation_info) = match &self.header.payload {
@@ -137,12 +133,12 @@ where
 mod tests {
     use super::*;
     use crate::algorithms::definitions::{
-        asymmetric::Rsa2048Sha256Wrapper, hybrid::HybridAlgorithm, symmetric::Aes256GcmWrapper,
+        asymmetric::Rsa2048Sha256Wrapper, hybrid::HybridAlgorithmWrapper, symmetric::Aes256GcmWrapper,
     };
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
     use crate::common::DerivationSet;
-    use crate::keys::{AsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+    use crate::keys::{TypedAsymmetricPublicKey, TypedSymmetricKey};
     use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use std::io::Cursor;
@@ -151,14 +147,14 @@ mod tests {
         (0..size).map(|i| (i % 256) as u8).collect()
     }
 
-    fn get_test_algorithm() -> HybridAlgorithm {
-        HybridAlgorithm::new(
+    fn get_test_algorithm() -> HybridAlgorithmWrapper {
+        HybridAlgorithmWrapper::new(
             Box::new(Rsa2048Sha256Wrapper::new()),
             Box::new(Aes256GcmWrapper::new()),
         )
     }
 
-    fn generate_test_keys() -> (TypedAsymmetricPublicKey, AsymmetricPrivateKey) {
+    fn generate_test_keys() -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {
         Rsa2048Sha256Wrapper::new()
             .generate_keypair()
             .unwrap()
@@ -168,7 +164,7 @@ mod tests {
     #[test]
     fn test_hybrid_parallel_streaming_roundtrip() {
         let algorithm = get_test_algorithm();
-        let processor = ParallelStreaming::new(Arc::new(algorithm));
+        let processor = ParallelStreaming::new();
         let (pk, sk) = generate_test_keys();
         let kek_id = "test-kek-id".to_string();
         let plaintext = get_test_data(1024 * 1024); // 1 MiB
@@ -177,7 +173,7 @@ mod tests {
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
         processor
-            .encrypt_hybrid_pipeline(&pk, reader, writer, kek_id.clone(), None, None, None)
+            .encrypt_hybrid_pipeline(&algorithm, &pk, reader, writer, kek_id.clone(), None, None, None)
             .unwrap();
 
         let mut decrypted_data = Vec::new();
@@ -195,7 +191,7 @@ mod tests {
     #[test]
     fn test_empty_input() {
         let algorithm = get_test_algorithm();
-        let processor = ParallelStreaming::new(Arc::new(algorithm));
+        let processor = ParallelStreaming::new();
         let (pk, sk) = generate_test_keys();
         let kek_id = "test-kek-id".to_string();
         let plaintext = get_test_data(0);
@@ -204,7 +200,7 @@ mod tests {
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
         processor
-            .encrypt_hybrid_pipeline(&pk, reader, writer, kek_id.clone(), None, None, None)
+            .encrypt_hybrid_pipeline(&algorithm, &pk, reader, writer, kek_id.clone(), None, None, None)
             .unwrap();
 
         let mut decrypted_data = Vec::new();
@@ -222,7 +218,7 @@ mod tests {
     #[test]
     fn test_tampered_ciphertext_fails() {
         let algorithm = get_test_algorithm();
-        let processor = ParallelStreaming::new(Arc::new(algorithm));
+        let processor = ParallelStreaming::new();
         let (pk, sk) = generate_test_keys();
         let kek_id = "test-kek-id".to_string();
         let plaintext = get_test_data(1024);
@@ -231,7 +227,7 @@ mod tests {
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
         processor
-            .encrypt_hybrid_pipeline(&pk, reader, writer, kek_id.clone(), None, None, None)
+            .encrypt_hybrid_pipeline(&algorithm, &pk, reader, writer, kek_id.clone(), None, None, None)
             .unwrap();
 
         // Tamper
@@ -250,7 +246,7 @@ mod tests {
     #[test]
     fn test_wrong_private_key_fails() {
         let algorithm = get_test_algorithm();
-        let processor = ParallelStreaming::new(Arc::new(algorithm));
+        let processor = ParallelStreaming::new();
         let (pk, _) = generate_test_keys();
         let (_, sk2) = generate_test_keys();
         let kek_id = "test-kek-id".to_string();
@@ -260,7 +256,7 @@ mod tests {
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
         processor
-            .encrypt_hybrid_pipeline(&pk, reader, writer, kek_id.clone(), None, None, None)
+            .encrypt_hybrid_pipeline(&algorithm, &pk, reader, writer, kek_id.clone(), None, None, None)
             .unwrap();
 
         let mut decrypted_data = Vec::new();
@@ -274,7 +270,7 @@ mod tests {
     #[test]
     fn test_aad_roundtrip() {
         let algorithm = get_test_algorithm();
-        let processor = ParallelStreaming::new(Arc::new(algorithm));
+        let processor = ParallelStreaming::new();
         let (pk, sk) = generate_test_keys();
         let plaintext = get_test_data(1024 * 256); // 256 KiB
         let aad = b"parallel streaming aad";
@@ -284,6 +280,7 @@ mod tests {
         let writer = Box::new(&mut encrypted_data);
         processor
             .encrypt_hybrid_pipeline(
+                &algorithm,
                 &pk,
                 reader,
                 writer,
@@ -330,7 +327,7 @@ mod tests {
     #[test]
     fn test_hybrid_parallel_streaming_roundtrip_with_kdf() {
         let algorithm = get_test_algorithm();
-        let processor = ParallelStreaming::new(Arc::new(algorithm));
+        let processor = ParallelStreaming::new();
         let (pk, sk) = generate_test_keys();
         let kek_id = "test-kek-id-kdf".to_string();
         let plaintext = get_test_data(1024 * 1024); // 1 MiB
@@ -357,6 +354,7 @@ mod tests {
         let writer = Box::new(&mut encrypted_data);
         processor
             .encrypt_hybrid_pipeline(
+                &algorithm,
                 &pk,
                 reader,
                 writer,

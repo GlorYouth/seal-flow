@@ -8,6 +8,7 @@
 
 #![cfg(feature = "async")]
 
+use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::buffer::BufferPool;
 use crate::common::{derive_nonce, OrderedChunk, CHANNEL_BOUND, DEFAULT_CHUNK_SIZE};
@@ -66,7 +67,7 @@ pin_project! {
         #[pin]
         pub(crate) writer: W,
         pub(crate) key: Arc<TypedSymmetricKey>,
-        pub(crate) algorithm: Arc<dyn SymmetricAlgorithm>,
+        pub(crate) algorithm: SymmetricAlgorithmWrapper,
         pub(crate) base_nonce: [u8; 12],
         pub(crate) chunk_size: usize,
         pub(crate) buffer: BytesMut,
@@ -88,7 +89,7 @@ impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
     pub(crate) fn new(
         writer: W,
         key: Arc<TypedSymmetricKey>,
-        algorithm: Arc<dyn SymmetricAlgorithm>,
+        algorithm: SymmetricAlgorithmWrapper,
         base_nonce: [u8; 12],
         aad: Option<&[u8]>,
     ) -> Self {
@@ -338,7 +339,7 @@ pin_project! {
     pub struct DecryptorImpl<R: AsyncRead> {
         #[pin]
         pub(crate) reader: R,
-        pub(crate) algorithm: Arc<dyn SymmetricAlgorithm>,
+        pub(crate) algorithm: SymmetricAlgorithmWrapper,
         pub(crate) key: Arc<TypedSymmetricKey>,
         pub(crate) base_nonce: [u8; 12],
         pub(crate) encrypted_chunk_size: usize,
@@ -362,7 +363,7 @@ impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
     pub(crate) fn new(
         reader: R,
         key: Arc<TypedSymmetricKey>,
-        algorithm: Arc<dyn SymmetricAlgorithm>,
+        algorithm: SymmetricAlgorithmWrapper,
         base_nonce: [u8; 12],
         aad: Option<&[u8]>,
     ) -> Self {
@@ -592,55 +593,5 @@ impl<R: AsyncRead + Unpin> AsyncRead for DecryptorImpl<R> {
                 return Poll::Pending;
             }
         }
-    }
-}
-
-impl AsynchronousBodyProcessor for Arc<dyn SymmetricAlgorithm> {
-    fn encrypt_body_async<'a>(
-        &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
-        writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
-        aad: Option<&'a [u8]>,
-    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>> {
-        let encryptor = EncryptorImpl::new(writer, Arc::new(key), self.clone(), base_nonce, aad);
-        Ok(Box::new(encryptor))
-    }
-
-    fn decrypt_body_async<'a>(
-        &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
-        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
-        aad: Option<&'a [u8]>,
-    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>> {
-        let decryptor = DecryptorImpl::new(reader, Arc::new(key), self.clone(), base_nonce, aad);
-        Ok(Box::new(decryptor))
-    }
-}
-
-impl AsynchronousBodyProcessor for Box<dyn SymmetricAlgorithm> {
-    fn encrypt_body_async<'a>(
-        &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
-        writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
-        aad: Option<&'a [u8]>,
-    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>> {
-        let encryptor =
-            EncryptorImpl::new(writer, Arc::new(key), self.clone().into(), base_nonce, aad);
-        Ok(Box::new(encryptor))
-    }
-
-    fn decrypt_body_async<'a>(
-        &self,
-        key: TypedSymmetricKey,
-        base_nonce: [u8; 12],
-        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
-        aad: Option<&'a [u8]>,
-    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>> {
-        let decryptor =
-            DecryptorImpl::new(reader, Arc::new(key), self.clone().into(), base_nonce, aad);
-        Ok(Box::new(decryptor))
     }
 }
