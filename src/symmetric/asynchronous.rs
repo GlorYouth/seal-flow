@@ -9,7 +9,7 @@
 
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::body::asynchronous::{DecryptorImpl, EncryptorImpl};
+use crate::body::traits::AsynchronousBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
@@ -19,69 +19,7 @@ use crate::symmetric::traits::{
     SymmetricAsynchronousPendingDecryptor, SymmetricAsynchronousProcessor,
 };
 use async_trait::async_trait;
-use pin_project_lite::pin_project;
-use std::io;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-
-// --- Encryptor ---
-
-pin_project! {
-    /// An asynchronous, streaming symmetric encryptor.
-    pub struct Encryptor<W: AsyncWrite> {
-        #[pin]
-        inner: EncryptorImpl<W>,
-    }
-}
-
-impl<W: AsyncWrite + Unpin> Encryptor<W> {
-    /// Creates a new `Encryptor`.
-    pub async fn new(
-        mut writer: W,
-        algorithm: SymmetricAlgorithmWrapper,
-        key: TypedSymmetricKey,
-        key_id: String,
-        aad: Option<Vec<u8>>,
-    ) -> Result<Self> {
-        let (header, base_nonce) = create_header(&algorithm, key_id)?;
-
-        let header_bytes = header.encode_to_vec()?;
-        use tokio::io::AsyncWriteExt;
-        writer
-            .write_all(&(header_bytes.len() as u32).to_le_bytes())
-            .await?;
-        writer.write_all(&header_bytes).await?;
-
-        let inner = EncryptorImpl::new(
-            writer,
-            key.into(),
-            algorithm,
-            base_nonce,
-            aad,
-        );
-
-        Ok(Self { inner })
-    }
-}
-
-impl<W: AsyncWrite + Unpin> AsyncWrite for Encryptor<W> {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        self.project().inner.poll_write(cx, buf)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.project().inner.poll_flush(cx)
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.project().inner.poll_shutdown(cx)
-    }
-}
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 #[async_trait]
 impl<'decr> SymmetricAsynchronousPendingDecryptor<'decr>
@@ -100,36 +38,12 @@ impl<'decr> SymmetricAsynchronousPendingDecryptor<'decr>
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
 
-        let inner = DecryptorImpl::new(
-            self.source,
-            key.into(),
-            self.algorithm,
-            base_nonce,
-            aad,
-        );
-        Ok(Box::new(Decryptor { inner }))
+        self.algorithm
+            .decrypt_body_async(key, base_nonce, self.source, aad)
     }
 
     fn header(&self) -> &Header {
         &self.header
-    }
-}
-
-pin_project! {
-    /// An asynchronous, streaming symmetric decryptor.
-    pub struct Decryptor<R: AsyncRead> {
-        #[pin]
-        inner: DecryptorImpl<R>,
-    }
-}
-
-impl<R: AsyncRead + Unpin> AsyncRead for Decryptor<R> {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        self.project().inner.poll_read(cx, buf)
     }
 }
 
@@ -142,18 +56,22 @@ impl Asynchronous {
 }
 
 #[async_trait]
-impl SymmetricAsynchronousProcessor for Asynchronous
-{
+impl SymmetricAsynchronousProcessor for Asynchronous {
     async fn encrypt_symmetric_async<'a>(
         &self,
         algorithm: &'a SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         key_id: String,
-        writer: Box<dyn AsyncWrite + Send + Unpin + 'a>,
+        mut writer: Box<dyn AsyncWrite + Send + Unpin + 'a>,
         aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn AsyncWrite + Send + Unpin + 'a>> {
-        let encryptor = Encryptor::new(writer, algorithm.clone(), key, key_id, aad).await?;
-        Ok(Box::new(encryptor))
+        let (header, base_nonce) = create_header(algorithm, key_id)?;
+        let header_bytes = header.encode_to_vec()?;
+        writer
+            .write_all(&(header_bytes.len() as u32).to_le_bytes())
+            .await?;
+        writer.write_all(&header_bytes).await?;
+        algorithm.encrypt_body_async(key, base_nonce, writer, aad)
     }
 
     async fn begin_decrypt_symmetric_async<'a>(
@@ -236,7 +154,7 @@ mod tests {
                     untyped.clone(),
                     "proc_key".to_string(),
                     Box::new(&mut encrypted_data),
-                    aad,
+                    aad.clone(),
                 )
                 .await
                 .unwrap();
@@ -288,8 +206,8 @@ mod tests {
     #[tokio::test]
     async fn test_aad_roundtrip_async() {
         let plaintext = b"secret async message";
-        let aad = b"public async context";
-        test_roundtrip(plaintext, Some(aad)).await;
+        let aad = Some(b"public async context".to_vec());
+        test_roundtrip(plaintext, aad).await;
     }
 
     #[tokio::test]
@@ -372,8 +290,8 @@ mod tests {
         let wrapper = get_wrapper();
         let processor = Asynchronous::new();
         let plaintext = b"some data to protect";
-        let aad = b"correct aad";
-        let wrong_aad = b"wrong aad";
+        let aad = Some(b"correct aad".to_vec());
+        let wrong_aad = Some(b"wrong aad".to_vec());
         let key = wrapper.generate_typed_key().unwrap();
 
         // Encrypt with AAD
@@ -385,7 +303,7 @@ mod tests {
                     key.clone(),
                     "key1".to_string(),
                     Box::new(&mut encrypted_data),
-                    Some(aad),
+                    aad.clone(),
                 )
                 .await
                 .unwrap();
@@ -398,7 +316,7 @@ mod tests {
             .begin_decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data.clone())))
             .await
             .unwrap()
-            .into_decryptor(key.clone(), Some(aad))
+            .into_decryptor(key.clone(), aad)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -410,7 +328,7 @@ mod tests {
             .begin_decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data.clone())))
             .await
             .unwrap()
-            .into_decryptor(key.clone(), Some(wrong_aad))
+            .into_decryptor(key.clone(), wrong_aad)
             .await;
         assert!(decryptor_result_fail.is_err());
 

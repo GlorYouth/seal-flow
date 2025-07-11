@@ -4,31 +4,35 @@
 use super::common::create_header;
 use super::traits::{HybridStreamingPendingDecryptor, HybridStreamingProcessor};
 use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
-use crate::body::streaming::{DecryptorImpl, EncryptorImpl};
+use crate::algorithms::traits::HybridAlgorithm;
+use crate::body::traits::StreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::pending::PendingDecryptor;
-use crate::keys::{TypedAsymmetricPublicKey, TypedSymmetricKey, TypedAsymmetricPrivateKey};
+use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
-use crate::algorithms::traits::HybridAlgorithm;
 
-/// Implements `std::io::Write` for synchronous, streaming hybrid encryption.
-pub struct Encryptor<W: Write> {
-    inner: EncryptorImpl<W>,
+pub struct Streaming;
+
+impl Streaming {
+    pub fn new() -> Self {
+        Self
+    }
 }
 
-impl<W: Write> Encryptor<W> {
-    pub fn new(
-        mut writer: W,
+impl HybridStreamingProcessor for Streaming {
+    fn encrypt_hybrid_to_stream(
+        &self,
         algorithm: &HybridAlgorithmWrapper,
         public_key: &TypedAsymmetricPublicKey,
+        mut writer: Box<dyn Write>,
         kek_id: String,
         signer: Option<SignerSet>,
         aad: Option<&[u8]>,
         derivation_config: Option<DerivationSet>,
-    ) -> Result<Self> {
+    ) -> Result<Box<dyn Write>> {
         let (info, deriver_fn) = derivation_config
             .map(|d| (d.derivation_info, d.deriver_fn))
             .unzip();
@@ -46,63 +50,8 @@ impl<W: Write> Encryptor<W> {
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
 
-        let algo = algorithm.symmetric_algorithm().clone_box_symmetric();
-        let inner = EncryptorImpl::new(writer, algo.into(), dek, base_nonce, aad)?;
-        Ok(Self { inner })
-    }
-
-    pub fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.inner.write(buf)
-    }
-
-    pub fn finish(self) -> Result<()> {
-        self.inner.finish()
-    }
-}
-
-/// Implements `std::io::Read` for synchronous, streaming hybrid decryption.
-pub struct Decryptor<R: Read> {
-    inner: DecryptorImpl<R>,
-}
-
-impl<R: Read> Read for Decryptor<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.inner.read(buf)
-    }
-}
-
-pub struct Streaming;
-
-impl Streaming {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl HybridStreamingProcessor for Streaming {
-    fn encrypt_hybrid_to_stream(
-        &self,
-        algorithm: &HybridAlgorithmWrapper,
-        public_key: &TypedAsymmetricPublicKey,
-        writer: Box<dyn Write>,
-        kek_id: String,
-        signer: Option<SignerSet>,
-        aad: Option<&[u8]>,
-        derivation_config: Option<DerivationSet>,
-    ) -> Result<Box<dyn Write>> {
-        let encryptor = Encryptor::new(
-            writer,
-            algorithm,
-            public_key,
-            kek_id,
-            signer,
-            aad,
-            derivation_config,
-        )?;
-        Ok(Box::new(StreamEncryptor {
-            encryptor: Some(encryptor),
-            _marker: std::marker::PhantomData,
-        }))
+        let algo = algorithm.symmetric_algorithm();
+        algo.encrypt_body_to_stream(dek, base_nonce, writer, aad)
     }
 
     fn begin_decrypt_hybrid_from_stream(
@@ -110,7 +59,11 @@ impl HybridStreamingProcessor for Streaming {
         mut reader: Box<dyn Read>,
     ) -> Result<Box<dyn HybridStreamingPendingDecryptor>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
-        let asym_algo = header.payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?.into_asymmetric_wrapper();
+        let asym_algo = header
+            .payload
+            .asymmetric_algorithm()
+            .ok_or(FormatError::InvalidHeader)?
+            .into_asymmetric_wrapper();
         let sym_algo = header.payload.symmetric_algorithm().into_symmetric_wrapper();
         let algorithm = HybridAlgorithmWrapper::new(asym_algo, sym_algo);
 
@@ -162,9 +115,8 @@ impl<'a> HybridStreamingPendingDecryptor for PendingDecryptor<Box<dyn Read>> {
             self.algorithm.symmetric_algorithm().algorithm(),
         )?;
 
-        let algo = self.algorithm.symmetric_algorithm().clone_box_symmetric();
-        let inner = DecryptorImpl::new(reader, algo.into(), dek, base_nonce, aad);
-        Ok(Box::new(Decryptor { inner }))
+        let algo = self.algorithm.symmetric_algorithm();
+        algo.decrypt_body_from_stream(dek, base_nonce, reader, aad)
     }
 
     fn header(&self) -> &Header {
@@ -172,38 +124,12 @@ impl<'a> HybridStreamingPendingDecryptor for PendingDecryptor<Box<dyn Read>> {
     }
 }
 
-struct StreamEncryptor<'a, W: Write> {
-    encryptor: Option<Encryptor<W>>,
-    _marker: std::marker::PhantomData<&'a ()>,
-}
-
-impl<W: Write> Write for StreamEncryptor<'_, W> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.encryptor
-            .as_mut()
-            .unwrap()
-            .write(buf)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<W: Write> Drop for StreamEncryptor<'_, W> {
-    fn drop(&mut self) {
-        if let Some(encryptor) = self.encryptor.take() {
-            encryptor.finish().unwrap();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::algorithms::definitions::{
-        asymmetric::Rsa2048Sha256Wrapper, hybrid::HybridAlgorithmWrapper, symmetric::Aes256GcmWrapper,
+        asymmetric::Rsa2048Sha256Wrapper, hybrid::HybridAlgorithmWrapper,
+        symmetric::Aes256GcmWrapper,
     };
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};

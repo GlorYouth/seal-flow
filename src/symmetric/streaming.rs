@@ -4,7 +4,7 @@
 
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::body::streaming::{DecryptorImpl, EncryptorImpl};
+use crate::body::traits::StreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
@@ -13,44 +13,12 @@ use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{SymmetricStreamingPendingDecryptor, SymmetricStreamingProcessor};
 use std::io::{Read, Write};
 
-/// Implements `std::io::Write` for synchronous, streaming symmetric encryption.
-pub struct Encryptor<W: Write> {
-    inner: EncryptorImpl<W>,
-}
-
-impl<W: Write> Encryptor<W> {
-    pub fn new(
-        mut writer: W,
-        algorithm: SymmetricAlgorithmWrapper,
-        key: TypedSymmetricKey,
-        key_id: String,
-        aad: Option<&[u8]>,
-    ) -> Result<Self> {
-        let (header, base_nonce) = create_header(&algorithm, key_id)?;
-        let header_bytes = header.encode_to_vec()?;
-        writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
-        writer.write_all(&header_bytes)?;
-        let inner =
-        EncryptorImpl::new(writer, algorithm, key, base_nonce, aad)?;
-        Ok(Self { inner })
-    }
-
-    pub fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.inner.write(buf)
-    }
-
-    pub fn finish(self) -> Result<()> {
-        self.inner.finish()
-    }
-}
-
 impl SymmetricStreamingPendingDecryptor for PendingDecryptor<Box<dyn Read>> {
     fn into_decryptor(
         self: Box<Self>,
         key: TypedSymmetricKey,
         aad: Option<&[u8]>,
     ) -> Result<Box<dyn Read>> {
-
         let base_nonce = match &self.header.payload {
             HeaderPayload::Symmetric {
                 stream_info: Some(info),
@@ -58,14 +26,8 @@ impl SymmetricStreamingPendingDecryptor for PendingDecryptor<Box<dyn Read>> {
             } => info.base_nonce,
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
-        let inner = DecryptorImpl::new(
-            self.source,
-            self.algorithm,
-            key,
-            base_nonce,
-            aad,
-        );
-        Ok(Box::new(Decryptor { inner }))
+        self.algorithm
+            .decrypt_body_from_stream(key, base_nonce, self.source, aad)
     }
 
     fn header(&self) -> &Header {
@@ -73,23 +35,11 @@ impl SymmetricStreamingPendingDecryptor for PendingDecryptor<Box<dyn Read>> {
     }
 }
 
-/// Implements `std::io::Read` for synchronous, streaming symmetric decryption.
-pub struct Decryptor<R: Read> {
-    inner: DecryptorImpl<R>,
-}
-
-impl<R: Read> Read for Decryptor<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.inner.read(buf)
-    }
-}
-
-pub struct Streaming {
-}
+pub struct Streaming;
 
 impl Streaming {
     pub fn new() -> Self {
-        Self {  }
+        Self {}
     }
 }
 
@@ -99,14 +49,14 @@ impl SymmetricStreamingProcessor for Streaming {
         algorithm: &SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         key_id: String,
-        writer: Box<dyn Write>,
+        mut writer: Box<dyn Write>,
         aad: Option<&[u8]>,
     ) -> Result<Box<dyn Write>> {
-        let encryptor = Encryptor::new(Box::new(writer), algorithm.clone(), key, key_id, aad)?;
-        Ok(Box::new(StreamEncryptor {
-            encryptor: Some(encryptor),
-            _marker: std::marker::PhantomData,
-        }))
+        let (header, base_nonce) = create_header(algorithm, key_id)?;
+        let header_bytes = header.encode_to_vec()?;
+        writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
+        writer.write_all(&header_bytes)?;
+        algorithm.encrypt_body_to_stream(key, base_nonce, writer, aad)
     }
 
     fn begin_decrypt_symmetric_from_stream(
@@ -124,37 +74,10 @@ impl SymmetricStreamingProcessor for Streaming {
     }
 }
 
-struct StreamEncryptor<'a, W: Write> {
-    encryptor: Option<Encryptor<W>>,
-    _marker: std::marker::PhantomData<&'a ()>,
-}
-
-impl<W: Write> Write for StreamEncryptor<'_, W> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.encryptor
-            .as_mut()
-            .unwrap()
-            .write(buf)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<W: Write> Drop for StreamEncryptor<'_, W> {
-    fn drop(&mut self) {
-        if let Some(encryptor) = self.encryptor.take() {
-            encryptor.finish().unwrap();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prelude::SymmetricAlgorithmEnum;    
+    use crate::prelude::SymmetricAlgorithmEnum;
     use std::io::Cursor;
     use std::io::Write;
 
