@@ -3,7 +3,6 @@
 //! 为同步、流式对称加密实现 `std::io` trait。
 
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
-use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::body::traits::StreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, FormatError, Result};
@@ -13,12 +12,12 @@ use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{SymmetricStreamingPendingDecryptor, SymmetricStreamingProcessor};
 use std::io::{Read, Write};
 
-impl SymmetricStreamingPendingDecryptor for PendingDecryptor<Box<dyn Read>> {
+impl<'a> SymmetricStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Read + 'a>> {
     fn into_decryptor(
         self: Box<Self>,
         key: TypedSymmetricKey,
         aad: Option<&[u8]>,
-    ) -> Result<Box<dyn Read>> {
+    ) -> Result<Box<dyn Read + 'a>> {
         let base_nonce = match &self.header.payload {
             HeaderPayload::Symmetric {
                 stream_info: Some(info),
@@ -44,14 +43,14 @@ impl Streaming {
 }
 
 impl SymmetricStreamingProcessor for Streaming {
-    fn encrypt_symmetric_to_stream(
+    fn encrypt_symmetric_to_stream<'a>(
         &self,
         algorithm: &SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         key_id: String,
-        mut writer: Box<dyn Write>,
+        mut writer: Box<dyn Write + 'a>,
         aad: Option<&[u8]>,
-    ) -> Result<Box<dyn Write>> {
+    ) -> Result<Box<dyn Write + 'a>> {
         let (header, base_nonce) = create_header(algorithm, key_id)?;
         let header_bytes = header.encode_to_vec()?;
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
@@ -59,10 +58,10 @@ impl SymmetricStreamingProcessor for Streaming {
         algorithm.encrypt_body_to_stream(key, base_nonce, writer, aad)
     }
 
-    fn begin_decrypt_symmetric_from_stream(
+    fn begin_decrypt_symmetric_from_stream<'a>(
         &self,
-        mut reader: Box<dyn Read>,
-    ) -> Result<Box<dyn SymmetricStreamingPendingDecryptor>> {
+        mut reader: Box<dyn Read + 'a>,
+    ) -> Result<Box<dyn SymmetricStreamingPendingDecryptor<'a> + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
         let algorithm = header.payload.symmetric_algorithm().into_symmetric_wrapper();
         let pending = PendingDecryptor {
@@ -103,6 +102,7 @@ mod tests {
                 )
                 .unwrap();
             encryptor.write_all(plaintext).unwrap();
+            encryptor.flush().unwrap();
         }
 
         // Decrypt using the new two-step process
@@ -142,12 +142,14 @@ mod tests {
                 )
                 .unwrap();
             encrypt_stream.write_all(plaintext).unwrap();
+            encrypt_stream.flush().unwrap();
         }
 
         // Decrypt
-        let mut decrypt_stream = processor
+        let pending = processor
             .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
-            .unwrap()
+            .unwrap();
+        let mut decrypt_stream = pending
             .into_decryptor(key.clone(), aad)
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -198,6 +200,7 @@ mod tests {
                 )
                 .unwrap();
             encryptor.write_all(plaintext).unwrap();
+            encryptor.flush().unwrap();
         }
 
         // Tamper with the ciphertext body, after the header
@@ -238,6 +241,7 @@ mod tests {
                 )
                 .unwrap();
             encryptor.write_all(plaintext).unwrap();
+            encryptor.flush().unwrap();
         }
 
         // Attempt to decrypt with the wrong key
@@ -280,6 +284,7 @@ mod tests {
                 )
                 .unwrap();
             encryptor.write_all(plaintext).unwrap();
+            encryptor.flush().unwrap();
         }
 
         // Decrypt with correct AAD

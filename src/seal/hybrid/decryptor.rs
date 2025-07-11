@@ -1,23 +1,20 @@
 use crate::common::header::Header;
 use crate::error::{FormatError, KeyManagementError};
-use crate::hybrid::traits::{
-    HybridAsynchronousPendingDecryptor, HybridOrdinaryPendingDecryptor,
-    HybridParallelPendingDecryptor, HybridParallelStreamingPendingDecryptor,
-    HybridStreamingPendingDecryptor,
-};
+use crate::hybrid::traits::{HybridAsynchronousPendingDecryptor, HybridOrdinaryPendingDecryptor, HybridOrdinaryProcessor, HybridParallelPendingDecryptor, HybridParallelProcessor, HybridParallelStreamingPendingDecryptor, HybridParallelStreamingProcessor, HybridStreamingPendingDecryptor, HybridStreamingProcessor};
 use crate::keys::provider::KeyProvider;
 use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
 use crate::seal::traits::{WithAad, WithVerificationKey};
 use std::io::{Read, Write};
 use std::sync::Arc;
 use tokio::io::AsyncRead;
+use crate::hybrid::traits::HybridAsynchronousProcessor;
 
 /// A generic pending hybrid decryptor, waiting for configuration and private key.
 /// This struct unifies the logic for various decryption modes (in-memory, streaming, etc.).
 ///
 /// 一个通用的、等待配置和私钥的待处理混合解密器。
 /// 该结构统一了各种解密模式（内存中、流式等）的逻辑。
-struct PendingDecryptor<T> {
+pub struct PendingDecryptor<T> {
     inner: T,
     aad: Option<Vec<u8>>,
     verification_key: Option<SignaturePublicKey>,
@@ -76,38 +73,38 @@ where
     }
 }
 
-trait PendingDecryptorTrait {
+pub trait PendingDecryptorTrait {
     fn header(&self) -> &Header;
 }
 
-impl<'a> PendingDecryptorTrait for Box<dyn HybridOrdinaryPendingDecryptor<'a> + 'a> {
+impl<'a> PendingDecryptorTrait for Box<dyn HybridOrdinaryPendingDecryptor + 'a> {
     fn header(&self) -> &Header {
-        (**self).header()
+        self.as_ref().header()
     }
 }
 
-impl<'a> PendingDecryptorTrait for Box<dyn HybridParallelPendingDecryptor<'a> + 'a> {
+impl<'a> PendingDecryptorTrait for Box<dyn HybridParallelPendingDecryptor + 'a> {
     fn header(&self) -> &Header {
-        (**self).header()
+        self.as_ref().header()
     }
 }
 
 impl<'a> PendingDecryptorTrait for Box<dyn HybridStreamingPendingDecryptor<'a> + 'a> {
     fn header(&self) -> &Header {
-        (**self).header()
+        self.as_ref().header()
     }
 }
 
 impl<'a> PendingDecryptorTrait for Box<dyn HybridParallelStreamingPendingDecryptor<'a> + 'a> {
     fn header(&self) -> &Header {
-        (**self).header()
+        self.as_ref().header()
     }
 }
 
 #[cfg(feature = "async")]
 impl<'a> PendingDecryptorTrait for Box<dyn HybridAsynchronousPendingDecryptor<'a> + Send + 'a> {
     fn header(&self) -> &Header {
-        (**self).header()
+        self.as_ref().header()
     }
 }
 
@@ -115,13 +112,13 @@ impl<'a> PendingDecryptorTrait for Box<dyn HybridAsynchronousPendingDecryptor<'a
 ///
 /// 待处理内存混合解密器的类型别名。
 pub type PendingInMemoryDecryptor<'a> =
-    PendingDecryptor<Box<dyn HybridOrdinaryPendingDecryptor<'a> + 'a>>;
+    PendingDecryptor<Box<dyn HybridOrdinaryPendingDecryptor + 'a>>;
 
 /// A type alias for a pending parallel in-memory hybrid decryptor.
 ///
 /// 待处理并行内存混合解密器的类型别名。
 pub type PendingInMemoryParallelDecryptor<'a> =
-    PendingDecryptor<Box<dyn HybridParallelPendingDecryptor<'a> + 'a>>;
+    PendingDecryptor<Box<dyn HybridParallelPendingDecryptor + 'a>>;
 /// A type alias for a pending synchronous streaming hybrid decryptor.
 ///
 /// 待处理同步流混合解密器的类型别名。
@@ -169,29 +166,11 @@ impl HybridDecryptorBuilder {
         self
     }
 
-    fn create_algorithm(
-        &self,
-        header: &Header,
-    ) -> crate::Result<crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper> {
-        let asym_algo_enum = header
-            .payload
-            .asymmetric_algorithm()
-            .ok_or(FormatError::InvalidHeader)?;
-        let sym_algo_enum = header.payload.symmetric_algorithm();
-
-        let asym_algo = new_asymmetric(asym_algo_enum);
-        let sym_algo = new_symmetric(sym_algo_enum);
-
-        Ok(crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper::new(asym_algo, sym_algo))
-    }
-
     /// Configures decryption from an in-memory byte slice.
     ///
     /// 从内存中的字节切片配置解密。
-    pub fn slice<'a>(self, ciphertext: &'a [u8]) -> crate::Result<PendingInMemoryDecryptor<'a>> {
-        let (header, _) = Header::decode_from_prefixed_slice(ciphertext)?;
-        let algorithm = self.create_algorithm(&header)?;
-        let processor = crate::hybrid::ordinary::Ordinary::new(&algorithm);
+    pub fn slice(self, ciphertext: &[u8]) -> crate::Result<PendingInMemoryDecryptor> {
+        let processor = crate::hybrid::ordinary::Ordinary::new();
         let mid_level_pending = processor.begin_decrypt_hybrid_in_memory(ciphertext)?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
@@ -199,13 +178,11 @@ impl HybridDecryptorBuilder {
     /// Configures parallel decryption from an in-memory byte slice.
     ///
     /// 从内存中的字节切片配置并行解密。
-    pub fn slice_parallel<'a>(
+    pub fn slice_parallel(
         self,
-        ciphertext: &'a [u8],
-    ) -> crate::Result<PendingInMemoryParallelDecryptor<'a>> {
-        let (header, _) = Header::decode_from_prefixed_slice(ciphertext)?;
-        let algorithm = self.create_algorithm(&header)?;
-        let processor = crate::hybrid::parallel::Parallel::new(&algorithm);
+        ciphertext: &[u8],
+    ) -> crate::Result<PendingInMemoryParallelDecryptor> {
+        let processor = crate::hybrid::parallel::Parallel::new();
         let mid_level_pending = processor.begin_decrypt_hybrid_parallel(ciphertext)?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
@@ -215,13 +192,11 @@ impl HybridDecryptorBuilder {
     /// 从同步 `Read` 流配置解密。
     pub fn reader<'a, R: Read + 'a>(
         self,
-        mut reader: R,
+        reader: R,
     ) -> crate::Result<PendingStreamingDecryptor<'a>> {
-        let header = Header::decode_from_prefixed_reader(&mut reader)?;
-        let algorithm = self.create_algorithm(&header)?;
-        let processor = crate::hybrid::streaming::Streaming::new(&algorithm);
+        let processor = crate::hybrid::streaming::Streaming::new();
         let mid_level_pending =
-            processor.begin_decrypt_hybrid_from_stream(Box::new(reader), header)?;
+            processor.begin_decrypt_hybrid_from_stream(Box::new(reader))?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
@@ -230,14 +205,12 @@ impl HybridDecryptorBuilder {
     /// 从同步 `Read` 流配置并行解密。
     pub fn reader_parallel<'a, R: Read + Send + 'a>(
         self,
-        mut reader: R,
+        reader: R,
     ) -> crate::Result<PendingParallelStreamingDecryptor<'a>> {
-        let header = Header::decode_from_prefixed_reader(&mut reader)?;
-        let algorithm = self.create_algorithm(&header)?;
         let processor =
-            crate::hybrid::parallel_streaming::ParallelStreaming::new(Arc::new(algorithm));
+            crate::hybrid::parallel_streaming::ParallelStreaming::new();
         let mid_level_pending =
-            processor.begin_decrypt_hybrid_pipeline(Box::new(reader), header)?;
+            processor.begin_decrypt_hybrid_pipeline(Box::new(reader))?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
@@ -247,12 +220,9 @@ impl HybridDecryptorBuilder {
     #[cfg(feature = "async")]
     pub async fn async_reader<'a, R: AsyncRead + Unpin + Send + 'a>(
         self,
-        mut reader: R,
+        reader: R,
     ) -> crate::Result<PendingAsyncStreamingDecryptor<'a>> {
-        use crate::hybrid::traits::HybridAsynchronousProcessor;
-        let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
-        let algorithm = self.create_algorithm(&header)?;
-        let processor = crate::hybrid::asynchronous::Asynchronous::new(&algorithm);
+        let processor = crate::hybrid::asynchronous::Asynchronous::new();
 
         let mid_level_pending = processor
             .begin_decrypt_hybrid_async(Box::new(reader))
@@ -288,7 +258,8 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        self.inner.into_plaintext(&key, self.aad.as_deref())
+        let typed_key = key.into_typed(self.header().payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?)?;
+        self.inner.into_plaintext(&typed_key, self.aad.as_deref())
     }
 }
 
@@ -319,7 +290,8 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        self.inner.into_plaintext(&key, self.aad.as_deref())
+        let typed_key = key.into_typed(self.header().payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?)?;
+        self.inner.into_plaintext(&typed_key, self.aad.as_deref())
     }
 }
 
@@ -350,7 +322,8 @@ impl<'a> PendingStreamingDecryptor<'a> {
     pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Box<dyn Read + 'a>> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        self.inner.into_decryptor(&key, self.aad.as_deref())
+        let typed_key = key.into_typed(self.header().payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?)?;
+        self.inner.into_decryptor(&typed_key, self.aad.as_deref())
     }
 }
 
@@ -388,8 +361,9 @@ impl<'a> PendingParallelStreamingDecryptor<'a> {
     ) -> crate::Result<()> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
+        let typed_key = key.into_typed(self.header().payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?)?;
         self.inner
-            .decrypt_to_writer(&key, Box::new(writer), self.aad.as_deref())
+            .decrypt_to_writer(&typed_key, Box::new(writer), self.aad.as_deref())
     }
 }
 
@@ -426,9 +400,10 @@ impl<'a> PendingAsyncStreamingDecryptor<'a> {
     ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 'a>> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-
+        
+        let typed_key = key.into_typed(self.header().payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?)?;
         self.inner
-            .into_decryptor(&key, self.aad.as_deref())
+            .into_decryptor(&typed_key, self.aad)
             .await
     }
 }

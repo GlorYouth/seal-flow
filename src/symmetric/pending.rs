@@ -14,13 +14,3 @@ pub(crate) struct PendingDecryptor<Source> {
     pub(super) header: Header,
     pub(super) algorithm: SymmetricAlgorithmWrapper,
 }
-
-impl<Source> PendingDecryptor<Source> {
-    pub(crate) fn new(source: Source, header: Header, algorithm: SymmetricAlgorithmWrapper) -> Self {
-        Self {
-            source,
-            header,
-            algorithm,
-        }
-    }
-} 

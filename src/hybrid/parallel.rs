@@ -56,10 +56,10 @@ impl HybridParallelProcessor for Parallel {
             .encrypt_body_parallel(dek, &base_nonce, header_bytes, plaintext, aad)
     }
 
-    fn begin_decrypt_hybrid_parallel(
+    fn begin_decrypt_hybrid_parallel<'a>(
         &self,
-        ciphertext: &[u8],
-    ) -> Result<Box<dyn HybridParallelPendingDecryptor>> {
+        ciphertext: &'a [u8],
+    ) -> Result<Box<dyn HybridParallelPendingDecryptor + 'a>> {
         let (header, _) = Header::decode_from_prefixed_slice(ciphertext)?;
         let asym_algo = header.payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?.into_asymmetric_wrapper();
         let sym_algo = header.payload.symmetric_algorithm().into_symmetric_wrapper();
@@ -138,8 +138,8 @@ mod tests {
 
     fn get_test_algorithm() -> HybridAlgorithmWrapper {
         HybridAlgorithmWrapper::new(
-            Box::new(Rsa2048Sha256Wrapper::new()),
-            Box::new(Aes256GcmWrapper::new()),
+            Rsa2048Sha256Wrapper::new(),
+            Aes256GcmWrapper::new(),
         )
     }
 

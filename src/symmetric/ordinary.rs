@@ -3,7 +3,6 @@
 //! 实现普通（单线程，内存中）对称加密方案。
 
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
-use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::body::traits::OrdinaryBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, FormatError, Result};
@@ -12,7 +11,7 @@ use crate::symmetric::common::create_header;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{SymmetricOrdinaryPendingDecryptor, SymmetricOrdinaryProcessor};
 
-impl SymmetricOrdinaryPendingDecryptor for PendingDecryptor<&[u8]> {
+impl<'a> SymmetricOrdinaryPendingDecryptor<'a> for PendingDecryptor<&'a [u8]> {
     fn into_plaintext(
         self: Box<Self>,
         key: TypedSymmetricKey,
@@ -40,7 +39,7 @@ pub struct Ordinary {
 
 impl Ordinary {
     pub fn new() -> Self {
-        Self
+        Self {}
     }
 }
 
@@ -55,17 +54,17 @@ impl SymmetricOrdinaryProcessor
         plaintext: &[u8],
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
-        let (header, base_nonce) = create_header(&algorithm, key_id)?;
+        let (header, base_nonce) = create_header(algorithm, key_id)?;
         let header_bytes = header.encode_to_vec()?;
 
         algorithm
             .encrypt_body_in_memory(key, &base_nonce, header_bytes, plaintext, aad)
     }
 
-    fn begin_decrypt_symmetric_in_memory(
+    fn begin_decrypt_symmetric_in_memory<'a>(
         &self,
-        ciphertext: &[u8],
-    ) -> Result<Box<dyn SymmetricOrdinaryPendingDecryptor>> {
+        ciphertext: &'a [u8],
+    ) -> Result<Box<dyn SymmetricOrdinaryPendingDecryptor<'a> + 'a>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
         let algorithm = header.payload.symmetric_algorithm().into_symmetric_wrapper();
         let pending = PendingDecryptor {

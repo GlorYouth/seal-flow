@@ -375,7 +375,7 @@ impl ParallelStreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
         writer: Box<dyn Write + Send + 'a>,
         aad: Option<&'a [u8]>,
     ) -> Result<()> {
-        encrypt_pipeline(self.clone(), key, base_nonce, reader, writer, aad)
+        encrypt_pipeline(self.algorithm().into_symmetric_wrapper(), key, base_nonce, reader, writer, aad)
     }
 
     fn decrypt_body_pipeline<'a>(
@@ -387,7 +387,7 @@ impl ParallelStreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
         aad: Option<&'a [u8]>,
     ) -> Result<()> {
         decrypt_pipeline(
-            self.clone(),
+            self.algorithm().into_symmetric_wrapper(),
             key,
             base_nonce,
             DEFAULT_CHUNK_SIZE,

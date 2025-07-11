@@ -134,7 +134,7 @@ impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
             let chunk_len = std::cmp::min(self.buffer.len(), self.chunk_size);
             let in_buffer = self.buffer.split_to(chunk_len);
 
-            let algo = Arc::clone(&self.algorithm);
+            let algo = Arc::new(self.algorithm.clone());
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
             let index = self.chunk_counter;
             let out_pool = Arc::clone(&self.out_pool);
@@ -430,7 +430,7 @@ impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
                 let chunk_len = std::cmp::min(self.read_buffer.len(), self.encrypted_chunk_size);
                 let in_buffer = self.read_buffer.split_to(chunk_len);
 
-                let algo = Arc::clone(&self.algorithm);
+                let algo = Arc::new(self.algorithm.clone());
                 let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
                 let index = self.chunk_counter;
                 let out_pool = Arc::clone(&self.out_pool);
@@ -604,13 +604,13 @@ impl<S: SymmetricAlgorithm + ?Sized> AsynchronousBodyProcessor for S {
         &self,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
-        writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
+        writer: Box<dyn AsyncWrite + Send + Unpin + 'a>,
         aad: Option<Vec<u8>>,
-    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>> {
+    ) -> Result<Box<dyn AsyncWrite + Send + Unpin + 'a>> {
         let encryptor = EncryptorImpl::new(
             writer,
             Arc::new(key),
-            self.clone(),
+            self.algorithm().into_symmetric_wrapper(),
             base_nonce,
             aad,
         );
@@ -621,14 +621,14 @@ impl<S: SymmetricAlgorithm + ?Sized> AsynchronousBodyProcessor for S {
         &self,
         key: TypedSymmetricKey,
         base_nonce: [u8; 12],
-        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
+        reader: Box<dyn AsyncRead + Send + Unpin + 'a>,
         aad: Option<Vec<u8>>,
-    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>> {
+    ) -> Result<Box<dyn AsyncRead + Send + Unpin + 'a>> {
         let aad_ref = aad.as_deref();
         let decryptor = DecryptorImpl::new(
             reader,
             Arc::new(key),
-            self.clone(),
+            self.algorithm().into_symmetric_wrapper(),
             base_nonce,
             aad_ref,
         );

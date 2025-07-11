@@ -58,10 +58,10 @@ impl HybridOrdinaryProcessor for Ordinary {
             .encrypt_body_in_memory(dek, &base_nonce, header_bytes, plaintext, aad)
     }
 
-    fn begin_decrypt_hybrid_in_memory(
+    fn begin_decrypt_hybrid_in_memory<'a>(
         &self,
-        ciphertext: &[u8],
-    ) -> Result<Box<dyn HybridOrdinaryPendingDecryptor>> {
+        ciphertext: &'a [u8],
+    ) -> Result<Box<dyn HybridOrdinaryPendingDecryptor + 'a>> {
         let (header, _) = Header::decode_from_prefixed_slice(ciphertext)?;
         let asym_algo = header.payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?.into_asymmetric_wrapper();
         let sym_algo = header.payload.symmetric_algorithm().into_symmetric_wrapper();
@@ -141,8 +141,8 @@ mod tests {
 
     fn get_test_algorithm() -> HybridAlgorithmWrapper {
         HybridAlgorithmWrapper::new(
-            Box::new(Rsa2048Sha256Wrapper::new()),
-            Box::new(Aes256GcmWrapper::new()),
+            Rsa2048Sha256Wrapper::new(),
+            Aes256GcmWrapper::new(),
         )
     }
 

@@ -8,7 +8,6 @@
 #![cfg(feature = "async")]
 
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
-use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::body::traits::AsynchronousBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, FormatError, Result};
@@ -25,7 +24,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 impl<'decr> SymmetricAsynchronousPendingDecryptor<'decr>
     for PendingDecryptor<Box<dyn AsyncRead + Unpin + Send + 'decr>>
 {
-    async fn into_decryptor<'a>(
+    async fn into_decryptor(
         self: Box<Self>,
         key: TypedSymmetricKey,
         aad: Option<Vec<u8>>,
@@ -59,7 +58,7 @@ impl Asynchronous {
 impl SymmetricAsynchronousProcessor for Asynchronous {
     async fn encrypt_symmetric_async<'a>(
         &self,
-        algorithm: &'a SymmetricAlgorithmWrapper,
+        algorithm: &SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         key_id: String,
         mut writer: Box<dyn AsyncWrite + Send + Unpin + 'a>,

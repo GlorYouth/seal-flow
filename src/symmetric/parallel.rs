@@ -11,7 +11,7 @@ use crate::symmetric::common::create_header;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{SymmetricParallelPendingDecryptor, SymmetricParallelProcessor};
 
-impl SymmetricParallelPendingDecryptor for PendingDecryptor<&[u8]> {
+impl<'a> SymmetricParallelPendingDecryptor<'a> for PendingDecryptor<&'a [u8]> {
     fn into_plaintext(
         self: Box<Self>,
         key: TypedSymmetricKey,
@@ -53,16 +53,16 @@ impl SymmetricParallelProcessor
         plaintext: &[u8],
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
-        let (header, base_nonce) = create_header(&algorithm, key_id)?;
+        let (header, base_nonce) = create_header(algorithm, key_id)?;
         let header_bytes = header.encode_to_vec()?;
         algorithm
             .encrypt_body_parallel(key, &base_nonce, header_bytes, plaintext, aad)
     }
 
-    fn begin_decrypt_symmetric_parallel(
+    fn begin_decrypt_symmetric_parallel<'a>(
         &self,
-        ciphertext: &[u8],
-    ) -> Result<Box<dyn SymmetricParallelPendingDecryptor>> {
+        ciphertext: &'a [u8],
+    ) -> Result<Box<dyn SymmetricParallelPendingDecryptor<'a> + 'a>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
         let algorithm = header.payload.symmetric_algorithm().into_symmetric_wrapper();
         let pending = PendingDecryptor {
@@ -104,8 +104,9 @@ mod tests {
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Tamper with the ciphertext body
-        let header_len = 4 + u32::from_le_bytes(encrypted[0..4].try_into().unwrap()) as usize;
+        let header_len = Header::decode_from_prefixed_slice(&encrypted).unwrap().0.encode_to_vec().unwrap().len();
         let ciphertext_start_index = 4 + header_len;
+
 
         assert!(
             encrypted.len() > ciphertext_start_index,
@@ -181,6 +182,7 @@ mod tests {
         let processor = Parallel::new();
         let plaintext = b"some data";
         let key = wrapper.generate_typed_key().unwrap();
+        let wrong_key = wrapper.generate_typed_key().unwrap();
 
         let encrypted = processor
             .encrypt_symmetric_parallel(&wrapper, key.clone(), "test_key_id_1".to_string(), plaintext, None)
@@ -189,7 +191,7 @@ mod tests {
         let pending = processor
             .begin_decrypt_symmetric_parallel(&encrypted)
             .unwrap();
-        let result = pending.into_plaintext(key, None);
+        let result = pending.into_plaintext(wrong_key, None);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),

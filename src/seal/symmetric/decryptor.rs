@@ -6,7 +6,7 @@ use crate::common::header::Header;
 use crate::error::KeyManagementError;
 use crate::keys::provider::KeyProvider;
 use crate::keys::SymmetricKey;
-use crate::seal::traits::{PendingDecryptor as PendingDecryptorTrait, WithAad};
+use crate::seal::traits::WithAad;
 use crate::symmetric::traits::{
     SymmetricAsynchronousPendingDecryptor, SymmetricAsynchronousProcessor,
     SymmetricOrdinaryPendingDecryptor, SymmetricOrdinaryProcessor,
@@ -139,16 +139,53 @@ impl SymmetricDecryptorBuilder {
 
 // --- Pending Decryptors ---
 
-/// A pending ordinary symmetric decryptor.
-pub struct PendingOrdinaryDecryptor<'a> {
-    inner: Box<dyn SymmetricOrdinaryPendingDecryptor + 'a>,
+pub trait PendingDecryptorTrait {
+    fn header(&self) -> &Header;
+}
+
+impl<'a> PendingDecryptorTrait for Box<dyn SymmetricOrdinaryPendingDecryptor<'a> + 'a> {
+    fn header(&self) -> &Header {
+        self.as_ref().header()
+    }
+}
+
+impl<'a> PendingDecryptorTrait for Box<dyn SymmetricParallelPendingDecryptor<'a> + 'a> {
+    fn header(&self) -> &Header {
+        self.as_ref().header()
+    }
+}
+
+impl<'a> PendingDecryptorTrait for Box<dyn SymmetricStreamingPendingDecryptor<'a> + 'a> {
+    fn header(&self) -> &Header {
+        self.as_ref().header()
+    }
+}
+
+impl<'a> PendingDecryptorTrait for Box<dyn SymmetricParallelStreamingPendingDecryptor<'a> + 'a> {
+    fn header(&self) -> &Header {
+        self.as_ref().header()
+    }
+}
+
+#[cfg(feature = "async")]
+impl<'a> PendingDecryptorTrait for Box<dyn SymmetricAsynchronousPendingDecryptor<'a> + Send + 'a> {
+    fn header(&self) -> &Header {
+        self.as_ref().header()
+    }
+}
+
+pub struct PendingDecryptor<T> {
+    inner: T,
     aad: Option<Vec<u8>>,
     key_provider: Option<Arc<dyn KeyProvider>>,
 }
 
-impl<'a> PendingOrdinaryDecryptor<'a> {
+impl<T> PendingDecryptor<T>
+where
+    T: PendingDecryptorTrait,
+{
     fn new(
-        inner: Box<dyn SymmetricOrdinaryPendingDecryptor + 'a>,
+        inner: T,
         key_provider: Option<Arc<dyn KeyProvider>>,
         aad: Option<Vec<u8>>,
     ) -> Self {
@@ -166,6 +203,23 @@ impl<'a> PendingOrdinaryDecryptor<'a> {
         self.header().payload.key_id()
     }
 
+    pub fn header(&self) -> &Header {
+        self.inner.header()
+    }
+}
+
+impl<T> WithAad for PendingDecryptor<T> {
+    fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
+        self.aad = Some(aad.into());
+        self
+    }
+}
+
+/// A pending ordinary symmetric decryptor.
+pub type PendingOrdinaryDecryptor<'a> =
+    PendingDecryptor<Box<dyn SymmetricOrdinaryPendingDecryptor<'a> + 'a>>;
+
+impl<'a> PendingOrdinaryDecryptor<'a> {
     /// Decrypts in-memory data using an automatically resolved key.
     ///
     /// 使用自动解析的密钥解密内存中的数据。
@@ -184,51 +238,16 @@ impl<'a> PendingOrdinaryDecryptor<'a> {
     /// 使用提供的密钥解密内存中的数据。
     pub fn with_key_to_vec(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
         let aad = self.aad.as_deref();
-        let key = key.into_typed(self.inner.header().payload.symmetric_algorithm())?;
+        let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
         self.inner.into_plaintext(key, aad)
-    }
-}
-
-impl<'a> PendingDecryptorTrait for PendingOrdinaryDecryptor<'a> {
-    fn header(&self) -> &Header {
-        self.inner.header()
-    }
-}
-
-impl<'a> WithAad for PendingOrdinaryDecryptor<'a> {
-    fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
-        self.aad = Some(aad.into());
-        self
     }
 }
 
 /// A pending parallel symmetric decryptor.
-pub struct PendingParallelDecryptor<'a> {
-    inner: Box<dyn SymmetricParallelPendingDecryptor + 'a>,
-    aad: Option<Vec<u8>>,
-    key_provider: Option<Arc<dyn KeyProvider>>,
-}
+pub type PendingParallelDecryptor<'a> =
+    PendingDecryptor<Box<dyn SymmetricParallelPendingDecryptor<'a> + 'a>>;
 
 impl<'a> PendingParallelDecryptor<'a> {
-    fn new(
-        inner: Box<dyn SymmetricParallelPendingDecryptor + 'a>,
-        key_provider: Option<Arc<dyn KeyProvider>>,
-        aad: Option<Vec<u8>>,
-    ) -> Self {
-        Self {
-            inner,
-            aad,
-            key_provider,
-        }
-    }
-
-    /// Returns the key ID from the header.
-    ///
-    /// 从标头返回密钥 ID。
-    pub fn key_id(&self) -> Option<&str> {
-        self.header().payload.key_id()
-    }
-
     /// Decrypts in-memory data using an automatically resolved key.
     ///
     /// 使用自动解析的密钥解密内存中的数据。
@@ -247,51 +266,16 @@ impl<'a> PendingParallelDecryptor<'a> {
     /// 使用提供的密钥解密内存中的数据。
     pub fn with_key_to_vec(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
         let aad = self.aad.as_deref();
-        let key = key.into_typed(self.inner.header().payload.symmetric_algorithm())?;
+        let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
         self.inner.into_plaintext(key, aad)
     }
 }
 
-impl<'a> PendingDecryptorTrait for PendingParallelDecryptor<'a> {
-    fn header(&self) -> &Header {
-        self.inner.header()
-    }
-}
-
-impl<'a> WithAad for PendingParallelDecryptor<'a> {
-    fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
-        self.aad = Some(aad.into());
-        self
-    }
-}
-
 /// A pending streaming symmetric decryptor.
-pub struct PendingStreamingDecryptor<'a> {
-    inner: Box<dyn SymmetricStreamingPendingDecryptor + 'a>,
-    aad: Option<Vec<u8>>,
-    key_provider: Option<Arc<dyn KeyProvider>>,
-}
+pub type PendingStreamingDecryptor<'a> =
+    PendingDecryptor<Box<dyn SymmetricStreamingPendingDecryptor<'a> + 'a>>;
 
 impl<'a> PendingStreamingDecryptor<'a> {
-    fn new(
-        inner: Box<dyn SymmetricStreamingPendingDecryptor + 'a>,
-        key_provider: Option<Arc<dyn KeyProvider>>,
-        aad: Option<Vec<u8>>,
-    ) -> Self {
-        Self {
-            inner,
-            aad,
-            key_provider,
-        }
-    }
-
-    /// Returns the key ID from the header.
-    ///
-    /// 从标头返回密钥 ID。
-    pub fn key_id(&self) -> Option<&str> {
-        self.header().payload.key_id()
-    }
-
     /// Returns a decrypting reader using an automatically resolved key.
     ///
     /// 使用自动解析的密钥返回解密读取器。
@@ -316,51 +300,16 @@ impl<'a> PendingStreamingDecryptor<'a> {
         Self: 's,
     {
         let aad = self.aad.as_deref();
-        let key = key.into_typed(self.inner.header().payload.symmetric_algorithm())?;
+        let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
         self.inner.into_decryptor(key, aad)
     }
 }
 
-impl<'a> PendingDecryptorTrait for PendingStreamingDecryptor<'a> {
-    fn header(&self) -> &Header {
-        self.inner.header()
-    }
-}
-
-impl<'a> WithAad for PendingStreamingDecryptor<'a> {
-    fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
-        self.aad = Some(aad.into());
-        self
-    }
-}
-
 /// A pending parallel streaming symmetric decryptor.
-pub struct PendingParallelStreamingDecryptor<'a> {
-    inner: Box<dyn SymmetricParallelStreamingPendingDecryptor + 'a>,
-    aad: Option<Vec<u8>>,
-    key_provider: Option<Arc<dyn KeyProvider>>,
-}
+pub type PendingParallelStreamingDecryptor<'a> =
+    PendingDecryptor<Box<dyn SymmetricParallelStreamingPendingDecryptor<'a> + 'a>>;
 
 impl<'a> PendingParallelStreamingDecryptor<'a> {
-    fn new(
-        inner: Box<dyn SymmetricParallelStreamingPendingDecryptor + 'a>,
-        key_provider: Option<Arc<dyn KeyProvider>>,
-        aad: Option<Vec<u8>>,
-    ) -> Self {
-        Self {
-            inner,
-            aad,
-            key_provider,
-        }
-    }
-
-    /// Returns the key ID from the header.
-    ///
-    /// 从标头返回密钥 ID。
-    pub fn key_id(&self) -> Option<&str> {
-        self.header().payload.key_id()
-    }
-
     /// Decrypts to a writer using an automatically resolved key.
     ///
     /// 使用自动解析的密钥解密到写入器。
@@ -386,53 +335,18 @@ impl<'a> PendingParallelStreamingDecryptor<'a> {
         writer: W,
     ) -> crate::Result<()> {
         let aad = self.aad.as_deref();
-        let key = key.into_typed(self.inner.header().payload.symmetric_algorithm())?;
+        let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
         self.inner.decrypt_to_writer(key, Box::new(writer), aad)
-    }
-}
-
-impl<'a> PendingDecryptorTrait for PendingParallelStreamingDecryptor<'a> {
-    fn header(&self) -> &Header {
-        self.inner.header()
-    }
-}
-
-impl<'a> WithAad for PendingParallelStreamingDecryptor<'a> {
-    fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
-        self.aad = Some(aad.into());
-        self
     }
 }
 
 /// A pending asynchronous streaming symmetric decryptor.
 #[cfg(feature = "async")]
-pub struct PendingAsyncStreamingDecryptor<'a> {
-    inner: Box<dyn SymmetricAsynchronousPendingDecryptor<'a> + Send>,
-    aad: Option<Vec<u8>>,
-    key_provider: Option<Arc<dyn KeyProvider>>,
-}
+pub type PendingAsyncStreamingDecryptor<'a> =
+    PendingDecryptor<Box<dyn SymmetricAsynchronousPendingDecryptor<'a> + Send + 'a>>;
 
 #[cfg(feature = "async")]
 impl<'a> PendingAsyncStreamingDecryptor<'a> {
-    fn new(
-        inner: Box<dyn SymmetricAsynchronousPendingDecryptor<'a> + Send + 'a>,
-        key_provider: Option<Arc<dyn KeyProvider>>,
-        aad: Option<Vec<u8>>,
-    ) -> Self {
-        Self {
-            inner,
-            aad,
-            key_provider,
-        }
-    }
-
-    /// Returns the key ID from the header.
-    ///
-    /// 从标头返回密钥 ID。
-    pub fn key_id(&self) -> Option<&str> {
-        self.header().payload.key_id()
-    }
-
     /// [Async] Returns a decrypting reader using an automatically resolved key.
     ///
     /// [异步] 使用自动解析的密钥返回解密读取器。
@@ -451,8 +365,6 @@ impl<'a> PendingAsyncStreamingDecryptor<'a> {
         self.with_key_to_async_reader(key).await
     }
 
-    /// [Async] Returns a decrypting reader using the provided key.
-    ///
     /// [异步] 使用提供的密钥返回解密读取器。
     pub async fn with_key_to_async_reader<'s>(
         self,
@@ -461,23 +373,8 @@ impl<'a> PendingAsyncStreamingDecryptor<'a> {
     where
         Self: 's,
     {
-        let aad = self.aad; // Must be owned for async call
-        let key = key.into_typed(self.inner.header().payload.symmetric_algorithm())?;
-        self.inner.into_decryptor(key, aad.as_deref()).await
-    }
-}
-
-#[cfg(feature = "async")]
-impl<'a> PendingDecryptorTrait for PendingAsyncStreamingDecryptor<'a> {
-    fn header(&self) -> &Header {
-        self.inner.header()
-    }
-}
-
-#[cfg(feature = "async")]
-impl<'a> WithAad for PendingAsyncStreamingDecryptor<'a> {
-    fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
-        self.aad = Some(aad.into());
-        self
+        let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
+        let aad = self.aad;
+        self.inner.into_decryptor(key, aad).await
     }
 }

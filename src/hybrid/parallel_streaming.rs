@@ -23,9 +23,7 @@ impl ParallelStreaming {
     }
 }
 
-impl HybridParallelStreamingProcessor
-    for ParallelStreaming
-{
+impl HybridParallelStreamingProcessor for ParallelStreaming {
     fn encrypt_hybrid_pipeline<'a>(
         &self,
         algorithm: &HybridAlgorithmWrapper,
@@ -34,7 +32,7 @@ impl HybridParallelStreamingProcessor
         mut writer: Box<dyn Write + Send + 'a>,
         kek_id: String,
         signer: Option<SignerSet>,
-        aad: Option<&'a [u8]>,
+        aad: Option<&[u8]>,
         derivation_config: Option<DerivationSet>,
     ) -> Result<()> {
         let (info, deriver_fn) = derivation_config
@@ -56,16 +54,25 @@ impl HybridParallelStreamingProcessor
 
         let algo = algorithm.symmetric_algorithm().clone_box_symmetric();
         ParallelStreamingBodyProcessor::encrypt_body_pipeline(
-            &algo, dek, base_nonce, reader, writer, aad,
+            &algo,
+            dek,
+            base_nonce,
+            reader,
+            writer,
+            aad,
         )
     }
 
     fn begin_decrypt_hybrid_pipeline<'a>(
         &self,
         mut reader: Box<dyn Read + Send + 'a>,
-    ) -> Result<Box<dyn HybridParallelStreamingPendingDecryptor + 'a>> {
+    ) -> Result<Box<dyn HybridParallelStreamingPendingDecryptor<'a> + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
-        let asym_algo = header.payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?.into_asymmetric_wrapper();
+        let asym_algo = header
+            .payload
+            .asymmetric_algorithm()
+            .ok_or(FormatError::InvalidHeader)?
+            .into_asymmetric_wrapper();
         let sym_algo = header.payload.symmetric_algorithm().into_symmetric_wrapper();
         let algorithm = HybridAlgorithmWrapper::new(asym_algo, sym_algo);
 
@@ -78,14 +85,14 @@ impl HybridParallelStreamingProcessor
     }
 }
 
-impl<'a> HybridParallelStreamingPendingDecryptor for PendingDecryptor<Box<dyn Read + Send>> {
+impl<'a> HybridParallelStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Read + Send + 'a>> {
     fn decrypt_to_writer(
         self: Box<Self>,
         sk: &TypedAsymmetricPrivateKey,
-        writer: Box<dyn Write + Send>,
+        writer: Box<dyn Write + Send + 'a>,
         aad: Option<&[u8]>,
     ) -> Result<()> {
-        let reader = Box::new(self.source);
+        let reader = self.source;
         let (encapsulated_key, base_nonce, derivation_info) = match &self.header.payload {
             HeaderPayload::Hybrid {
                 stream_info: Some(info),
@@ -120,7 +127,12 @@ impl<'a> HybridParallelStreamingPendingDecryptor for PendingDecryptor<Box<dyn Re
 
         let algo = self.algorithm.symmetric_algorithm().clone_box_symmetric();
         ParallelStreamingBodyProcessor::decrypt_body_pipeline(
-            &algo, dek, base_nonce, reader, writer, aad,
+            &algo,
+            dek,
+            base_nonce,
+            reader,
+            writer,
+            aad,
         )
     }
 
@@ -149,8 +161,8 @@ mod tests {
 
     fn get_test_algorithm() -> HybridAlgorithmWrapper {
         HybridAlgorithmWrapper::new(
-            Box::new(Rsa2048Sha256Wrapper::new()),
-            Box::new(Aes256GcmWrapper::new()),
+            Rsa2048Sha256Wrapper::new(),
+            Aes256GcmWrapper::new(),
         )
     }
 

@@ -10,6 +10,7 @@ use crate::symmetric::ordinary::Ordinary;
 use crate::symmetric::parallel::Parallel;
 use crate::symmetric::parallel_streaming::ParallelStreaming;
 use crate::symmetric::streaming::Streaming;
+use crate::symmetric::traits::*;
 use std::io::{Read, Write};
 #[cfg(feature = "async")]
 use tokio::io::AsyncWrite;
@@ -77,6 +78,7 @@ impl InMemoryEncryptor for SymmetricEncryptorWithAlgorithm
         let processor = Ordinary::new();
         let typed_key = self.inner.key.into_typed(self.algorithm.algorithm())?;
         processor.encrypt_symmetric_in_memory(
+            &self.algorithm,
             typed_key,
             self.inner.key_id,
             plaintext,
@@ -91,6 +93,7 @@ impl InMemoryEncryptor for SymmetricEncryptorWithAlgorithm
         let processor = Parallel::new();
         let typed_key = self.inner.key.into_typed(self.algorithm.algorithm())?;
         processor.encrypt_symmetric_parallel(
+            &self.algorithm,
             typed_key,
             self.inner.key_id,
             plaintext,
@@ -155,7 +158,7 @@ impl AsyncStreamingEncryptor for SymmetricEncryptorWithAlgorithm
                 typed_key,
                 self.inner.key_id,
                 Box::new(writer),
-                self.inner.aad.as_deref(),
+                self.inner.aad,
             )
             .await
     }

@@ -195,7 +195,7 @@ mod tests {
     #[cfg(feature = "async")]
     use tokio::io::AsyncReadExt;
     use crate::prelude::{InMemoryEncryptor, StreamingEncryptor};
-    use crate::seal::traits::{InMemoryDecryptor, WithAad};
+    use crate::seal::traits::WithAad;
     const TEST_KEY_ID: &str = "test-key";
 
     fn get_test_data() -> &'static [u8] {
@@ -380,14 +380,16 @@ mod tests {
 
             // Encrypt
             let mut encrypted_data = Vec::new();
-            let mut encryptor = seal
-                .encrypt(key.clone(), TEST_KEY_ID.to_string())
-                .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
-                .into_async_writer(&mut encrypted_data)
-                .await
-                .unwrap();
-            encryptor.write_all(plaintext).await.unwrap();
-            encryptor.shutdown().await.unwrap();
+            {
+                let mut encryptor = seal
+                    .encrypt(key.clone(), TEST_KEY_ID.to_string())
+                    .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
+                    .into_async_writer(&mut encrypted_data)
+                    .await
+                    .unwrap();
+                encryptor.write_all(plaintext).await.unwrap();
+                encryptor.shutdown().await.unwrap();
+            }
 
             // Decrypt
             let pending = seal

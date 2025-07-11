@@ -7,7 +7,7 @@ use crate::keys::TypedSymmetricKey;
 use std::io::{Read, Write};
 
 pub trait OrdinaryBodyProcessor {
-    fn encrypt_body_in_memory(
+    fn encrypt_body_in_memory<'a>(
         &self,
         key: TypedSymmetricKey,
         nonce: &[u8; 12],
@@ -15,7 +15,7 @@ pub trait OrdinaryBodyProcessor {
         plaintext: &[u8],
         aad: Option<&[u8]>,
     ) -> Result<Vec<u8>>;
-    fn decrypt_body_in_memory(
+    fn decrypt_body_in_memory<'a>(
         &self,
         key: TypedSymmetricKey,
         nonce: &[u8; 12],

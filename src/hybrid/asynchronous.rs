@@ -26,7 +26,7 @@ impl<'decr_life> HybridAsynchronousPendingDecryptor<'decr_life>
     async fn into_decryptor<'a>(
         self: Box<Self>,
         sk: &'a TypedAsymmetricPrivateKey,
-        aad: Option<&'a [u8]>,
+        aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin + 'decr_life>> {
         let (encapsulated_key, base_nonce, derivation_info) = match &self.header.payload {
             HeaderPayload::Hybrid {
@@ -158,8 +158,8 @@ mod tests {
 
     fn get_test_algorithm() -> HybridAlgorithmWrapper {
         HybridAlgorithmWrapper::new(
-            Box::new(Rsa2048Sha256Wrapper::new()),
-            Box::new(SymAlgo::new()),
+            Rsa2048Sha256Wrapper::new(),
+            SymAlgo::new(),
         )
     }
 
@@ -173,7 +173,7 @@ mod tests {
     async fn test_hybrid_async_streaming_roundtrip(
         algorithm: &HybridAlgorithmWrapper,
         plaintext: &[u8],
-        aad: Option<&[u8]>,
+        aad: Option<Vec<u8>>,
     ) {
         let processor = Asynchronous::new();
         let (pk, sk) = generate_test_keys();
@@ -190,7 +190,7 @@ mod tests {
                     writer,
                     kek_id.clone(),
                     None,
-                    aad.map(|a| a.to_vec()),
+                    aad.clone(),
                     None,
                 )
                 .await
@@ -237,7 +237,7 @@ mod tests {
     async fn test_aad_roundtrip_async() {
         let algorithm = get_test_algorithm();
         let plaintext = b"secret async hybrid message";
-        let aad = b"public async hybrid context";
+        let aad = b"public async hybrid context".to_vec();
         test_hybrid_async_streaming_roundtrip(&algorithm, plaintext, Some(aad)).await;
     }
 
@@ -333,7 +333,7 @@ mod tests {
         let (pk, sk) = generate_test_keys();
         let plaintext = b"some data";
         let aad1 = b"correct async aad";
-        let aad2 = b"wrong async aad";
+        let aad2 = b"wrong async aad".to_vec();
 
         // Encrypt
         let mut encrypted_data = Vec::new();

@@ -7,26 +7,23 @@ use std::sync::Arc;
 use tokio::io::AsyncWrite;
 
 use crate::algorithms::traits::SignatureAlgorithm;
+use crate::common::algorithms::{
+    AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
+};
 use crate::keys::provider::EncryptionKeyProvider;
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
-use crate::seal::traits::{
-    InMemoryEncryptor, IntoAsyncWriter, IntoWriter, StreamingEncryptor as StreamingEncryptorTrait,
-};
-use seal_crypto::schemes::{
-    asymmetric::post_quantum::kyber::Kyber768, symmetric::aes_gcm::Aes256Gcm,
-};
+use crate::seal::traits::{AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor, WithAad};
 
 use super::encryptor::{HybridEncryptor, HybridEncryptorBuilder};
-use super::HybridEncryptionOptions;
 
 /// The recommended Key Encapsulation Mechanism for the Post-Quantum Cryptography (PQC) suite.
 ///
 /// 后量子密码学 (PQC) 套件推荐的密钥封装机制。
-pub type PqcKem = Kyber768;
+pub const PQC_KEM_ALGORITHM: AsymmetricAlgorithmEnum = AsymmetricAlgorithmEnum::Kyber768;
 /// The recommended Data Encapsulation Mechanism for the Post-Quantum Cryptography (PQC) suite.
 ///
 /// 后量子密码学 (PQC) 套件推荐的数据封装机制。
-pub type PqcDek = Aes256Gcm;
+pub const PQC_DEM_ALGORITHM: SymmetricAlgorithmEnum = SymmetricAlgorithmEnum::Aes256Gcm;
 
 /// A builder for the PQC suite encryptor.
 ///
@@ -38,7 +35,7 @@ pub type PqcDek = Aes256Gcm;
 /// 此构建器提供了一个简化的 API，用于创建基于 PQC 套件的加密器，
 /// 允许通过密钥提供程序或直接提供密钥进行配置。
 pub struct PqcEncryptorBuilder {
-    inner: HybridEncryptorBuilder<PqcDek>,
+    inner: HybridEncryptorBuilder,
 }
 
 impl PqcEncryptorBuilder {
@@ -90,26 +87,17 @@ impl PqcEncryptorBuilder {
 /// 该结构通过预先选择 `Kyber768` 作为 KEM 和 `Aes256Gcm` 作为 DEK 来简化加密过程。
 /// 它提供了一个熟悉的、类似构建器的 API 来设置选项，如 AAD 和签名者，而无需用户指定算法泛型。
 pub struct PqcEncryptor {
-    inner: HybridEncryptor<PqcDek>,
+    inner: HybridEncryptor,
 }
 
-impl PqcEncryptor {
-    /// Applies a set of pre-configured options to the encryptor.
-    ///
-    /// 将一组预先配置的选项应用于加密器。
-    pub fn with_options(mut self, options: HybridEncryptionOptions) -> Self {
-        self.inner = self.inner.with_options(options);
-        self
-    }
-
-    /// Sets the Associated Data (AAD) for this encryption operation.
-    ///
-    /// 为此加密操作设置关联数据 (AAD)。
-    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
+impl WithAad for PqcEncryptor {
+    fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.inner = self.inner.with_aad(aad);
         self
     }
+}
 
+impl PqcEncryptor {
     /// Use a Key Derivation Function (KDF) to derive the Data Encryption Key (DEK).
     ///
     /// 使用密钥派生函数 (KDF) 派生数据加密密钥 (DEK)。
@@ -179,7 +167,9 @@ impl InMemoryEncryptor for PqcEncryptor {
     ///
     /// 使用 PQC 套件在内存中加密给定的明文。
     fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
-        self.inner.with_algorithm::<PqcKem>().to_vec(plaintext)
+        self.inner
+            .execute_with(PQC_KEM_ALGORITHM, PQC_DEM_ALGORITHM)
+            .to_vec(plaintext)
     }
 
     /// Encrypts the given plaintext in-memory using parallel processing with the PQC suite.
@@ -187,54 +177,44 @@ impl InMemoryEncryptor for PqcEncryptor {
     /// 使用 PQC 套件通过并行处理在内存中加密给定的明文。
     fn to_vec_parallel(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
         self.inner
-            .with_algorithm::<PqcKem>()
+            .execute_with(PQC_KEM_ALGORITHM, PQC_DEM_ALGORITHM)
             .to_vec_parallel(plaintext)
     }
 }
 
-impl StreamingEncryptorTrait for PqcEncryptor {
+impl StreamingEncryptor for PqcEncryptor {
     /// Encrypts data from a reader and writes to a writer using parallel processing with the PQC suite.
     ///
     /// 使用 PQC 套件通过并行处理从 reader 加密数据并写入 writer。
     fn pipe_parallel<R, W>(self, reader: R, writer: W) -> crate::Result<()>
     where
         R: Read + Send,
-        W: Write,
+        W: Write + Send,
     {
         self.inner
-            .with_algorithm::<PqcKem>()
-            .pipe_parallel::<R, W>(reader, writer)
+            .execute_with(PQC_KEM_ALGORITHM, PQC_DEM_ALGORITHM)
+            .pipe_parallel(reader, writer)
     }
-}
 
-impl IntoWriter for PqcEncryptor {
-    type Encryptor<W: Write> = crate::hybrid::streaming::Encryptor<W, PqcKem, PqcDek>;
-
-    /// Creates a streaming encryptor that writes to the given `Write` implementation using the PQC suite.
-    ///
-    /// 使用 PQC 套件创建一个流式加密器，该加密器写入给定的 `Write` 实现。
-    fn into_writer<W: Write>(
-        self,
-        writer: W,
-    ) -> crate::Result<crate::hybrid::streaming::Encryptor<W, PqcKem, PqcDek>> {
-        self.inner.with_algorithm::<PqcKem>().into_writer(writer)
+    fn into_writer<'a, W: Write + 'a>(self, writer: W) -> crate::Result<Box<dyn Write + 'a>> {
+        self.inner
+            .execute_with(PQC_KEM_ALGORITHM, PQC_DEM_ALGORITHM)
+            .into_writer(writer)
     }
 }
 
 #[cfg(feature = "async")]
-impl IntoAsyncWriter for PqcEncryptor {
-    type AsyncEncryptor<W: AsyncWrite + Unpin + Send> =
-        crate::hybrid::asynchronous::Encryptor<W, PqcKem, PqcDek>;
-
+impl AsyncStreamingEncryptor for PqcEncryptor {
     /// Creates an asynchronous streaming encryptor that writes to the given `AsyncWrite` implementation using the PQC suite.
     ///
     /// 使用 PQC 套件创建一个异步流式加密器，该加密器写入给定的 `AsyncWrite` 实现。
-    fn into_async_writer<W: AsyncWrite + Unpin + Send>(
+    async fn into_async_writer<'a, W: AsyncWrite + Unpin + Send + 'a>(
         self,
         writer: W,
-    ) -> impl std::future::Future<Output = crate::Result<Self::AsyncEncryptor<W>>> + Send {
+    ) -> crate::Result<Box<dyn AsyncWrite + Unpin + Send + 'a>> {
         self.inner
-            .with_algorithm::<PqcKem>()
+            .execute_with(PQC_KEM_ALGORITHM, PQC_DEM_ALGORITHM)
             .into_async_writer(writer)
+            .await
     }
 }

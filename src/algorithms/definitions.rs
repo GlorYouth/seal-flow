@@ -6,7 +6,7 @@ use super::traits::{
 };
 use crate::common;
 use crate::error::{Error, FormatError, Result};
-use crate::keys::{SymmetricKey as UntypedSymmetricKey, TypedSymmetricKey};
+use crate::keys::{SymmetricKey as UntypedSymmetricKey};
 
 macro_rules! impl_symmetric_algorithm {
     ($wrapper:ident, $algo:ty, $key_variant:path, $algo_enum:path) => {
@@ -22,6 +22,12 @@ macro_rules! impl_symmetric_algorithm {
         impl Default for $wrapper {
             fn default() -> Self {
                 Self::new()
+            }
+        }
+        
+        impl Into<Box<dyn SymmetricAlgorithm>> for $wrapper {
+            fn into(self) -> Box<dyn SymmetricAlgorithm> {
+                self.clone_box_symmetric()
             }
         }
 
@@ -127,6 +133,7 @@ macro_rules! impl_symmetric_algorithm {
 }
 
 pub mod symmetric {
+    use std::ops::Deref;
     use super::*;
     use crate::keys::TypedSymmetricKey;
     use seal_crypto::prelude::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor};
@@ -138,6 +145,20 @@ pub mod symmetric {
     #[derive(Clone)]
     pub struct SymmetricAlgorithmWrapper {
         pub(crate) algorithm: Box<dyn SymmetricAlgorithm>,
+    }
+    
+    impl Deref for SymmetricAlgorithmWrapper {
+        type Target = Box<dyn SymmetricAlgorithm>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.algorithm
+        }
+    }
+    
+    impl Into<Box<dyn SymmetricAlgorithm>> for SymmetricAlgorithmWrapper {
+        fn into(self) -> Box<dyn SymmetricAlgorithm> {
+            self.algorithm
+        }
     }
 
     impl SymmetricAlgorithmWrapper {
@@ -164,36 +185,8 @@ pub mod symmetric {
     }
 
     impl SymmetricAlgorithm for SymmetricAlgorithmWrapper {
-        fn algorithm(&self) -> common::algorithms::SymmetricAlgorithm {
-            self.algorithm.algorithm()
-        }
-
         fn clone_box_symmetric(&self) -> Box<dyn SymmetricAlgorithm> {
             Box::new(self.clone())
-        }
-
-        fn key_size(&self) -> usize {
-            self.algorithm.key_size()
-        }
-
-        fn nonce_size(&self) -> usize {
-            self.algorithm.nonce_size()
-        }
-
-        fn tag_size(&self) -> usize {
-            self.algorithm.tag_size()
-        }
-
-        fn generate_typed_key(&self) -> Result<TypedSymmetricKey> {
-            self.algorithm.generate_typed_key()
-        }
-
-        fn generate_untyped_key(&self) -> Result<UntypedSymmetricKey> {
-            self.algorithm.generate_untyped_key()
-        }
-
-        fn into_symmetric_boxed(self) -> Box<dyn SymmetricAlgorithm> {
-            Box::new(self)
         }
 
         fn encrypt(
@@ -236,6 +229,34 @@ pub mod symmetric {
             aad: Option<&[u8]>,
         ) -> Result<usize> {
             self.algorithm.decrypt_to_buffer(key, nonce, ciphertext, output, aad)
+        }
+
+        fn generate_typed_key(&self) -> Result<TypedSymmetricKey> {
+            self.algorithm.generate_typed_key()
+        }
+
+        fn generate_untyped_key(&self) -> Result<UntypedSymmetricKey> {
+            self.algorithm.generate_untyped_key()
+        }
+
+        fn algorithm(&self) -> common::algorithms::SymmetricAlgorithm {
+            self.algorithm.algorithm()
+        }
+
+        fn key_size(&self) -> usize {
+            self.algorithm.key_size()
+        }
+
+        fn nonce_size(&self) -> usize {
+            self.algorithm.nonce_size()
+        }
+
+        fn tag_size(&self) -> usize {
+            self.algorithm.tag_size()
+        }
+
+        fn into_symmetric_boxed(self) -> Box<dyn SymmetricAlgorithm> {
+            Box::new(self)
         }
 
     }
@@ -291,6 +312,18 @@ macro_rules! impl_asymmetric_algorithm {
                 Self
             }
         }
+        
+        impl Default for $wrapper {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
+        
+        impl Into<Box<dyn AsymmetricAlgorithm>> for $wrapper {
+            fn into(self) -> Box<dyn AsymmetricAlgorithm> {
+                self.clone_box_asymmetric()
+            }
+        }
 
         impl AsymmetricAlgorithm for $wrapper {
             fn algorithm(&self) -> common::algorithms::AsymmetricAlgorithm {
@@ -339,6 +372,7 @@ macro_rules! impl_asymmetric_algorithm {
 
 // --- Asymmetric Algorithms ---
 pub mod asymmetric {
+    use std::ops::Deref;
     use super::*;
     use crate::keys::{
         TypedAsymmetricKeyPair, TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey,
@@ -353,6 +387,20 @@ pub mod asymmetric {
 
     pub struct AsymmetricAlgorithmWrapper {
         pub(crate) algorithm: Box<dyn AsymmetricAlgorithm>,
+    }
+    
+    impl Deref for AsymmetricAlgorithmWrapper {
+        type Target = Box<dyn AsymmetricAlgorithm>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.algorithm
+        }
+    }
+    
+    impl Into<Box<dyn AsymmetricAlgorithm>> for AsymmetricAlgorithmWrapper {
+        fn into(self) -> Box<dyn AsymmetricAlgorithm> {
+            self.algorithm
+        }
     }
 
     impl AsymmetricAlgorithmWrapper {
@@ -400,7 +448,7 @@ pub mod asymmetric {
         }
 
         fn clone_box_asymmetric(&self) -> Box<dyn AsymmetricAlgorithm> {
-            Box::new(self.clone())
+            self.algorithm.clone()
         }
 
         fn into_asymmetric_boxed(self) -> Box<dyn AsymmetricAlgorithm> {
@@ -457,8 +505,6 @@ pub mod asymmetric {
 }
 
 pub mod hybrid {
-    use crate::algorithms::asymmetric::AsymmetricAlgorithmWrapper;
-    use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
     use crate::algorithms::traits::{
         AsymmetricAlgorithm, HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm,
     };
@@ -478,8 +524,8 @@ pub mod hybrid {
             symmetric_algorithm: impl Into<Box<dyn SymmetricAlgorithm>>,
         ) -> Self {
             Self {
-                asymmetric_algorithm,
-                symmetric_algorithm,
+                asymmetric_algorithm: asymmetric_algorithm.into(),
+                symmetric_algorithm: symmetric_algorithm.into(),
             }
         }
     }

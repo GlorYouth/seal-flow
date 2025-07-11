@@ -23,16 +23,16 @@ impl Streaming {
 }
 
 impl HybridStreamingProcessor for Streaming {
-    fn encrypt_hybrid_to_stream(
+    fn encrypt_hybrid_to_stream<'a>(
         &self,
         algorithm: &HybridAlgorithmWrapper,
         public_key: &TypedAsymmetricPublicKey,
-        mut writer: Box<dyn Write>,
+        mut writer: Box<dyn Write + 'a>,
         kek_id: String,
         signer: Option<SignerSet>,
         aad: Option<&[u8]>,
         derivation_config: Option<DerivationSet>,
-    ) -> Result<Box<dyn Write>> {
+    ) -> Result<Box<dyn Write + 'a>> {
         let (info, deriver_fn) = derivation_config
             .map(|d| (d.derivation_info, d.deriver_fn))
             .unzip();
@@ -54,10 +54,10 @@ impl HybridStreamingProcessor for Streaming {
         algo.encrypt_body_to_stream(dek, base_nonce, writer, aad)
     }
 
-    fn begin_decrypt_hybrid_from_stream(
+    fn begin_decrypt_hybrid_from_stream<'a>(
         &self,
-        mut reader: Box<dyn Read>,
-    ) -> Result<Box<dyn HybridStreamingPendingDecryptor>> {
+        mut reader: Box<dyn Read + 'a>,
+    ) -> Result<Box<dyn HybridStreamingPendingDecryptor<'a> + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
         let asym_algo = header
             .payload
@@ -77,12 +77,12 @@ impl HybridStreamingProcessor for Streaming {
     }
 }
 
-impl<'a> HybridStreamingPendingDecryptor for PendingDecryptor<Box<dyn Read>> {
+impl<'a> HybridStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Read + 'a>> {
     fn into_decryptor(
         self: Box<Self>,
         sk: &TypedAsymmetricPrivateKey,
         aad: Option<&[u8]>,
-    ) -> Result<Box<dyn Read>> {
+    ) -> Result<Box<dyn Read + 'a>> {
         let reader = self.source;
 
         let (encapsulated_key, base_nonce, derivation_info) = match self.header.payload {
@@ -140,8 +140,8 @@ mod tests {
 
     fn get_test_algorithm() -> HybridAlgorithmWrapper {
         HybridAlgorithmWrapper::new(
-            Box::new(Rsa2048Sha256Wrapper::new()),
-            Box::new(Aes256GcmWrapper::new()),
+            Rsa2048Sha256Wrapper::new(),
+            Aes256GcmWrapper::new(),
         )
     }
 

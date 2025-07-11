@@ -18,7 +18,7 @@ use crate::hybrid::traits::{
     HybridParallelStreamingProcessor, HybridStreamingProcessor,
 };
 use crate::keys::provider::EncryptionKeyProvider;
-use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
+use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey, TypedSymmetricKey};
 use crate::seal::traits::{
     AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor as StreamingEncryptorTrait,
     WithAad,
@@ -138,11 +138,11 @@ impl HybridEncryptor {
             output_len,
         };
 
-        let deriver_fn = Box::new(move |ikm: &[u8]| {
+        let deriver_fn = Box::new(move |ikm: &TypedSymmetricKey| {
             deriver
-                .derive(ikm, salt.as_deref(), info.as_deref(), output_len as usize)
-                .map(|dk| Zeroizing::new(dk.as_bytes().to_vec()))
-                .map_err(|e| e.into())
+                .derive(ikm.as_ref(), salt.as_deref(), info.as_deref(), output_len as usize)
+                .map_err(Into::into)
+                .and_then(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm()))
         });
 
         self.derivation_config = Some(DerivationSet {
@@ -175,11 +175,11 @@ impl HybridEncryptor {
             output_len,
         };
 
-        let deriver_fn = Box::new(move |ikm: &[u8]| {
-            let mut reader = deriver.reader(ikm, salt.as_deref(), info.as_deref())?;
+        let deriver_fn = Box::new(move |ikm: &TypedSymmetricKey| {
+            let mut reader = deriver.reader(ikm.as_ref(), salt.as_deref(), info.as_deref())?;
             let mut dek_bytes = vec![0u8; output_len as usize];
             reader.read(&mut dek_bytes);
-            Ok(Zeroizing::new(dek_bytes))
+            Ok(TypedSymmetricKey::from_bytes(dek_bytes.as_slice(), ikm.algorithm())?)
         });
 
         self.derivation_config = Some(DerivationSet {
