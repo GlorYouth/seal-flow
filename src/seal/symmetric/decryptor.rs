@@ -2,7 +2,7 @@
 //!
 //! 用于构建和执行对称解密操作的高级 API。
 
-use crate::common::header::Header;
+use crate::common::{config::ArcConfig, header::Header};
 use crate::error::KeyManagementError;
 use crate::keys::provider::KeyProvider;
 use crate::keys::SymmetricKey;
@@ -24,6 +24,7 @@ use std::sync::Arc;
 /// 对称解密操作的构建器。
 #[derive(Default)]
 pub struct SymmetricDecryptorBuilder {
+    config: ArcConfig,
     key_provider: Option<Arc<dyn KeyProvider>>,
     aad: Option<Vec<u8>>,
 }
@@ -32,9 +33,11 @@ impl SymmetricDecryptorBuilder {
     /// Creates a new `SymmetricDecryptorBuilder`.
     ///
     /// 创建一个新的 `SymmetricDecryptorBuilder`。
-    pub fn new() -> Self {
+    pub fn new(config: ArcConfig) -> Self {
         Self {
-            ..Default::default()
+            config,
+            key_provider: None,
+            aad: None,
         }
     }
 
@@ -59,7 +62,7 @@ impl SymmetricDecryptorBuilder {
     /// 从内存中的字节切片配置解密。
     pub fn slice(self, ciphertext: &[u8]) -> crate::Result<PendingOrdinaryDecryptor> {
         let processor = crate::symmetric::ordinary::Ordinary::new();
-        let mid_level_pending = processor.begin_decrypt_symmetric_in_memory(ciphertext)?;
+        let mid_level_pending = processor.begin_decrypt_symmetric_in_memory(ciphertext, self.config)?;
         Ok(PendingOrdinaryDecryptor::new(
             mid_level_pending,
             self.key_provider,
@@ -72,7 +75,7 @@ impl SymmetricDecryptorBuilder {
     /// 从内存中的字节切片配置并行解密。
     pub fn slice_parallel(self, ciphertext: &[u8]) -> crate::Result<PendingParallelDecryptor> {
         let processor = crate::symmetric::parallel::Parallel::new();
-        let mid_level_pending = processor.begin_decrypt_symmetric_parallel(ciphertext)?;
+        let mid_level_pending = processor.begin_decrypt_symmetric_parallel(ciphertext, self.config)?;
         Ok(PendingParallelDecryptor::new(
             mid_level_pending,
             self.key_provider,
@@ -88,7 +91,7 @@ impl SymmetricDecryptorBuilder {
         R: Read + 'a,
     {
         let processor = crate::symmetric::streaming::Streaming::new();
-        let mid_level_pending = processor.begin_decrypt_symmetric_from_stream(Box::new(reader))?;
+        let mid_level_pending = processor.begin_decrypt_symmetric_from_stream(Box::new(reader), self.config)?;
         Ok(PendingStreamingDecryptor::new(
             mid_level_pending,
             self.key_provider,
@@ -107,7 +110,7 @@ impl SymmetricDecryptorBuilder {
         R: Read + Send + 'a,
     {
         let processor = crate::symmetric::parallel_streaming::ParallelStreaming::new();
-        let mid_level_pending = processor.begin_decrypt_symmetric_pipeline(Box::new(reader))?;
+        let mid_level_pending = processor.begin_decrypt_symmetric_pipeline(Box::new(reader), self.config)?;
         Ok(PendingParallelStreamingDecryptor::new(
             mid_level_pending,
             self.key_provider,
@@ -128,7 +131,7 @@ impl SymmetricDecryptorBuilder {
     {
         let processor = crate::symmetric::asynchronous::Asynchronous::new();
         let mid_level_pending = processor
-            .begin_decrypt_symmetric_async(Box::new(reader))
+            .begin_decrypt_symmetric_async(Box::new(reader), self.config)
             .await?;
         Ok(PendingAsyncStreamingDecryptor::new(
             mid_level_pending,
@@ -234,9 +237,8 @@ impl<'a> PendingOrdinaryDecryptor<'a> {
     ///
     /// 使用提供的密钥解密内存中的数据。
     pub fn with_key_to_vec(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
-        let aad = self.aad.as_deref();
         let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
-        self.inner.into_plaintext(key, aad)
+        self.inner.into_plaintext(&key, self.aad)
     }
 }
 
@@ -262,9 +264,8 @@ impl<'a> PendingParallelDecryptor<'a> {
     ///
     /// 使用提供的密钥解密内存中的数据。
     pub fn with_key_to_vec(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
-        let aad = self.aad.as_deref();
         let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
-        self.inner.into_plaintext(key, aad)
+        self.inner.into_plaintext(&key, self.aad)
     }
 }
 
@@ -296,9 +297,8 @@ impl<'a> PendingStreamingDecryptor<'a> {
     where
         Self: 's,
     {
-        let aad = self.aad.as_deref();
         let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
-        self.inner.into_decryptor(key, aad)
+        self.inner.into_decryptor(&key, self.aad)
     }
 }
 
@@ -331,9 +331,8 @@ impl<'a> PendingParallelStreamingDecryptor<'a> {
         key: SymmetricKey,
         writer: W,
     ) -> crate::Result<()> {
-        let aad = self.aad.as_deref();
         let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
-        self.inner.decrypt_to_writer(key, Box::new(writer), aad)
+        self.inner.decrypt_to_writer(&key, Box::new(writer), self.aad)
     }
 }
 
@@ -371,7 +370,6 @@ impl<'a> PendingAsyncStreamingDecryptor<'a> {
         Self: 's,
     {
         let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
-        let aad = self.aad;
-        self.inner.into_decryptor(key, aad).await
+        self.inner.into_decryptor(&key, self.aad).await
     }
 }

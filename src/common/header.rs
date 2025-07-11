@@ -31,10 +31,6 @@ pub enum SealMode {
 /// 流式处理的元数据。
 #[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
 pub struct StreamInfo {
-    /// The size of each chunk.
-    ///
-    /// 每个数据块的大小。
-    pub chunk_size: u32,
     /// The base nonce for stream encryption.
     ///
     /// 流加密的基础 nonce。
@@ -203,6 +199,10 @@ pub enum HeaderPayload {
         ///
         /// 使用的对称算法。
         algorithm: SymmetricAlgorithm,
+        /// The chunk size for the symmetric algorithm.
+        ///
+        /// 对称算法的分块大小。
+        chunk_size: u32,
         /// Streaming metadata, if applicable.
         ///
         /// 流式处理元数据（如果适用）。
@@ -228,6 +228,10 @@ pub enum HeaderPayload {
         ///
         /// 加密的数据加密密钥 (DEK)。
         encrypted_dek: Vec<u8>,
+        /// The chunk size for the symmetric algorithm.
+        ///
+        /// 对称算法的分块大小。
+        chunk_size: u32,
         /// Streaming metadata, theoretically applicable to hybrid mode as well.
         ///
         /// 流式处理元数据，理论上也适用于混合模式。

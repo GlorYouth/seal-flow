@@ -25,7 +25,7 @@ fn encrypt_pipeline<'a, R, W>(
     algorithm: SymmetricAlgorithmWrapper,
     mut reader: R,
     mut writer: W,
-    config: BodyEncryptConfig<'a>,
+    config: BodyEncryptConfig,
 ) -> Result<()>
 where
     R: Read + Send,
@@ -98,7 +98,7 @@ where
                 .par_bridge()
                 .for_each(|(index, in_buffer)| {
                     let mut out_buffer = out_pool.acquire();
-                    let nonce = derive_nonce(nonce, index);
+                    let nonce = derive_nonce(&nonce, index);
                     let aad_val = aad_clone.as_deref();
 
                     // Resize buffer to its full capacity to get a mutable slice
@@ -108,7 +108,7 @@ where
 
                     let result = algo_clone
                         .encrypt_to_buffer(
-                            &key_clone,
+                            key_clone.as_ref().as_ref(),
                             &nonce,
                             &in_buffer,
                             &mut out_buffer,
@@ -201,7 +201,7 @@ fn decrypt_pipeline<'a, R, W>(
     algorithm: SymmetricAlgorithmWrapper,
     mut reader: R,
     mut writer: W,
-    config: BodyDecryptConfig<'a>,
+    config: BodyDecryptConfig,
 ) -> Result<()>
 where
     R: Read + Send,
@@ -274,7 +274,7 @@ where
                 .par_bridge()
                 .for_each(|(index, in_buffer)| {
                     let mut out_buffer = out_pool.acquire();
-                    let nonce = derive_nonce(nonce, index);
+                    let nonce = derive_nonce(&nonce, index);
                     let aad_val = aad_clone.as_deref();
 
                     // Resize buffer to its full capacity to get a mutable slice
@@ -284,7 +284,7 @@ where
 
                     let result = algo_clone
                         .decrypt_to_buffer(
-                            &key_clone,
+                            key_clone.as_ref().as_ref(),
                             &nonce,
                             &in_buffer,
                             &mut out_buffer,
@@ -372,7 +372,7 @@ impl ParallelStreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
         &self,
         reader: Box<dyn Read + Send + 'a>,
         writer: Box<dyn Write + Send + 'a>,
-        config: BodyEncryptConfig<'a>,
+        config: BodyEncryptConfig,
     ) -> Result<()> {
         encrypt_pipeline(
             self.algorithm().into_symmetric_wrapper(),
@@ -386,7 +386,7 @@ impl ParallelStreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
         &self,
         reader: Box<dyn Read + Send + 'a>,
         writer: Box<dyn Write + Send + 'a>,
-        config: BodyDecryptConfig<'a>,
+        config: BodyDecryptConfig,
     ) -> Result<()> {
         decrypt_pipeline(
             self.algorithm().into_symmetric_wrapper(),

@@ -116,6 +116,7 @@
 //!
 //! assert_eq!(plaintext, &decrypted[..]);
 //! ```
+use crate::common::config::{ArcConfig, ConfigBuilder};
 use crate::keys::SymmetricKey;
 use decryptor::SymmetricDecryptorBuilder;
 use encryptor::SymmetricEncryptor;
@@ -130,14 +131,22 @@ pub mod encryptor;
 /// 用于创建对称加密和解密执行器的工厂。
 /// 这个结构体是高级对称 API 的主要入口点。
 /// 它是无状态的，可以重复用于多个操作。
-pub struct SymmetricSeal;
+pub struct SymmetricSeal {
+    config: ArcConfig,
+}
+
+impl Default for SymmetricSeal {
+    fn default() -> Self {
+        Self::new(ConfigBuilder::default().build())
+    }
+}
 
 impl SymmetricSeal {
     /// Creates a new `SymmetricSeal` factory.
     ///
     /// 创建一个新的 `SymmetricSeal` 工厂。
-    pub fn new() -> Self {
-        Self
+    pub fn new(config: ArcConfig) -> Self {
+        Self { config }
     }
 
     /// Begins a symmetric encryption operation.
@@ -162,6 +171,7 @@ impl SymmetricSeal {
             key,
             key_id,
             aad: None,
+            config: self.config.clone(),
         }
     }
 
@@ -180,7 +190,7 @@ impl SymmetricSeal {
     ///
     /// 该构建器还可以配置一个 `KeyProvider`，以在解密期间自动执行密钥查找过程。
     pub fn decrypt(&self) -> SymmetricDecryptorBuilder {
-        SymmetricDecryptorBuilder::new()
+        SymmetricDecryptorBuilder::new(self.config.clone())
     }
 }
 
@@ -209,7 +219,7 @@ mod tests {
         let key = SymmetricKey::new(typed_key.to_bytes());
         let plaintext = get_test_data();
 
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::default();
         let encrypted = seal
             .encrypt(key.clone(), TEST_KEY_ID.to_string())
             .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
@@ -227,7 +237,7 @@ mod tests {
         let key = SymmetricKey::new(typed_key.to_bytes());
         let plaintext = get_test_data();
         let key_id = "test-key-id-2".to_string();
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::default();
 
         let encrypted = seal
             .encrypt(key.clone(), key_id.clone())
@@ -250,7 +260,7 @@ mod tests {
         key_store.insert(TEST_KEY_ID.to_string(), typed_key.clone());
 
         let plaintext = get_test_data();
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::default();
 
         // Encrypt
         let mut encrypted_data = Vec::new();
@@ -279,7 +289,7 @@ mod tests {
         let key = SymmetricKey::new(typed_key.to_bytes());
         let plaintext = get_test_data();
         let key_id = "test-key-id-p-streaming".to_string();
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::default();
 
         let mut encrypted = Vec::new();
         seal.encrypt(key.clone(), key_id.clone())
@@ -302,7 +312,7 @@ mod tests {
         let key = SymmetricKey::new(typed_key.to_bytes());
         let plaintext = get_test_data();
         let key_id = "test-key-id-bytes".to_string();
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::default();
 
         // 使用原始密钥加密
         let encrypted = seal
@@ -326,7 +336,7 @@ mod tests {
         let plaintext = get_test_data();
         let aad = b"test-associated-data";
         let key_id = "aad-key".to_string();
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::default();
 
         let encrypted = seal
             .encrypt(key.clone(), key_id.clone())
@@ -368,7 +378,7 @@ mod tests {
             key_store.insert(TEST_KEY_ID.to_string(), typed_key.clone());
             let plaintext = get_test_data();
 
-            let seal = SymmetricSeal::new();
+            let seal = SymmetricSeal::default();
 
             // Encrypt
             let mut encrypted_data = Vec::new();

@@ -1,11 +1,11 @@
 use crate::{
-    common::config::{ArcConfig, DecryptorConfig},
+    common::{config::{ArcConfig, DecryptorConfig}, RefOrOwned},
     keys::TypedSymmetricKey,
 };
 
 pub struct BodyEncryptConfig<'a> {
-    pub key: TypedSymmetricKey,
-    pub nonce: &'a [u8; 12],
+    pub key: RefOrOwned<'a, TypedSymmetricKey>,
+    pub nonce: [u8; 12],
     pub header_bytes: Vec<u8>,
     pub aad: Option<Vec<u8>>,
     pub config: ArcConfig,
@@ -13,11 +13,11 @@ pub struct BodyEncryptConfig<'a> {
 
 impl<'a> BodyEncryptConfig<'a> {
     pub(crate) fn key(&self) -> &TypedSymmetricKey {
-        &self.key
+        self.key.as_ref()
     }
 
     pub(crate) fn nonce(&self) -> &[u8; 12] {
-        self.nonce
+        &self.nonce
     }
 
     pub(crate) fn header_bytes(&self) -> &Vec<u8> {
@@ -38,24 +38,19 @@ impl<'a> BodyEncryptConfig<'a> {
 }
 
 pub struct BodyDecryptConfig<'a> {
-    pub key: TypedSymmetricKey,
-    pub nonce: &'a [u8; 12],
-    pub ciphertext: &'a [u8],
+    pub key: RefOrOwned<'a, TypedSymmetricKey>,
+    pub nonce: [u8; 12],
     pub aad: Option<Vec<u8>>,
     pub config: DecryptorConfig,
 }
 
 impl<'a> BodyDecryptConfig<'a> {
     pub(crate) fn key(&self) -> &TypedSymmetricKey {
-        &self.key
+        self.key.as_ref()
     }
 
     pub(crate) fn nonce(&self) -> &[u8; 12] {
-        self.nonce
-    }
-
-    pub(crate) fn ciphertext(&self) -> &[u8] {
-        self.ciphertext
+        &self.nonce
     }
 
     pub(crate) fn aad(&self) -> Option<&[u8]> {

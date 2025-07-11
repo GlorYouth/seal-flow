@@ -7,16 +7,17 @@
 
 #![cfg(feature = "async")]
 
-use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
+use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::AsynchronousBodyProcessor;
+use crate::common::{config::{ArcConfig, DecryptorConfig}, RefOrOwned};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
-use crate::symmetric::common::create_header;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{
     SymmetricAsynchronousPendingDecryptor, SymmetricAsynchronousProcessor,
 };
+use crate::symmetric::config::SymmetricConfig;
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
@@ -24,21 +25,32 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 impl<'decr> SymmetricAsynchronousPendingDecryptor<'decr>
     for PendingDecryptor<Box<dyn AsyncRead + Unpin + Send + 'decr>>
 {
-    async fn into_decryptor(
+    async fn into_decryptor<'a>(
         self: Box<Self>,
-        key: TypedSymmetricKey,
+        key: &'a TypedSymmetricKey,
         aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'decr>> {
-        let base_nonce = match self.header.payload {
+        let (nonce, &chunk_size) = match &self.header.payload {
             HeaderPayload::Symmetric {
                 stream_info: Some(info),
+                chunk_size,
                 ..
-            } => info.base_nonce,
+            } => (info.base_nonce, chunk_size),
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
 
+        let config = BodyDecryptConfig {
+            key: RefOrOwned::from_owned(key.clone()),
+            nonce,
+            aad,
+            config: DecryptorConfig {
+                chunk_size,
+                arc_config: self.config,
+            },
+        };
+
         self.algorithm
-            .decrypt_body_async(key, base_nonce, self.source, aad)
+            .decrypt_body_async(self.source, config)
     }
 
     fn header(&self) -> &Header {
@@ -58,24 +70,23 @@ impl Asynchronous {
 impl SymmetricAsynchronousProcessor for Asynchronous {
     async fn encrypt_symmetric_async<'a>(
         &self,
-        algorithm: &SymmetricAlgorithmWrapper,
-        key: TypedSymmetricKey,
-        key_id: String,
         mut writer: Box<dyn AsyncWrite + Send + Unpin + 'a>,
-        aad: Option<Vec<u8>>,
+        config: SymmetricConfig<'a>,
     ) -> Result<Box<dyn AsyncWrite + Send + Unpin + 'a>> {
-        let (header, base_nonce) = create_header(algorithm, key_id)?;
-        let header_bytes = header.encode_to_vec()?;
+        let algo = config.algorithm.clone();
+        let config = config.into_encrypt_config()?;
+        let header_bytes = config.header_bytes();
         writer
             .write_all(&(header_bytes.len() as u32).to_le_bytes())
             .await?;
         writer.write_all(&header_bytes).await?;
-        algorithm.encrypt_body_async(key, base_nonce, writer, aad)
+        algo.as_ref().encrypt_body_async(writer, config)
     }
 
     async fn begin_decrypt_symmetric_async<'a>(
         &self,
         mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
+        config: ArcConfig,
     ) -> Result<Box<dyn SymmetricAsynchronousPendingDecryptor<'a> + Send + 'a>> {
         let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
         let algorithm = header
@@ -86,6 +97,7 @@ impl SymmetricAsynchronousProcessor for Asynchronous {
             source: reader,
             header,
             algorithm,
+            config,
         };
         Ok(Box::new(pending))
     }
@@ -110,16 +122,20 @@ mod tests {
         let processor = Asynchronous::new();
         let key_id = "test_key_id".to_string();
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         // Encrypt
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
                 .encrypt_symmetric_async(
-                    &wrapper,
-                    key.clone(),
-                    key_id.clone(),
                     Box::new(&mut encrypted_data),
-                    aad.clone(),
+                    SymmetricConfig {
+                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        key_id: key_id.clone(),
+                        config: config.clone(),
+                        key: RefOrOwned::from_owned(key.clone()),
+                        aad: aad.clone(),
+                    },
                 )
                 .await
                 .unwrap();
@@ -129,10 +145,10 @@ mod tests {
 
         // Decrypt
         let mut decryptor = processor
-            .begin_decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data)))
+            .begin_decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data)), config.clone())
             .await
             .unwrap()
-            .into_decryptor(key, aad)
+            .into_decryptor(&key, aad)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -148,17 +164,20 @@ mod tests {
         let plaintext = b"This is an async processor test.";
         let untyped = wrapper.generate_typed_key().unwrap();
         let aad = Some(b"async processor aad".to_vec());
-
+        let config = ArcConfig::default();
         // Encrypt
         let mut encrypted_data = Vec::new();
         {
             let mut encrypt_stream = processor
                 .encrypt_symmetric_async(
-                    &wrapper,
-                    untyped.clone(),
-                    "proc_key".to_string(),
                     Box::new(&mut encrypted_data),
-                    aad.clone(),
+                    SymmetricConfig {
+                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        key_id: "proc_key".to_string(),
+                        config: config.clone(),
+                        key: RefOrOwned::from_ref(&untyped),
+                        aad: aad.clone(),
+                    },
                 )
                 .await
                 .unwrap();
@@ -168,7 +187,7 @@ mod tests {
 
         // Decrypt
         let pending_decryptor = processor
-            .begin_decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)), config.clone())
             .await
             .unwrap();
 
@@ -178,7 +197,7 @@ mod tests {
         );
 
         let mut decrypt_stream = pending_decryptor
-            .into_decryptor(untyped, aad)
+            .into_decryptor(&untyped, aad)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -220,15 +239,19 @@ mod tests {
         let processor = Asynchronous::new();
         let plaintext = b"some important data";
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
                 .encrypt_symmetric_async(
-                    &wrapper,
-                    key.clone(),
-                    "test_key_id".to_string(),
                     Box::new(&mut encrypted_data),
-                    None,
+                    SymmetricConfig {
+                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        key_id: "test_key_id".to_string(),
+                        config: config.clone(),
+                        key: RefOrOwned::from_ref(&key),
+                        aad: None,
+                    },
                 )
                 .await
                 .unwrap();
@@ -243,10 +266,10 @@ mod tests {
         }
 
         let decryptor_result = processor
-            .begin_decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)), config.clone())
             .await
             .unwrap()
-            .into_decryptor(key, None)
+            .into_decryptor(&key, None)
             .await;
 
         let mut decryptor = decryptor_result.unwrap();
@@ -261,16 +284,19 @@ mod tests {
         let plaintext = b"some data";
         let correct_key = wrapper.generate_typed_key().unwrap();
         let wrong_key = wrapper.generate_typed_key().unwrap();
-
+        let config = ArcConfig::default();
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
                 .encrypt_symmetric_async(
-                    &wrapper,
-                    correct_key,
-                    "key1".to_string(),
                     Box::new(&mut encrypted_data),
-                    None,
+                    SymmetricConfig {
+                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        key_id: "key1".to_string(),
+                        config: config.clone(),
+                        key: RefOrOwned::from_ref(&correct_key),
+                        aad: None,
+                    },
                 )
                 .await
                 .unwrap();
@@ -280,10 +306,10 @@ mod tests {
 
         // Decrypt with the wrong key
         let decryptor_result = processor
-            .begin_decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_async(Box::new(Cursor::new(&encrypted_data)), config.clone())
             .await
             .unwrap()
-            .into_decryptor(wrong_key, None)
+            .into_decryptor(&wrong_key, None)
             .await;
 
         assert!(decryptor_result.is_err());
@@ -297,17 +323,20 @@ mod tests {
         let aad = Some(b"correct aad".to_vec());
         let wrong_aad = Some(b"wrong aad".to_vec());
         let key = wrapper.generate_typed_key().unwrap();
-
+        let config = ArcConfig::default();
         // Encrypt with AAD
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
                 .encrypt_symmetric_async(
-                    &wrapper,
-                    key.clone(),
-                    "key1".to_string(),
                     Box::new(&mut encrypted_data),
-                    aad.clone(),
+                    SymmetricConfig {
+                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        key_id: "key1".to_string(),
+                        config: config.clone(),
+                        key: RefOrOwned::from_ref(&key),
+                        aad: aad.clone(),
+                    },
                 )
                 .await
                 .unwrap();
@@ -317,10 +346,10 @@ mod tests {
 
         // Decrypt with correct AAD
         let mut decryptor = processor
-            .begin_decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data.clone())))
+            .begin_decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data.clone())), config.clone())
             .await
             .unwrap()
-            .into_decryptor(key.clone(), aad)
+            .into_decryptor(&key, aad)
             .await
             .unwrap();
         let mut decrypted_data = Vec::new();
@@ -329,19 +358,19 @@ mod tests {
 
         // Decrypt with wrong AAD should fail
         let decryptor_result_fail = processor
-            .begin_decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data.clone())))
+            .begin_decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data.clone())), config.clone())
             .await
             .unwrap()
-            .into_decryptor(key.clone(), wrong_aad)
+            .into_decryptor(&key, wrong_aad)
             .await;
         assert!(decryptor_result_fail.is_err());
 
         // Decrypt with no AAD should fail
         let decryptor_result_fail2 = processor
-            .begin_decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data)))
+            .begin_decrypt_symmetric_async(Box::new(Cursor::new(encrypted_data)), config.clone())
             .await
             .unwrap()
-            .into_decryptor(key, None)
+            .into_decryptor(&key, None)
             .await;
         assert!(decryptor_result_fail2.is_err());
     }

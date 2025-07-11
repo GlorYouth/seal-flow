@@ -4,7 +4,6 @@
 
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
-use crate::common::DEFAULT_CHUNK_SIZE;
 use rand::{rngs::OsRng, TryRngCore};
 
 /// Creates a complete header and a new base_nonce for a symmetric encryption stream.
@@ -13,6 +12,7 @@ use rand::{rngs::OsRng, TryRngCore};
 pub fn create_header<S: SymmetricAlgorithm>(
     algorithm: &S,
     key_id: String,
+    chunk_size: u32,
 ) -> crate::Result<(Header, [u8; 12])> {
     let mut base_nonce = [0u8; 12];
     OsRng.try_fill_bytes(&mut base_nonce)?;
@@ -23,8 +23,8 @@ pub fn create_header<S: SymmetricAlgorithm>(
         payload: HeaderPayload::Symmetric {
             key_id,
             algorithm: algorithm.algorithm(),
+            chunk_size,
             stream_info: Some(StreamInfo {
-                chunk_size: DEFAULT_CHUNK_SIZE,
                 base_nonce,
             }),
         },

@@ -44,8 +44,8 @@ impl<W: Write> EncryptorImpl<W> {
         Ok(Self {
             writer,
             algorithm,
-            key,
-            base_nonce: *nonce,
+            key: key.into_owned(),
+            base_nonce: nonce,
             chunk_size: config.chunk_size() as usize,
             buffer: Vec::with_capacity(config.chunk_size() as usize),
             chunk_counter: 0,
@@ -179,8 +179,8 @@ impl<R: Read> DecryptorImpl<R> {
         Self {
             reader,
             algorithm,
-            key,
-            base_nonce: *nonce,
+            key: key.into_owned(),
+            base_nonce: nonce,
             encrypted_chunk_size,
             buffer: io::Cursor::new(Vec::new()),
             encrypted_chunk_buffer: vec![0; encrypted_chunk_size],

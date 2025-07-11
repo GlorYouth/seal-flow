@@ -5,37 +5,49 @@
 //! 实现并行流式对称加解密方案。
 //! 此模式通过将 I/O 与并行计算重叠，专为高性能处理大文件或数据流而设计。
 
-use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::body::traits::ParallelStreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
-use crate::symmetric::common::create_header;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{
     SymmetricParallelStreamingPendingDecryptor, SymmetricParallelStreamingProcessor,
 };
 use std::io::{Read, Write};
+use crate::body::config::BodyDecryptConfig;
+use crate::common::{config::{ArcConfig, DecryptorConfig}, RefOrOwned};
+use crate::symmetric::config::SymmetricConfig;
 
 impl<'a> SymmetricParallelStreamingPendingDecryptor<'a>
     for PendingDecryptor<Box<dyn Read + Send + 'a>>
 {
     fn decrypt_to_writer(
         self: Box<Self>,
-        key: TypedSymmetricKey,
+        key: &TypedSymmetricKey,
         writer: Box<dyn Write + Send + 'a>,
-        aad: Option<&[u8]>,
+        aad: Option<Vec<u8>>,
     ) -> Result<()> {
-        let base_nonce = match &self.header.payload {
+        let (nonce, &chunk_size) = match &self.header.payload {
             HeaderPayload::Symmetric {
                 stream_info: Some(info),
+                chunk_size,
                 ..
-            } => info.base_nonce,
+            } => (info.base_nonce, chunk_size),
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
+        };
+
+        let config = BodyDecryptConfig {
+            key: RefOrOwned::from_ref(key),
+            nonce,
+            aad,
+            config: DecryptorConfig {
+                chunk_size,
+                arc_config: self.config,
+            },
         };
         self.algorithm
             .algorithm
-            .decrypt_body_pipeline(key, base_nonce, self.source, writer, aad)
+            .decrypt_body_pipeline(self.source, writer, config)
     }
 
     fn header(&self) -> &Header {
@@ -52,27 +64,26 @@ impl ParallelStreaming {
 }
 
 impl SymmetricParallelStreamingProcessor for ParallelStreaming {
-    fn encrypt_symmetric_pipeline<'a, 'b>(
+    fn encrypt_symmetric_pipeline<'a>(
         &self,
-        algorithm: &SymmetricAlgorithmWrapper,
-        key: TypedSymmetricKey,
-        key_id: String,
         reader: Box<dyn Read + Send + 'a>,
         mut writer: Box<dyn Write + Send + 'a>,
-        aad: Option<&'b [u8]>,
+        config: SymmetricConfig<'a>,
     ) -> Result<()> {
-        let (header, base_nonce) = create_header(algorithm, key_id)?;
-        let header_bytes = header.encode_to_vec()?;
+        let algo = config.algorithm.clone();
+        let config = config.into_encrypt_config()?;
+        let header_bytes = config.header_bytes();
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
-        writer.write_all(&header_bytes)?;
-        algorithm
-            .algorithm
-            .encrypt_body_pipeline(key, base_nonce, reader, writer, aad)
+        writer.write_all(header_bytes)?;
+        algo
+            .as_ref()
+            .encrypt_body_pipeline(reader, writer, config)
     }
 
     fn begin_decrypt_symmetric_pipeline<'a>(
         &self,
         mut reader: Box<dyn Read + Send + 'a>,
+        config: ArcConfig,
     ) -> Result<Box<dyn SymmetricParallelStreamingPendingDecryptor<'a> + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
         let algorithm = header
@@ -83,6 +94,7 @@ impl SymmetricParallelStreamingProcessor for ParallelStreaming {
             source: reader,
             header,
             algorithm,
+            config,
         };
         Ok(Box::new(pending))
     }
@@ -110,25 +122,29 @@ mod tests {
         let processor = ParallelStreaming::new();
         let plaintext = get_test_data(1024 * 1024); // 1 MiB
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         let mut encrypted_data = Vec::new();
         let mut plaintext_cursor = Cursor::new(plaintext);
         processor
             .encrypt_symmetric_pipeline(
-                &wrapper,
-                key.clone(),
-                "test_key".to_string(),
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
-                None,
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    key_id: "test_key".to_string(),
+                    config: config.clone(),
+                    key: RefOrOwned::from_ref(&key),
+                    aad: None,
+                },
             )
             .unwrap();
 
         let mut decrypted_data = Vec::new();
         let mut encrypted_cursor = Cursor::new(&encrypted_data);
         processor
-            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor))
+            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor), config.clone())
             .unwrap()
-            .decrypt_to_writer(key, Box::new(&mut decrypted_data), None)
+            .decrypt_to_writer(&key, Box::new(&mut decrypted_data), None)
             .unwrap();
 
         assert_eq!(plaintext_cursor.into_inner(), decrypted_data.as_slice());
@@ -140,19 +156,22 @@ mod tests {
         let processor = ParallelStreaming::new();
         let plaintext = get_test_data(1024 * 512); // 512 KiB
         let key = wrapper.generate_typed_key().unwrap();
-        let aad = Some(b"parallel streaming processor aad" as &[u8]);
-
+        let aad = Some(b"parallel streaming processor aad".to_vec());
+        let config = ArcConfig::default();
         // Encrypt
         let mut encrypted_data = Vec::new();
         let mut plaintext_cursor = Cursor::new(plaintext);
         processor
             .encrypt_symmetric_pipeline(
-                &wrapper,
-                key.clone(),
-                "proc_key".to_string(),
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
-                aad,
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    key_id: "proc_key".to_string(),
+                    config: config.clone(),
+                    key: RefOrOwned::from_ref(&key),
+                    aad: aad.clone(),
+                },
             )
             .unwrap();
 
@@ -160,9 +179,9 @@ mod tests {
         let mut decrypted_data = Vec::new();
         let mut encrypted_cursor = Cursor::new(&encrypted_data);
         processor
-            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor))
+            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor), config.clone())
             .unwrap()
-            .decrypt_to_writer(key, Box::new(&mut decrypted_data), aad)
+            .decrypt_to_writer(&key, Box::new(&mut decrypted_data), aad)
             .unwrap();
 
         assert_eq!(plaintext_cursor.into_inner(), decrypted_data.as_slice());
@@ -174,25 +193,29 @@ mod tests {
         let processor = ParallelStreaming::new();
         let plaintext = b"";
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         let mut encrypted_data = Vec::new();
         let mut plaintext_cursor = Cursor::new(plaintext);
         processor
             .encrypt_symmetric_pipeline(
-                &wrapper,
-                key.clone(),
-                "test_key".to_string(),
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
-                None,
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    key_id: "test_key".to_string(),
+                    config: config.clone(),
+                    key: RefOrOwned::from_ref(&key),
+                    aad: None,
+                },
             )
             .unwrap();
 
         let mut decrypted_data = Vec::new();
         let mut encrypted_cursor = Cursor::new(&encrypted_data);
         processor
-            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor))
+            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor), config.clone())
             .unwrap()
-            .decrypt_to_writer(key, Box::new(&mut decrypted_data), None)
+            .decrypt_to_writer(&key, Box::new(&mut decrypted_data), None)
             .unwrap();
 
         assert_eq!(plaintext_cursor.into_inner(), decrypted_data.as_slice());
@@ -204,25 +227,29 @@ mod tests {
         let processor = ParallelStreaming::new();
         let plaintext = get_test_data((DEFAULT_CHUNK_SIZE * 3) as usize);
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         let mut encrypted_data = Vec::new();
         let mut plaintext_cursor = Cursor::new(plaintext);
         processor
             .encrypt_symmetric_pipeline(
-                &wrapper,
-                key.clone(),
-                "test_key".to_string(),
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
-                None,
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    key_id: "test_key".to_string(),
+                    config: config.clone(),
+                    key: RefOrOwned::from_ref(&key),
+                    aad: None,
+                },
             )
             .unwrap();
 
         let mut decrypted_data = Vec::new();
         let mut encrypted_cursor = Cursor::new(&encrypted_data);
         processor
-            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor))
+            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor), config.clone())
             .unwrap()
-            .decrypt_to_writer(key, Box::new(&mut decrypted_data), None)
+            .decrypt_to_writer(&key, Box::new(&mut decrypted_data), None)
             .unwrap();
 
         assert_eq!(plaintext_cursor.into_inner(), decrypted_data.as_slice());
@@ -234,16 +261,20 @@ mod tests {
         let processor = ParallelStreaming::new();
         let plaintext = get_test_data(1024);
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         let mut encrypted_data = Vec::new();
         let mut plaintext_cursor = Cursor::new(plaintext);
         processor
             .encrypt_symmetric_pipeline(
-                &wrapper,
-                key.clone(),
-                "test_key".to_string(),
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
-                None,
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    key_id: "test_key".to_string(),
+                    config: config.clone(),
+                    key: RefOrOwned::from_ref(&key),
+                    aad: None,
+                },
             )
             .unwrap();
 
@@ -254,9 +285,9 @@ mod tests {
         let mut decrypted_data = Vec::new();
         let mut encrypted_cursor = Cursor::new(&encrypted_data);
         let result = processor
-            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor))
+            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor), config.clone())
             .unwrap()
-            .decrypt_to_writer(key, Box::new(&mut decrypted_data), None);
+            .decrypt_to_writer(&key, Box::new(&mut decrypted_data), None);
 
         assert!(result.is_err());
     }
@@ -268,25 +299,29 @@ mod tests {
         let plaintext = get_test_data(1024);
         let correct_key = wrapper.generate_typed_key().unwrap();
         let wrong_key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         let mut encrypted_data = Vec::new();
         let mut plaintext_cursor = Cursor::new(plaintext);
         processor
             .encrypt_symmetric_pipeline(
-                &wrapper,
-                correct_key,
-                "key1".to_string(),
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
-                None,
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    key_id: "test_key".to_string(),
+                    config: config.clone(),
+                    key: RefOrOwned::from_ref(&correct_key),
+                    aad: None,
+                },
             )
             .unwrap();
 
         let mut decrypted_data = Vec::new();
         let mut encrypted_cursor = Cursor::new(&encrypted_data);
         let result = processor
-            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor))
+            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor), config.clone())
             .unwrap()
-            .decrypt_to_writer(wrong_key, Box::new(&mut decrypted_data), None);
+            .decrypt_to_writer(&wrong_key, Box::new(&mut decrypted_data), None);
         assert!(result.is_err());
     }
 
@@ -295,20 +330,24 @@ mod tests {
         let wrapper = get_wrapper();
         let processor = ParallelStreaming::new();
         let plaintext = get_test_data(1024 * 256); // 256 KiB
-        let aad = b"parallel streaming aad";
+        let aad = b"parallel streaming aad".to_vec();
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
 
         // Encrypt with AAD
         let mut encrypted_data = Vec::new();
         let mut plaintext_cursor = Cursor::new(plaintext);
         processor
             .encrypt_symmetric_pipeline(
-                &wrapper,
-                key.clone(),
-                "test_key_aad".to_string(),
                 Box::new(&mut plaintext_cursor),
                 Box::new(&mut encrypted_data),
-                Some(aad),
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    key_id: "test_key_aad".to_string(),
+                    config: config.clone(),
+                    key: RefOrOwned::from_ref(&key),
+                    aad: Some(aad.clone()),
+                }
             )
             .unwrap();
 
@@ -316,9 +355,9 @@ mod tests {
         let mut decrypted_data = Vec::new();
         let mut encrypted_cursor = Cursor::new(&encrypted_data);
         processor
-            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor))
+            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor), config.clone())
             .unwrap()
-            .decrypt_to_writer(key.clone(), Box::new(&mut decrypted_data), Some(aad))
+            .decrypt_to_writer(&key, Box::new(&mut decrypted_data), Some(aad.clone()))
             .unwrap();
         assert_eq!(
             plaintext_cursor.into_inner().as_slice(),
@@ -329,12 +368,12 @@ mod tests {
         let mut decrypted_data_fail = Vec::new();
         let mut encrypted_cursor_fail = Cursor::new(&encrypted_data);
         let result_fail = processor
-            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor_fail))
+            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor_fail), config.clone())
             .unwrap()
             .decrypt_to_writer(
-                key.clone(),
+                &key,
                 Box::new(&mut decrypted_data_fail),
-                Some(b"wrong aad"),
+                Some(b"wrong aad".to_vec()),
             );
         assert!(result_fail.is_err());
 
@@ -342,9 +381,9 @@ mod tests {
         let mut decrypted_data_fail2 = Vec::new();
         let mut encrypted_cursor_fail2 = Cursor::new(&encrypted_data);
         let result_fail2 = processor
-            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor_fail2))
+            .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor_fail2), config.clone())
             .unwrap()
-            .decrypt_to_writer(key, Box::new(&mut decrypted_data_fail2), None);
+            .decrypt_to_writer(&key, Box::new(&mut decrypted_data_fail2), None);
         assert!(result_fail2.is_err());
     }
 }

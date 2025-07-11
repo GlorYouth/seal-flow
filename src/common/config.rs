@@ -5,10 +5,21 @@ pub(crate) struct ConfigIndex {
     pub chunk_size: u32,
     pub channel_bound: usize,
 }
-#[derive(Clone)]
+
+impl Default for ConfigIndex {
+    fn default() -> Self {
+        Self {
+            chunk_size: DEFAULT_CHUNK_SIZE,
+            channel_bound: CHANNEL_BOUND,
+        }
+    }
+}
+
+#[derive(Clone, Default)]
 pub(crate) struct ArcConfig {
     index: Arc<ConfigIndex>,
 }
+
 
 impl ArcConfig {
     pub fn chunk_size(&self) -> u32 {
@@ -49,6 +60,12 @@ impl DecryptorConfig {
 pub struct ConfigBuilder {
     pub chunk_size: u32,
     pub channel_bound: usize,
+}
+
+impl Default for ConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ConfigBuilder {

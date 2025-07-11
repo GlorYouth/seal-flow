@@ -98,8 +98,8 @@ impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
         Self {
             writer,
             algorithm,
-            key: Arc::new(key),
-            base_nonce: *nonce,
+            key: Arc::new(key.into_owned()),
+            base_nonce: nonce,
             config,
             buffer: BytesMut::with_capacity(chunk_size * 2),
             chunk_counter: 0,
@@ -372,8 +372,8 @@ impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
         Self {
             reader,
             algorithm,
-            key: Arc::new(key),
-            base_nonce: *nonce,
+            key: Arc::new(key.into_owned()),
+            base_nonce: nonce,
             channel_bound: config.channel_bound(),
             encrypted_chunk_size,
             decrypted_chunk_size,

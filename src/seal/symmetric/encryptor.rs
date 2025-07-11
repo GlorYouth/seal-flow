@@ -1,4 +1,5 @@
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
+use crate::common::{config::ArcConfig, RefOrOwned};
 use crate::keys::SymmetricKey;
 use crate::prelude::SymmetricAlgorithmEnum;
 use crate::seal::traits::{
@@ -10,6 +11,7 @@ use crate::symmetric::ordinary::Ordinary;
 use crate::symmetric::parallel::Parallel;
 use crate::symmetric::parallel_streaming::ParallelStreaming;
 use crate::symmetric::streaming::Streaming;
+use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::traits::*;
 use std::io::{Read, Write};
 #[cfg(feature = "async")]
@@ -22,6 +24,7 @@ pub struct SymmetricEncryptor {
     pub(crate) key: SymmetricKey,
     pub(crate) key_id: String,
     pub(crate) aad: Option<Vec<u8>>,
+    pub(crate) config: ArcConfig,
 }
 
 impl WithAad for SymmetricEncryptor {
@@ -77,11 +80,14 @@ impl InMemoryEncryptor for SymmetricEncryptorWithAlgorithm {
         let processor = Ordinary::new();
         let typed_key = self.inner.key.into_typed(self.algorithm.algorithm())?;
         processor.encrypt_symmetric_in_memory(
-            &self.algorithm,
-            typed_key,
-            self.inner.key_id,
             plaintext,
-            self.inner.aad.as_deref(),
+            SymmetricConfig {
+                algorithm: RefOrOwned::from_owned(self.algorithm),
+                key: RefOrOwned::from_ref(&typed_key),
+                key_id: self.inner.key_id,
+                aad: self.inner.aad,
+                config: self.inner.config,
+            }
         )
     }
 
@@ -92,11 +98,14 @@ impl InMemoryEncryptor for SymmetricEncryptorWithAlgorithm {
         let processor = Parallel::new();
         let typed_key = self.inner.key.into_typed(self.algorithm.algorithm())?;
         processor.encrypt_symmetric_parallel(
-            &self.algorithm,
-            typed_key,
-            self.inner.key_id,
             plaintext,
-            self.inner.aad.as_deref(),
+            SymmetricConfig {
+                algorithm: RefOrOwned::from_owned(self.algorithm),
+                key: RefOrOwned::from_ref(&typed_key),
+                key_id: self.inner.key_id,
+                aad: self.inner.aad,
+                config: self.inner.config,
+            }
         )
     }
 }
@@ -109,11 +118,14 @@ impl StreamingEncryptor for SymmetricEncryptorWithAlgorithm {
         let processor = Streaming::new();
         let typed_key = self.inner.key.into_typed(self.algorithm.algorithm())?;
         processor.encrypt_symmetric_to_stream(
-            &self.algorithm,
-            typed_key,
-            self.inner.key_id,
             Box::new(writer),
-            self.inner.aad.as_deref(),
+            SymmetricConfig {
+                algorithm: RefOrOwned::from_owned(self.algorithm),
+                key: RefOrOwned::from_owned(typed_key),
+                key_id: self.inner.key_id,
+                aad: self.inner.aad,
+                config: self.inner.config,
+            }
         )
     }
 
@@ -128,12 +140,15 @@ impl StreamingEncryptor for SymmetricEncryptorWithAlgorithm {
         let processor = ParallelStreaming::new();
         let typed_key = self.inner.key.into_typed(self.algorithm.algorithm())?;
         processor.encrypt_symmetric_pipeline(
-            &self.algorithm,
-            typed_key,
-            self.inner.key_id,
             Box::new(reader),
             Box::new(writer),
-            self.inner.aad.as_deref(),
+            SymmetricConfig {
+                algorithm: RefOrOwned::from_owned(self.algorithm),
+                key: RefOrOwned::from_ref(&typed_key),
+                key_id: self.inner.key_id,
+                aad: self.inner.aad,
+                config: self.inner.config,
+            }
         )
     }
 }
@@ -151,11 +166,14 @@ impl AsyncStreamingEncryptor for SymmetricEncryptorWithAlgorithm {
         let typed_key = self.inner.key.into_typed(self.algorithm.algorithm())?;
         processor
             .encrypt_symmetric_async(
-                &self.algorithm,
-                typed_key,
-                self.inner.key_id,
                 Box::new(writer),
-                self.inner.aad,
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_owned(self.algorithm),
+                    key: RefOrOwned::from_owned(typed_key),
+                    key_id: self.inner.key_id,
+                    aad: self.inner.aad,
+                    config: self.inner.config,
+                }
             )
             .await
     }

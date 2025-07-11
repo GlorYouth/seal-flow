@@ -61,11 +61,11 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
                 .zip(plaintext.par_chunks(chunk_size))
                 .enumerate()
                 .try_for_each(|(i, (output_chunk, input_chunk))| -> Result<()> {
-                    let nonce = derive_nonce(nonce, i as u64);
+                    let nonce = derive_nonce(&nonce, i as u64);
                     let expected_output_len = input_chunk.len() + tag_size;
                     let buffer_slice = &mut output_chunk[..expected_output_len];
 
-                    self.encrypt_to_buffer(&key, &nonce, input_chunk, buffer_slice, aad.as_deref())
+                    self.encrypt_to_buffer(key.as_ref(), &nonce, input_chunk, buffer_slice, aad.as_deref())
                         .map(|_| ())
                         .map_err(Error::from)
                 })?;
@@ -79,7 +79,7 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
     /// 并行解密密文体。
     fn decrypt_body_parallel<'a>(
         &self,
-        ciphertext_body: &[u8],
+        ciphertext_body: &'a [u8],
         config: BodyDecryptConfig<'a>,
     ) -> Result<Vec<u8>> {
         let BodyDecryptConfig { key, nonce, aad, config, .. } = config;
@@ -119,11 +119,11 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
             .zip(ciphertext_body.par_chunks(encrypted_chunk_size))
             .enumerate()
             .map(|(i, (plaintext_chunk, encrypted_chunk))| -> Result<usize> {
-                let nonce = derive_nonce(nonce, i as u64);
+                let nonce = derive_nonce(&nonce, i as u64);
 
                 // Decrypt the chunk
                 // 解密数据块
-                self.decrypt_to_buffer(&key, &nonce, encrypted_chunk, plaintext_chunk, aad.as_deref())
+                self.decrypt_to_buffer(key.as_ref(), &nonce, encrypted_chunk, plaintext_chunk, aad.as_deref())
                     .map_err(Error::from)
             })
             .collect::<Result<Vec<usize>>>()?;

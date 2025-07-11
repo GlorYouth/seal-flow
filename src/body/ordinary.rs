@@ -19,7 +19,7 @@ impl<S: SymmetricAlgorithm + ?Sized> OrdinaryBodyProcessor for S {
     fn encrypt_body_in_memory<'a>(
         &self,
         plaintext: &[u8],
-        config: BodyEncryptConfig<'a>,
+        config: BodyEncryptConfig,
     ) -> Result<Vec<u8>> {
         let mut encrypted_body = Vec::with_capacity(
             plaintext.len() + (plaintext.len() / config.chunk_size() as usize + 1) * self.tag_size(),
@@ -47,7 +47,7 @@ impl<S: SymmetricAlgorithm + ?Sized> OrdinaryBodyProcessor for S {
     fn decrypt_body_in_memory<'a>(
         &self,
         ciphertext: &[u8],
-        config: BodyDecryptConfig<'a>,
+        config: BodyDecryptConfig,
     ) -> Result<Vec<u8>> {
         let mut plaintext = Vec::with_capacity(ciphertext.len());
         let chunk_size_with_tag = config.chunk_size() as usize + self.tag_size();

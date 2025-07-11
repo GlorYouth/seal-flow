@@ -2,31 +2,44 @@
 //!
 //! 为同步、流式对称加密实现 `std::io` trait。
 
-use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::body::traits::StreamingBodyProcessor;
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
-use crate::symmetric::common::create_header;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{SymmetricStreamingPendingDecryptor, SymmetricStreamingProcessor};
+use crate::body::config::BodyDecryptConfig;
+use crate::common::{config::{ArcConfig, DecryptorConfig}, RefOrOwned};
+use crate::symmetric::config::SymmetricConfig;
 use std::io::{Read, Write};
+
 
 impl<'a> SymmetricStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Read + 'a>> {
     fn into_decryptor(
         self: Box<Self>,
-        key: TypedSymmetricKey,
-        aad: Option<&[u8]>,
+        key: &TypedSymmetricKey,
+        aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn Read + 'a>> {
-        let base_nonce = match &self.header.payload {
+        let (nonce, &chunk_size) = match &self.header.payload {
             HeaderPayload::Symmetric {
                 stream_info: Some(info),
+                chunk_size,
                 ..
-            } => info.base_nonce,
+            } => (info.base_nonce, chunk_size),
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
+
+        let config = BodyDecryptConfig {
+            key: RefOrOwned::from_owned(key.clone()),
+            nonce,
+            aad,
+            config: DecryptorConfig {
+                chunk_size,
+                arc_config: self.config,
+            },
+        };
         self.algorithm
-            .decrypt_body_from_stream(key, base_nonce, self.source, aad)
+            .decrypt_body_from_stream(self.source, config)
     }
 
     fn header(&self) -> &Header {
@@ -45,22 +58,22 @@ impl Streaming {
 impl SymmetricStreamingProcessor for Streaming {
     fn encrypt_symmetric_to_stream<'a>(
         &self,
-        algorithm: &SymmetricAlgorithmWrapper,
-        key: TypedSymmetricKey,
-        key_id: String,
         mut writer: Box<dyn Write + 'a>,
-        aad: Option<&[u8]>,
+        config: SymmetricConfig<'a>,
     ) -> Result<Box<dyn Write + 'a>> {
-        let (header, base_nonce) = create_header(algorithm, key_id)?;
-        let header_bytes = header.encode_to_vec()?;
+        let algo = config.algorithm.clone();
+        let config = config.into_encrypt_config()?;
+
+        let header_bytes = config.header_bytes();
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
-        algorithm.encrypt_body_to_stream(key, base_nonce, writer, aad)
+        algo.as_ref().encrypt_body_to_stream(writer, config)
     }
 
     fn begin_decrypt_symmetric_from_stream<'a>(
         &self,
         mut reader: Box<dyn Read + 'a>,
+        config: ArcConfig,
     ) -> Result<Box<dyn SymmetricStreamingPendingDecryptor<'a> + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
         let algorithm = header
@@ -71,6 +84,7 @@ impl SymmetricStreamingProcessor for Streaming {
             source: reader,
             header,
             algorithm,
+            config,
         };
         Ok(Box::new(pending))
     }
@@ -79,6 +93,7 @@ impl SymmetricStreamingProcessor for Streaming {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
     use crate::prelude::SymmetricAlgorithmEnum;
     use std::io::Cursor;
     use std::io::Write;
@@ -87,21 +102,25 @@ mod tests {
         SymmetricAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper()
     }
 
-    fn test_streaming_roundtrip(plaintext: &[u8], aad: Option<&[u8]>) {
+    fn test_streaming_roundtrip(plaintext: &[u8], aad: Option<Vec<u8>>) {
         let wrapper = get_wrapper();
         let processor = Streaming::new();
         let key_id = "test_key_id".to_string();
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         // Encrypt
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
                 .encrypt_symmetric_to_stream(
-                    &wrapper,
-                    key.clone(),
-                    key_id.clone(),
                     Box::new(&mut encrypted_data),
-                    aad,
+                    SymmetricConfig {
+                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        key_id: key_id.clone(),
+                        config: config.clone(),
+                        key: RefOrOwned::from_ref(&key),
+                        aad: aad.clone(),
+                    },
                 )
                 .unwrap();
             encryptor.write_all(plaintext).unwrap();
@@ -110,14 +129,14 @@ mod tests {
 
         // Decrypt using the new two-step process
         let pending_decryptor = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
             .unwrap();
         assert_eq!(
             pending_decryptor.header().payload.key_id(),
             Some(key_id.as_str())
         );
 
-        let mut decryptor = pending_decryptor.into_decryptor(key, aad).unwrap();
+        let mut decryptor = pending_decryptor.into_decryptor(&key, aad).unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
 
@@ -130,18 +149,21 @@ mod tests {
         let processor = Streaming::new();
         let plaintext = b"This is a processor test for streaming.";
         let key = wrapper.generate_typed_key().unwrap();
-        let aad = Some(b"streaming aad" as &[u8]);
-
+        let aad = Some(b"streaming aad".to_vec());
+        let config = ArcConfig::default();
         // Encrypt
         let mut encrypted_data = Vec::new();
         {
             let mut encrypt_stream = processor
                 .encrypt_symmetric_to_stream(
-                    &wrapper,
-                    key.clone(),
-                    "proc_key".to_string(),
                     Box::new(&mut encrypted_data),
-                    aad,
+                    SymmetricConfig {
+                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        key_id: "proc_key".to_string(),
+                        config: ArcConfig::default(),
+                        key: RefOrOwned::from_ref(&key),
+                        aad: None,
+                    },
                 )
                 .unwrap();
             encrypt_stream.write_all(plaintext).unwrap();
@@ -150,9 +172,9 @@ mod tests {
 
         // Decrypt
         let pending = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
             .unwrap();
-        let mut decrypt_stream = pending.into_decryptor(key.clone(), aad).unwrap();
+        let mut decrypt_stream = pending.into_decryptor(&key, aad).unwrap();
         let mut decrypted_data = Vec::new();
         decrypt_stream.read_to_end(&mut decrypted_data).unwrap();
 
@@ -180,7 +202,7 @@ mod tests {
     fn test_aad_roundtrip() {
         let plaintext = b"streaming data with aad";
         let aad = b"streaming context";
-        test_streaming_roundtrip(plaintext, Some(aad));
+        test_streaming_roundtrip(plaintext, Some(aad.to_vec()));
     }
 
     #[test]
@@ -189,15 +211,19 @@ mod tests {
         let processor = Streaming::new();
         let plaintext = b"some important data";
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
                 .encrypt_symmetric_to_stream(
-                    &wrapper,
-                    key.clone(),
-                    "test_key_id".to_string(),
                     Box::new(&mut encrypted_data),
-                    None,
+                    SymmetricConfig {
+                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        key_id: "test_key_id".to_string(),
+                        config: ArcConfig::default(),
+                        key: RefOrOwned::from_ref(&key),
+                        aad: None,
+                    },
                 )
                 .unwrap();
             encryptor.write_all(plaintext).unwrap();
@@ -211,9 +237,9 @@ mod tests {
         }
 
         let pending = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
             .unwrap();
-        let mut decryptor = pending.into_decryptor(key, None).unwrap();
+        let mut decryptor = pending.into_decryptor(&key, None).unwrap();
         let result = decryptor.read_to_end(&mut Vec::new());
         assert!(result.is_err());
     }
@@ -226,7 +252,7 @@ mod tests {
 
         let correct_key = wrapper.generate_typed_key().unwrap();
         let wrong_key = wrapper.generate_typed_key().unwrap();
-
+        let config = ArcConfig::default();
         let plaintext = b"some data";
 
         // Encrypt with the correct key
@@ -234,11 +260,14 @@ mod tests {
         {
             let mut encryptor = processor
                 .encrypt_symmetric_to_stream(
-                    &wrapper,
-                    correct_key.clone(),
-                    key_id.clone(),
                     Box::new(&mut encrypted_data),
-                    None,
+                    SymmetricConfig {
+                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        key_id: key_id.clone(),
+                        config: ArcConfig::default(),
+                        key: RefOrOwned::from_ref(&correct_key),
+                        aad: None,
+                    },
                 )
                 .unwrap();
             encryptor.write_all(plaintext).unwrap();
@@ -247,10 +276,10 @@ mod tests {
 
         // Attempt to decrypt with the wrong key
         let pending_decryptor = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
             .unwrap();
 
-        let decryptor_result = pending_decryptor.into_decryptor(wrong_key, None);
+        let decryptor_result = pending_decryptor.into_decryptor(&wrong_key, None);
 
         // We expect an error during the creation of the decryptor,
         // or on the first read.
@@ -271,17 +300,21 @@ mod tests {
         let plaintext = b"some data";
         let aad = b"correct aad";
         let wrong_aad = b"wrong aad";
+        let config = ArcConfig::default();
 
         // Encrypt with AAD
         let mut encrypted_data = Vec::new();
         {
             let mut encryptor = processor
                 .encrypt_symmetric_to_stream(
-                    &wrapper,
-                    key.clone(),
-                    key_id.clone(),
                     Box::new(&mut encrypted_data),
-                    Some(aad),
+                    SymmetricConfig {
+                        algorithm: RefOrOwned::from_ref(&wrapper),
+                        key_id: key_id.clone(),
+                        config: ArcConfig::default(),
+                        key: RefOrOwned::from_ref(&key),
+                        aad: Some(aad.to_vec()),
+                    },
                 )
                 .unwrap();
             encryptor.write_all(plaintext).unwrap();
@@ -290,18 +323,18 @@ mod tests {
 
         // Decrypt with correct AAD
         let pending = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
             .unwrap();
-        let mut decryptor = pending.into_decryptor(key.clone(), Some(aad)).unwrap();
+        let mut decryptor = pending.into_decryptor(&key, Some(aad.to_vec())).unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
         assert_eq!(decrypted_data, plaintext);
 
         // Decrypt with wrong AAD should fail
         let pending_fail = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
             .unwrap();
-        let decryptor_result = pending_fail.into_decryptor(key.clone(), Some(wrong_aad));
+        let decryptor_result = pending_fail.into_decryptor(&key, Some(wrong_aad.to_vec()));
         assert!(
             decryptor_result.is_err()
                 || decryptor_result
@@ -312,9 +345,9 @@ mod tests {
 
         // Decrypt with no AAD should also fail
         let pending_fail2 = processor
-            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
+            .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)), config.clone())
             .unwrap();
-        let decryptor_result2 = pending_fail2.into_decryptor(key, None);
+        let decryptor_result2 = pending_fail2.into_decryptor(&key, None);
         assert!(
             decryptor_result2.is_err()
                 || decryptor_result2

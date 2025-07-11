@@ -2,32 +2,44 @@
 //!
 //! 实现普通（单线程，内存中）对称加密方案。
 
-use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
+use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::OrdinaryBodyProcessor;
+use crate::common::{config::{ArcConfig, DecryptorConfig}, RefOrOwned};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
-use crate::symmetric::common::create_header;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{SymmetricOrdinaryPendingDecryptor, SymmetricOrdinaryProcessor};
+use crate::symmetric::config::SymmetricConfig;
 
 impl<'a> SymmetricOrdinaryPendingDecryptor<'a> for PendingDecryptor<&'a [u8]> {
     fn into_plaintext(
         self: Box<Self>,
-        key: TypedSymmetricKey,
-        aad: Option<&[u8]>,
+        key: &TypedSymmetricKey,
+        aad: Option<Vec<u8>>,
     ) -> Result<Vec<u8>> {
-        let base_nonce = match &self.header.payload {
+        let (nonce, &chunk_size) = match &self.header.payload {
             HeaderPayload::Symmetric {
                 stream_info: Some(info),
+                chunk_size,
                 ..
-            } => info.base_nonce,
+            } => (info.base_nonce, chunk_size),
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
+        };
+
+        let config = BodyDecryptConfig {
+            key: RefOrOwned::from_ref(key),
+            nonce,
+            aad,
+            config: DecryptorConfig {
+                chunk_size,
+                arc_config: self.config,
+            },
         };
 
         self.algorithm
             .algorithm
-            .decrypt_body_in_memory(key, &base_nonce, self.source, aad)
+            .decrypt_body_in_memory(self.source, config)
     }
 
     fn header(&self) -> &Header {
@@ -44,23 +56,21 @@ impl Ordinary {
 }
 
 impl SymmetricOrdinaryProcessor for Ordinary {
-    fn encrypt_symmetric_in_memory(
+    fn encrypt_symmetric_in_memory<'a>(
         &self,
-        algorithm: &SymmetricAlgorithmWrapper,
-        key: TypedSymmetricKey,
-        key_id: String,
         plaintext: &[u8],
-        aad: Option<&[u8]>,
+        config: SymmetricConfig<'a>,
     ) -> Result<Vec<u8>> {
-        let (header, base_nonce) = create_header(algorithm, key_id)?;
-        let header_bytes = header.encode_to_vec()?;
+        let algo = config.algorithm.clone();
+        let config = config.into_encrypt_config()?;
 
-        algorithm.encrypt_body_in_memory(key, &base_nonce, header_bytes, plaintext, aad)
+        algo.as_ref().encrypt_body_in_memory(plaintext, config)
     }
 
     fn begin_decrypt_symmetric_in_memory<'a>(
         &self,
         ciphertext: &'a [u8],
+        config: ArcConfig,
     ) -> Result<Box<dyn SymmetricOrdinaryPendingDecryptor<'a> + 'a>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
         let algorithm = header
@@ -71,6 +81,7 @@ impl SymmetricOrdinaryProcessor for Ordinary {
             source: ciphertext_body,
             header,
             algorithm,
+            config,
         };
         Ok(Box::new(pending))
     }
@@ -79,8 +90,9 @@ impl SymmetricOrdinaryProcessor for Ordinary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::DEFAULT_CHUNK_SIZE;
+    use crate::common::{RefOrOwned, DEFAULT_CHUNK_SIZE};
     use crate::prelude::SymmetricAlgorithmEnum;
+    use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 
     fn get_wrapper() -> SymmetricAlgorithmWrapper {
         SymmetricAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper()
@@ -92,19 +104,23 @@ mod tests {
         let processor = Ordinary::new();
         let plaintext = b"This is a test message that is longer than one chunk to ensure the chunking logic works correctly. Let's add some more data to be sure.";
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         let encrypted = processor
             .encrypt_symmetric_in_memory(
-                &wrapper,
-                key.clone(),
-                "test_key_id".to_string(),
                 plaintext,
-                None,
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    key_id: "test_key_id".to_string(),
+                    config: config.clone(),
+                    key: RefOrOwned::from_ref(&key),
+                    aad: None,
+                },
             )
             .unwrap();
         let pending = processor
-            .begin_decrypt_symmetric_in_memory(&encrypted)
+            .begin_decrypt_symmetric_in_memory(&encrypted, config)
             .unwrap();
-        let decrypted = pending.into_plaintext(key, None).unwrap();
+        let decrypted = pending.into_plaintext(&key, None).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -115,19 +131,23 @@ mod tests {
         let processor = Ordinary::new();
         let plaintext = b"This is a processor test.";
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         let encrypted = processor
             .encrypt_symmetric_in_memory(
-                &wrapper,
-                key.clone(),
-                "proc_key".to_string(),
                 plaintext,
-                None,
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    key_id: "proc_key".to_string(),
+                    config: config.clone(),
+                    key: RefOrOwned::from_ref(&key),
+                    aad: None,
+                },
             )
             .unwrap();
         let pending = processor
-            .begin_decrypt_symmetric_in_memory(&encrypted)
+            .begin_decrypt_symmetric_in_memory(&encrypted, config)
             .unwrap();
-        let decrypted = pending.into_plaintext(key, None).unwrap();
+        let decrypted = pending.into_plaintext(&key, None).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
     }
 
@@ -137,19 +157,23 @@ mod tests {
         let processor = Ordinary::new();
         let plaintext = b"";
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         let encrypted = processor
             .encrypt_symmetric_in_memory(
-                &wrapper,
-                key.clone(),
-                "test_key_id".to_string(),
                 plaintext,
-                None,
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    key_id: "test_key_id".to_string(),
+                    config: config.clone(),
+                    key: RefOrOwned::from_ref(&key),
+                    aad: None,
+                },
             )
             .unwrap();
         let pending = processor
-            .begin_decrypt_symmetric_in_memory(&encrypted)
+            .begin_decrypt_symmetric_in_memory(&encrypted, config)
             .unwrap();
-        let decrypted = pending.into_plaintext(key, None).unwrap();
+        let decrypted = pending.into_plaintext(&key, None).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -160,19 +184,23 @@ mod tests {
         let processor = Ordinary::new();
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         let encrypted = processor
             .encrypt_symmetric_in_memory(
-                &wrapper,
-                key.clone(),
-                "test_key_id".to_string(),
                 &plaintext,
-                None,
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    key_id: "test_key_id".to_string(),
+                    config: config.clone(),
+                    key: RefOrOwned::from_ref(&key),
+                    aad: None,
+                },
             )
             .unwrap();
         let pending = processor
-            .begin_decrypt_symmetric_in_memory(&encrypted)
+            .begin_decrypt_symmetric_in_memory(&encrypted, config)
             .unwrap();
-        let decrypted = pending.into_plaintext(key, None).unwrap();
+        let decrypted = pending.into_plaintext(&key, None).unwrap();
 
         assert_eq!(plaintext, decrypted);
     }
@@ -183,13 +211,17 @@ mod tests {
         let processor = Ordinary::new();
         let plaintext = b"some important data";
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         let mut encrypted = processor
             .encrypt_symmetric_in_memory(
-                &wrapper,
-                key.clone(),
-                "test_key_id".to_string(),
                 plaintext,
-                None,
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    key_id: "test_key_id".to_string(),
+                    config: config.clone(),
+                    key: RefOrOwned::from_ref(&key),
+                    aad: None,
+                },
             )
             .unwrap();
 
@@ -200,9 +232,9 @@ mod tests {
         }
 
         let pending = processor
-            .begin_decrypt_symmetric_in_memory(&encrypted)
+            .begin_decrypt_symmetric_in_memory(&encrypted, config)
             .unwrap();
-        let result = pending.into_plaintext(key, None);
+        let result = pending.into_plaintext(&key, None);
         assert!(result.is_err());
     }
 
@@ -214,29 +246,33 @@ mod tests {
         let aad = b"some context data";
         let wrong_aad = b"wrong context data";
         let key = wrapper.generate_typed_key().unwrap();
+        let config = ArcConfig::default();
         // Encrypt with AAD
         let encrypted = processor
             .encrypt_symmetric_in_memory(
-                &wrapper,
-                key.clone(),
-                "aad_key".to_string(),
                 plaintext,
-                Some(aad),
+                SymmetricConfig {
+                    algorithm: RefOrOwned::from_ref(&wrapper),
+                    key_id: "aad_key".to_string(),
+                    config: config.clone(),
+                    key: RefOrOwned::from_ref(&key),
+                    aad: Some(aad.to_vec()),
+                },
             )
             .unwrap();
 
         // Decrypt with correct AAD
         let pending = processor
-            .begin_decrypt_symmetric_in_memory(&encrypted)
+            .begin_decrypt_symmetric_in_memory(&encrypted, config.clone())
             .unwrap();
-        let decrypted = pending.into_plaintext(key.clone(), Some(aad)).unwrap();
+        let decrypted = pending.into_plaintext(&key, Some(aad.to_vec())).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD should fail
         let pending = processor
-            .begin_decrypt_symmetric_in_memory(&encrypted)
+            .begin_decrypt_symmetric_in_memory(&encrypted, config)
             .unwrap();
-        let result = pending.into_plaintext(key, Some(wrong_aad));
+        let result = pending.into_plaintext(&key, Some(wrong_aad.to_vec()));
         assert!(result.is_err());
     }
 }
