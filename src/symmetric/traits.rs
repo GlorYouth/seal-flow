@@ -122,7 +122,7 @@ use async_trait::async_trait;
 pub trait SymmetricAsynchronousProcessor {
     async fn encrypt_symmetric_async<'a>(
         &self,
-        algorithm: & SymmetricAlgorithmWrapper,
+        algorithm: &SymmetricAlgorithmWrapper,
         key: TypedSymmetricKey,
         key_id: String,
         writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,

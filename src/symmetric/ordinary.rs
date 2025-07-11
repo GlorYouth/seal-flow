@@ -25,7 +25,8 @@ impl<'a> SymmetricOrdinaryPendingDecryptor<'a> for PendingDecryptor<&'a [u8]> {
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
 
-        self.algorithm.algorithm
+        self.algorithm
+            .algorithm
             .decrypt_body_in_memory(key, &base_nonce, self.source, aad)
     }
 
@@ -34,8 +35,7 @@ impl<'a> SymmetricOrdinaryPendingDecryptor<'a> for PendingDecryptor<&'a [u8]> {
     }
 }
 
-pub struct Ordinary {
-}
+pub struct Ordinary {}
 
 impl Ordinary {
     pub fn new() -> Self {
@@ -43,9 +43,7 @@ impl Ordinary {
     }
 }
 
-impl SymmetricOrdinaryProcessor
-    for Ordinary
-{
+impl SymmetricOrdinaryProcessor for Ordinary {
     fn encrypt_symmetric_in_memory(
         &self,
         algorithm: &SymmetricAlgorithmWrapper,
@@ -57,8 +55,7 @@ impl SymmetricOrdinaryProcessor
         let (header, base_nonce) = create_header(algorithm, key_id)?;
         let header_bytes = header.encode_to_vec()?;
 
-        algorithm
-            .encrypt_body_in_memory(key, &base_nonce, header_bytes, plaintext, aad)
+        algorithm.encrypt_body_in_memory(key, &base_nonce, header_bytes, plaintext, aad)
     }
 
     fn begin_decrypt_symmetric_in_memory<'a>(
@@ -66,7 +63,10 @@ impl SymmetricOrdinaryProcessor
         ciphertext: &'a [u8],
     ) -> Result<Box<dyn SymmetricOrdinaryPendingDecryptor<'a> + 'a>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
-        let algorithm = header.payload.symmetric_algorithm().into_symmetric_wrapper();
+        let algorithm = header
+            .payload
+            .symmetric_algorithm()
+            .into_symmetric_wrapper();
         let pending = PendingDecryptor {
             source: ciphertext_body,
             header,
@@ -86,7 +86,6 @@ mod tests {
         SymmetricAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper()
     }
 
-
     #[test]
     fn test_symmetric_ordinary_roundtrip() {
         let wrapper = get_wrapper();
@@ -94,7 +93,13 @@ mod tests {
         let plaintext = b"This is a test message that is longer than one chunk to ensure the chunking logic works correctly. Let's add some more data to be sure.";
         let key = wrapper.generate_typed_key().unwrap();
         let encrypted = processor
-            .encrypt_symmetric_in_memory(&wrapper, key.clone(), "test_key_id".to_string(), plaintext, None)
+            .encrypt_symmetric_in_memory(
+                &wrapper,
+                key.clone(),
+                "test_key_id".to_string(),
+                plaintext,
+                None,
+            )
             .unwrap();
         let pending = processor
             .begin_decrypt_symmetric_in_memory(&encrypted)
@@ -111,7 +116,13 @@ mod tests {
         let plaintext = b"This is a processor test.";
         let key = wrapper.generate_typed_key().unwrap();
         let encrypted = processor
-            .encrypt_symmetric_in_memory(&wrapper, key.clone(), "proc_key".to_string(), plaintext, None)
+            .encrypt_symmetric_in_memory(
+                &wrapper,
+                key.clone(),
+                "proc_key".to_string(),
+                plaintext,
+                None,
+            )
             .unwrap();
         let pending = processor
             .begin_decrypt_symmetric_in_memory(&encrypted)
@@ -127,7 +138,13 @@ mod tests {
         let plaintext = b"";
         let key = wrapper.generate_typed_key().unwrap();
         let encrypted = processor
-            .encrypt_symmetric_in_memory(&wrapper, key.clone(), "test_key_id".to_string(), plaintext, None)
+            .encrypt_symmetric_in_memory(
+                &wrapper,
+                key.clone(),
+                "test_key_id".to_string(),
+                plaintext,
+                None,
+            )
             .unwrap();
         let pending = processor
             .begin_decrypt_symmetric_in_memory(&encrypted)
@@ -144,7 +161,13 @@ mod tests {
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
         let key = wrapper.generate_typed_key().unwrap();
         let encrypted = processor
-            .encrypt_symmetric_in_memory(&wrapper, key.clone(), "test_key_id".to_string(), &plaintext, None)
+            .encrypt_symmetric_in_memory(
+                &wrapper,
+                key.clone(),
+                "test_key_id".to_string(),
+                &plaintext,
+                None,
+            )
             .unwrap();
         let pending = processor
             .begin_decrypt_symmetric_in_memory(&encrypted)
@@ -161,7 +184,13 @@ mod tests {
         let plaintext = b"some important data";
         let key = wrapper.generate_typed_key().unwrap();
         let mut encrypted = processor
-            .encrypt_symmetric_in_memory(&wrapper, key.clone(), "test_key_id".to_string(), plaintext, None)
+            .encrypt_symmetric_in_memory(
+                &wrapper,
+                key.clone(),
+                "test_key_id".to_string(),
+                plaintext,
+                None,
+            )
             .unwrap();
 
         // Tamper with the ciphertext body
@@ -170,7 +199,9 @@ mod tests {
             encrypted[header_len] ^= 1;
         }
 
-        let pending = processor.begin_decrypt_symmetric_in_memory(&encrypted).unwrap();
+        let pending = processor
+            .begin_decrypt_symmetric_in_memory(&encrypted)
+            .unwrap();
         let result = pending.into_plaintext(key, None);
         assert!(result.is_err());
     }
@@ -185,16 +216,26 @@ mod tests {
         let key = wrapper.generate_typed_key().unwrap();
         // Encrypt with AAD
         let encrypted = processor
-            .encrypt_symmetric_in_memory(&wrapper, key.clone(), "aad_key".to_string(), plaintext, Some(aad))
+            .encrypt_symmetric_in_memory(
+                &wrapper,
+                key.clone(),
+                "aad_key".to_string(),
+                plaintext,
+                Some(aad),
+            )
             .unwrap();
 
         // Decrypt with correct AAD
-        let pending = processor.begin_decrypt_symmetric_in_memory(&encrypted).unwrap();
+        let pending = processor
+            .begin_decrypt_symmetric_in_memory(&encrypted)
+            .unwrap();
         let decrypted = pending.into_plaintext(key.clone(), Some(aad)).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD should fail
-        let pending = processor.begin_decrypt_symmetric_in_memory(&encrypted).unwrap();
+        let pending = processor
+            .begin_decrypt_symmetric_in_memory(&encrypted)
+            .unwrap();
         let result = pending.into_plaintext(key, Some(wrong_aad));
         assert!(result.is_err());
     }

@@ -33,7 +33,9 @@ impl<'a> SymmetricParallelStreamingPendingDecryptor<'a>
             } => info.base_nonce,
             _ => return Err(Error::Format(FormatError::InvalidHeader)),
         };
-        self.algorithm.algorithm.decrypt_body_pipeline(key, base_nonce, self.source, writer, aad)
+        self.algorithm
+            .algorithm
+            .decrypt_body_pipeline(key, base_nonce, self.source, writer, aad)
     }
 
     fn header(&self) -> &Header {
@@ -49,9 +51,7 @@ impl ParallelStreaming {
     }
 }
 
-impl SymmetricParallelStreamingProcessor
-    for ParallelStreaming
-{
+impl SymmetricParallelStreamingProcessor for ParallelStreaming {
     fn encrypt_symmetric_pipeline<'a, 'b>(
         &self,
         algorithm: &SymmetricAlgorithmWrapper,
@@ -65,7 +65,9 @@ impl SymmetricParallelStreamingProcessor
         let header_bytes = header.encode_to_vec()?;
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
-        algorithm.algorithm.encrypt_body_pipeline(key, base_nonce, reader, writer, aad)
+        algorithm
+            .algorithm
+            .encrypt_body_pipeline(key, base_nonce, reader, writer, aad)
     }
 
     fn begin_decrypt_symmetric_pipeline<'a>(
@@ -73,7 +75,10 @@ impl SymmetricParallelStreamingProcessor
         mut reader: Box<dyn Read + Send + 'a>,
     ) -> Result<Box<dyn SymmetricParallelStreamingPendingDecryptor<'a> + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
-        let algorithm = header.payload.symmetric_algorithm().into_symmetric_wrapper();
+        let algorithm = header
+            .payload
+            .symmetric_algorithm()
+            .into_symmetric_wrapper();
         let pending = PendingDecryptor {
             source: reader,
             header,
@@ -313,13 +318,12 @@ mod tests {
         processor
             .begin_decrypt_symmetric_pipeline(Box::new(&mut encrypted_cursor))
             .unwrap()
-            .decrypt_to_writer(
-                key.clone(),
-                Box::new(&mut decrypted_data),
-                Some(aad),
-            )
+            .decrypt_to_writer(key.clone(), Box::new(&mut decrypted_data), Some(aad))
             .unwrap();
-        assert_eq!(plaintext_cursor.into_inner().as_slice(), decrypted_data.as_slice());
+        assert_eq!(
+            plaintext_cursor.into_inner().as_slice(),
+            decrypted_data.as_slice()
+        );
 
         // Decrypt with wrong AAD should fail
         let mut decrypted_data_fail = Vec::new();

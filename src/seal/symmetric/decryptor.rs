@@ -70,10 +70,7 @@ impl SymmetricDecryptorBuilder {
     /// Configures parallel decryption from an in-memory byte slice.
     ///
     /// 从内存中的字节切片配置并行解密。
-    pub fn slice_parallel(
-        self,
-        ciphertext: &[u8],
-    ) -> crate::Result<PendingParallelDecryptor> {
+    pub fn slice_parallel(self, ciphertext: &[u8]) -> crate::Result<PendingParallelDecryptor> {
         let processor = crate::symmetric::parallel::Parallel::new();
         let mid_level_pending = processor.begin_decrypt_symmetric_parallel(ciphertext)?;
         Ok(PendingParallelDecryptor::new(
@@ -91,8 +88,7 @@ impl SymmetricDecryptorBuilder {
         R: Read + 'a,
     {
         let processor = crate::symmetric::streaming::Streaming::new();
-        let mid_level_pending =
-            processor.begin_decrypt_symmetric_from_stream(Box::new(reader))?;
+        let mid_level_pending = processor.begin_decrypt_symmetric_from_stream(Box::new(reader))?;
         Ok(PendingStreamingDecryptor::new(
             mid_level_pending,
             self.key_provider,
@@ -123,12 +119,17 @@ impl SymmetricDecryptorBuilder {
     ///
     /// 开始一个异步流式解密操作。
     #[cfg(feature = "async")]
-    pub async fn async_reader<'a, R>(self, reader: R) -> crate::Result<PendingAsyncStreamingDecryptor<'a>>
+    pub async fn async_reader<'a, R>(
+        self,
+        reader: R,
+    ) -> crate::Result<PendingAsyncStreamingDecryptor<'a>>
     where
         R: tokio::io::AsyncRead + Unpin + Send + 'a,
     {
         let processor = crate::symmetric::asynchronous::Asynchronous::new();
-        let mid_level_pending = processor.begin_decrypt_symmetric_async(Box::new(reader)).await?;
+        let mid_level_pending = processor
+            .begin_decrypt_symmetric_async(Box::new(reader))
+            .await?;
         Ok(PendingAsyncStreamingDecryptor::new(
             mid_level_pending,
             self.key_provider,
@@ -184,11 +185,7 @@ impl<T> PendingDecryptor<T>
 where
     T: PendingDecryptorTrait,
 {
-    fn new(
-        inner: T,
-        key_provider: Option<Arc<dyn KeyProvider>>,
-        aad: Option<Vec<u8>>,
-    ) -> Self {
+    fn new(inner: T, key_provider: Option<Arc<dyn KeyProvider>>, aad: Option<Vec<u8>>) -> Self {
         Self {
             inner,
             aad,

@@ -572,14 +572,19 @@ impl AsymmetricPublicKey {
         self.0
     }
 
-    pub fn into_typed(self, algorithm: AsymmetricAlgorithmEnum) -> Result<TypedAsymmetricPublicKey, Error> {
+    pub fn into_typed(
+        self,
+        algorithm: AsymmetricAlgorithmEnum,
+    ) -> Result<TypedAsymmetricPublicKey, Error> {
         match algorithm {
             AsymmetricAlgorithmEnum::Rsa2048Sha256 => {
-                let pk = <Rsa2048<Sha256> as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
+                let pk =
+                    <Rsa2048<Sha256> as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
                 Ok(TypedAsymmetricPublicKey::Rsa2048Sha256(pk))
             }
             AsymmetricAlgorithmEnum::Rsa4096Sha256 => {
-                let pk = <Rsa4096<Sha256> as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
+                let pk =
+                    <Rsa4096<Sha256> as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
                 Ok(TypedAsymmetricPublicKey::Rsa4096Sha256(pk))
             }
             AsymmetricAlgorithmEnum::Kyber512 => {

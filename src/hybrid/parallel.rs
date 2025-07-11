@@ -11,7 +11,7 @@ use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::pending::PendingDecryptor;
-use crate::keys::{TypedAsymmetricPublicKey, TypedSymmetricKey, TypedAsymmetricPrivateKey};
+use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
 
 pub struct Parallel;
@@ -51,9 +51,13 @@ impl HybridParallelProcessor for Parallel {
         // 3. Serialize the header and prepare for encryption
         let header_bytes = header.encode_to_vec()?;
 
-        algorithm
-            .symmetric_algorithm()
-            .encrypt_body_parallel(dek, &base_nonce, header_bytes, plaintext, aad)
+        algorithm.symmetric_algorithm().encrypt_body_parallel(
+            dek,
+            &base_nonce,
+            header_bytes,
+            plaintext,
+            aad,
+        )
     }
 
     fn begin_decrypt_hybrid_parallel<'a>(
@@ -61,8 +65,15 @@ impl HybridParallelProcessor for Parallel {
         ciphertext: &'a [u8],
     ) -> Result<Box<dyn HybridParallelPendingDecryptor + 'a>> {
         let (header, _) = Header::decode_from_prefixed_slice(ciphertext)?;
-        let asym_algo = header.payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?.into_asymmetric_wrapper();
-        let sym_algo = header.payload.symmetric_algorithm().into_symmetric_wrapper();
+        let asym_algo = header
+            .payload
+            .asymmetric_algorithm()
+            .ok_or(FormatError::InvalidHeader)?
+            .into_asymmetric_wrapper();
+        let sym_algo = header
+            .payload
+            .symmetric_algorithm()
+            .into_symmetric_wrapper();
         let algorithm = HybridAlgorithmWrapper::new(asym_algo, sym_algo);
 
         let pending = PendingDecryptor {
@@ -112,9 +123,12 @@ impl<'a> HybridParallelPendingDecryptor for PendingDecryptor<&'a [u8]> {
             self.algorithm.symmetric_algorithm().algorithm(),
         )?;
 
-        self.algorithm
-            .symmetric_algorithm()
-            .decrypt_body_parallel(dek, &base_nonce, ciphertext_body, aad)
+        self.algorithm.symmetric_algorithm().decrypt_body_parallel(
+            dek,
+            &base_nonce,
+            ciphertext_body,
+            aad,
+        )
     }
 
     fn header(&self) -> &Header {
@@ -126,21 +140,19 @@ impl<'a> HybridParallelPendingDecryptor for PendingDecryptor<&'a [u8]> {
 mod tests {
     use super::*;
     use crate::algorithms::definitions::{
-        asymmetric::Rsa2048Sha256Wrapper, hybrid::HybridAlgorithmWrapper, symmetric::Aes256GcmWrapper,
+        asymmetric::Rsa2048Sha256Wrapper, hybrid::HybridAlgorithmWrapper,
+        symmetric::Aes256GcmWrapper,
     };
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
-    use crate::common::DEFAULT_CHUNK_SIZE;
     use crate::common::DerivationSet;
-    use crate::keys::{TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey};
+    use crate::common::DEFAULT_CHUNK_SIZE;
+    use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey};
     use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
 
     fn get_test_algorithm() -> HybridAlgorithmWrapper {
-        HybridAlgorithmWrapper::new(
-            Rsa2048Sha256Wrapper::new(),
-            Aes256GcmWrapper::new(),
-        )
+        HybridAlgorithmWrapper::new(Rsa2048Sha256Wrapper::new(), Aes256GcmWrapper::new())
     }
 
     fn generate_test_keys() -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {
@@ -189,9 +201,7 @@ mod tests {
             )
             .unwrap();
 
-        let pending = processor
-            .begin_decrypt_hybrid_parallel(&encrypted)
-            .unwrap();
+        let pending = processor.begin_decrypt_hybrid_parallel(&encrypted).unwrap();
         let decrypted = pending.into_plaintext(&sk, None).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -216,9 +226,7 @@ mod tests {
             .unwrap();
 
         // Test convenience function
-        let pending = processor
-            .begin_decrypt_hybrid_parallel(&encrypted)
-            .unwrap();
+        let pending = processor.begin_decrypt_hybrid_parallel(&encrypted).unwrap();
         let decrypted = pending.into_plaintext(&sk, None).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
@@ -254,9 +262,7 @@ mod tests {
             )
             .unwrap();
 
-        let pending = processor
-            .begin_decrypt_hybrid_parallel(&encrypted)
-            .unwrap();
+        let pending = processor.begin_decrypt_hybrid_parallel(&encrypted).unwrap();
         let decrypted = pending.into_plaintext(&sk, None).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
@@ -281,9 +287,7 @@ mod tests {
             )
             .unwrap();
 
-        let pending = processor
-            .begin_decrypt_hybrid_parallel(&encrypted)
-            .unwrap();
+        let pending = processor.begin_decrypt_hybrid_parallel(&encrypted).unwrap();
         let decrypted = pending.into_plaintext(&sk, None).unwrap();
 
         assert_eq!(plaintext, decrypted);
@@ -309,9 +313,7 @@ mod tests {
             )
             .unwrap();
 
-        let pending = processor
-            .begin_decrypt_hybrid_parallel(&encrypted)
-            .unwrap();
+        let pending = processor.begin_decrypt_hybrid_parallel(&encrypted).unwrap();
         let result = pending.into_plaintext(&sk2, None);
         assert!(result.is_err());
     }
@@ -338,23 +340,17 @@ mod tests {
             .unwrap();
 
         // Decrypt with correct AAD
-        let pending = processor
-            .begin_decrypt_hybrid_parallel(&encrypted)
-            .unwrap();
+        let pending = processor.begin_decrypt_hybrid_parallel(&encrypted).unwrap();
         let decrypted = pending.into_plaintext(&sk, Some(aad)).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
-        let pending_fail = processor
-            .begin_decrypt_hybrid_parallel(&encrypted)
-            .unwrap();
+        let pending_fail = processor.begin_decrypt_hybrid_parallel(&encrypted).unwrap();
         let result_fail = pending_fail.into_plaintext(&sk, Some(b"wrong aad"));
         assert!(result_fail.is_err());
 
         // Decrypt with no AAD fails
-        let pending_fail2 = processor
-            .begin_decrypt_hybrid_parallel(&encrypted)
-            .unwrap();
+        let pending_fail2 = processor.begin_decrypt_hybrid_parallel(&encrypted).unwrap();
         let result_fail2 = pending_fail2.into_plaintext(&sk, None);
         assert!(result_fail2.is_err());
     }

@@ -4,11 +4,11 @@
 //! 实现同步、流式加密和解密的通用逻辑。
 //! 这是对称和混合流式模式的后端。
 
+use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::{derive_nonce, DEFAULT_CHUNK_SIZE};
 use crate::error::Result;
 use crate::keys::TypedSymmetricKey;
-use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use std::io::{self, Read, Write};
 
 // --- Encryptor ---
@@ -287,4 +287,3 @@ impl<S: SymmetricAlgorithm + ?Sized> StreamingBodyProcessor for S {
         Ok(Box::new(decryptor))
     }
 }
-

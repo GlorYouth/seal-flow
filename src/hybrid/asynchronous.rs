@@ -128,7 +128,10 @@ impl HybridAsynchronousProcessor for Asynchronous {
             .asymmetric_algorithm()
             .ok_or(FormatError::InvalidHeader)?
             .into_asymmetric_wrapper();
-        let sym_algo = header.payload.symmetric_algorithm().into_symmetric_wrapper();
+        let sym_algo = header
+            .payload
+            .symmetric_algorithm()
+            .into_symmetric_wrapper();
         let algorithm = HybridAlgorithmWrapper::new(asym_algo, sym_algo);
 
         let pending = PendingDecryptor {
@@ -136,7 +139,10 @@ impl HybridAsynchronousProcessor for Asynchronous {
             header,
             algorithm,
         };
-        Ok(Box::new(pending) as Box<dyn HybridAsynchronousPendingDecryptor<'a> + Send + 'a>)
+        Ok(Box::new(pending)
+            as Box<
+                dyn HybridAsynchronousPendingDecryptor<'a> + Send + 'a,
+            >)
     }
 }
 
@@ -157,10 +163,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn get_test_algorithm() -> HybridAlgorithmWrapper {
-        HybridAlgorithmWrapper::new(
-            Rsa2048Sha256Wrapper::new(),
-            SymAlgo::new(),
-        )
+        HybridAlgorithmWrapper::new(Rsa2048Sha256Wrapper::new(), SymAlgo::new())
     }
 
     fn generate_test_keys() -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {
@@ -359,10 +362,7 @@ mod tests {
         // Decrypt with the wrong aad
         let reader1 = Box::new(Cursor::new(encrypted_data.clone()));
         let mut decryptor = {
-            let pending = processor
-                .begin_decrypt_hybrid_async(reader1)
-                .await
-                .unwrap();
+            let pending = processor.begin_decrypt_hybrid_async(reader1).await.unwrap();
             pending.into_decryptor(&sk, Some(aad2)).await.unwrap()
         };
         let result = decryptor.read_to_end(&mut Vec::new()).await;
@@ -371,10 +371,7 @@ mod tests {
         // Decrypt with no aad
         let reader2 = Box::new(Cursor::new(encrypted_data));
         let mut decryptor2 = {
-            let pending2 = processor
-                .begin_decrypt_hybrid_async(reader2)
-                .await
-                .unwrap();
+            let pending2 = processor.begin_decrypt_hybrid_async(reader2).await.unwrap();
             pending2.into_decryptor(&sk, None).await.unwrap()
         };
         let result2 = decryptor2.read_to_end(&mut Vec::new()).await;

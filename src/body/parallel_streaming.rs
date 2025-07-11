@@ -4,12 +4,12 @@
 //! 实现并行流式加密和解密的通用逻辑。
 //! 这是对称和混合并行流式模式的后端。
 
+use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::buffer::BufferPool;
 use crate::common::{derive_nonce, OrderedChunk, CHANNEL_BOUND, DEFAULT_CHUNK_SIZE};
 use crate::error::{Error, Result};
 use crate::keys::TypedSymmetricKey;
-use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use rayon::prelude::*;
 use std::collections::BinaryHeap;
 use std::io::{Read, Write};
@@ -375,7 +375,14 @@ impl ParallelStreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
         writer: Box<dyn Write + Send + 'a>,
         aad: Option<&'a [u8]>,
     ) -> Result<()> {
-        encrypt_pipeline(self.algorithm().into_symmetric_wrapper(), key, base_nonce, reader, writer, aad)
+        encrypt_pipeline(
+            self.algorithm().into_symmetric_wrapper(),
+            key,
+            base_nonce,
+            reader,
+            writer,
+            aad,
+        )
     }
 
     fn decrypt_body_pipeline<'a>(

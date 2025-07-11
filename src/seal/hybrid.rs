@@ -162,9 +162,7 @@
 //!
 //! assert_eq!(plaintext, &decrypted[..]);
 //! ```
-use crate::common::algorithms::{
-    KdfAlgorithm, SignatureAlgorithm, XofAlgorithm,
-};
+use crate::common::algorithms::{KdfAlgorithm, SignatureAlgorithm, XofAlgorithm};
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
 use decryptor::HybridDecryptorBuilder;
 use encryptor::{HybridEncryptor, HybridEncryptorBuilder};
@@ -487,7 +485,6 @@ mod tests {
     use std::collections::HashMap;
     use std::io::{Cursor, Read, Write};
 
-
     #[cfg(feature = "async")]
     const TEST_KEK_ID: &str = "test-kek";
 
@@ -565,10 +562,7 @@ mod tests {
         drop(encryptor);
 
         // Decrypt
-        let pending = seal
-            .decrypt()
-            .reader(Cursor::new(encrypted_data))
-            .unwrap();
+        let pending = seal.decrypt().reader(Cursor::new(encrypted_data)).unwrap();
         let kek_id = pending.kek_id().unwrap();
         let decryption_key = key_store.get(kek_id).unwrap();
         let mut decryptor = pending.with_key(decryption_key.clone()).unwrap();
@@ -627,7 +621,9 @@ mod tests {
 
         // Decrypt with wrong AAD fails
         let pending_fail = seal.decrypt().slice(&encrypted)?;
-        let result = pending_fail.with_aad(b"wrong-aad").with_key(sk_wrapped.clone());
+        let result = pending_fail
+            .with_aad(b"wrong-aad")
+            .with_key(sk_wrapped.clone());
         assert!(result.is_err());
 
         // Decrypt with no AAD fails

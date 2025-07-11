@@ -78,7 +78,10 @@ impl SymmetricAsynchronousProcessor for Asynchronous {
         mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
     ) -> Result<Box<dyn SymmetricAsynchronousPendingDecryptor<'a> + Send + 'a>> {
         let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
-        let algorithm = header.payload.symmetric_algorithm().into_symmetric_wrapper();
+        let algorithm = header
+            .payload
+            .symmetric_algorithm()
+            .into_symmetric_wrapper();
         let pending = PendingDecryptor {
             source: reader,
             header,
@@ -91,8 +94,10 @@ impl SymmetricAsynchronousProcessor for Asynchronous {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{algorithms::symmetric::SymmetricAlgorithmWrapper, prelude::SymmetricAlgorithmEnum};
     use crate::common::DEFAULT_CHUNK_SIZE;
+    use crate::{
+        algorithms::symmetric::SymmetricAlgorithmWrapper, prelude::SymmetricAlgorithmEnum,
+    };
     use std::io::Cursor;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

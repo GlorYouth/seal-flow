@@ -12,7 +12,9 @@ use crate::common::algorithms::{
 };
 use crate::keys::provider::EncryptionKeyProvider;
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
-use crate::seal::traits::{AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor, WithAad};
+use crate::seal::traits::{
+    AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor, WithAad,
+};
 
 use super::encryptor::{HybridEncryptor, HybridEncryptorBuilder};
 

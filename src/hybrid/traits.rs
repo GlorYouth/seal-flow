@@ -2,11 +2,11 @@
 //!
 //! 定义混合加密模式的高级 trait。
 
+use crate::algorithms::hybrid::HybridAlgorithmWrapper;
 use crate::common::header::Header;
 use crate::common::{DerivationSet, SignerSet};
 use crate::error::Result;
 use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey};
-use crate::algorithms::hybrid::HybridAlgorithmWrapper;
 use std::io::{Read, Write};
 
 /// Trait for ordinary (in-memory) hybrid encryption.
@@ -131,7 +131,6 @@ pub trait HybridParallelStreamingPendingDecryptor<'a> {
 /// Trait for asynchronous hybrid encryption.
 #[cfg(feature = "async")]
 use async_trait::async_trait;
-
 
 #[cfg(feature = "async")]
 #[async_trait]

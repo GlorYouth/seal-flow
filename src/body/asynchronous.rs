@@ -24,7 +24,6 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::task::JoinHandle;
 
-
 // --- Helper Structs for Encryption ---
 
 /// A handle to a spawned encryption task.

@@ -1,6 +1,6 @@
+use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::keys::SymmetricKey;
 use crate::prelude::SymmetricAlgorithmEnum;
-use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::seal::traits::{
     AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor, WithAad,
 };
@@ -69,8 +69,7 @@ pub struct SymmetricEncryptorWithAlgorithm {
     inner: SymmetricEncryptor,
 }
 
-impl InMemoryEncryptor for SymmetricEncryptorWithAlgorithm
-{
+impl InMemoryEncryptor for SymmetricEncryptorWithAlgorithm {
     /// Encrypts the given plaintext in-memory.
     ///
     /// 在内存中加密给定的明文。
@@ -102,8 +101,7 @@ impl InMemoryEncryptor for SymmetricEncryptorWithAlgorithm
     }
 }
 
-impl StreamingEncryptor for SymmetricEncryptorWithAlgorithm
-{
+impl StreamingEncryptor for SymmetricEncryptorWithAlgorithm {
     /// Creates a streaming encryptor that wraps the given `Write` implementation.
     ///
     /// 创建一个包装了给定 `Write` 实现的流式加密器。
@@ -141,8 +139,7 @@ impl StreamingEncryptor for SymmetricEncryptorWithAlgorithm
 }
 
 #[cfg(feature = "async")]
-impl AsyncStreamingEncryptor for SymmetricEncryptorWithAlgorithm
-{
+impl AsyncStreamingEncryptor for SymmetricEncryptorWithAlgorithm {
     /// Creates an asynchronous streaming encryptor that wraps the given `AsyncWrite` implementation.
     ///
     /// 创建一个包装了给定 `AsyncWrite` 实现的异步流式加密器。

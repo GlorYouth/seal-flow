@@ -32,9 +32,6 @@
 //! use seal_flow::prelude::*;
 //! ```
 
-// Re-export the entire `seal-crypto` crate for direct access to its APIs.
-pub use seal_crypto as crypto;
-
 pub mod prelude {
     //! A "prelude" for users of the `seal-flow` crate.
     pub use crate::common::algorithms::{
@@ -49,7 +46,6 @@ pub mod prelude {
     pub use crate::seal::hybrid::{encryptor::HybridEncryptorBuilder, HybridEncryptionOptions};
     pub use crate::seal::traits::*;
     pub use crate::seal::{HybridSeal, SymmetricSeal};
-    pub use seal_crypto::prelude::*;
 }
 
 pub mod error;
@@ -86,8 +82,6 @@ pub use error::{Error, Result};
 mod hybrid;
 pub mod keys;
 mod symmetric;
-
-pub use seal_crypto::{secrecy, zeroize};
 
 #[cfg(feature = "async")]
 pub use {::futures, ::tokio};

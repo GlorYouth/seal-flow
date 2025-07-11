@@ -1,13 +1,18 @@
 use crate::common::header::Header;
 use crate::error::{FormatError, KeyManagementError};
-use crate::hybrid::traits::{HybridAsynchronousPendingDecryptor, HybridOrdinaryPendingDecryptor, HybridOrdinaryProcessor, HybridParallelPendingDecryptor, HybridParallelProcessor, HybridParallelStreamingPendingDecryptor, HybridParallelStreamingProcessor, HybridStreamingPendingDecryptor, HybridStreamingProcessor};
+use crate::hybrid::traits::HybridAsynchronousProcessor;
+use crate::hybrid::traits::{
+    HybridAsynchronousPendingDecryptor, HybridOrdinaryPendingDecryptor, HybridOrdinaryProcessor,
+    HybridParallelPendingDecryptor, HybridParallelProcessor,
+    HybridParallelStreamingPendingDecryptor, HybridParallelStreamingProcessor,
+    HybridStreamingPendingDecryptor, HybridStreamingProcessor,
+};
 use crate::keys::provider::KeyProvider;
 use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
 use crate::seal::traits::{WithAad, WithVerificationKey};
 use std::io::{Read, Write};
 use std::sync::Arc;
 use tokio::io::AsyncRead;
-use crate::hybrid::traits::HybridAsynchronousProcessor;
 
 /// A generic pending hybrid decryptor, waiting for configuration and private key.
 /// This struct unifies the logic for various decryption modes (in-memory, streaming, etc.).
@@ -195,8 +200,7 @@ impl HybridDecryptorBuilder {
         reader: R,
     ) -> crate::Result<PendingStreamingDecryptor<'a>> {
         let processor = crate::hybrid::streaming::Streaming::new();
-        let mid_level_pending =
-            processor.begin_decrypt_hybrid_from_stream(Box::new(reader))?;
+        let mid_level_pending = processor.begin_decrypt_hybrid_from_stream(Box::new(reader))?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
@@ -207,10 +211,8 @@ impl HybridDecryptorBuilder {
         self,
         reader: R,
     ) -> crate::Result<PendingParallelStreamingDecryptor<'a>> {
-        let processor =
-            crate::hybrid::parallel_streaming::ParallelStreaming::new();
-        let mid_level_pending =
-            processor.begin_decrypt_hybrid_pipeline(Box::new(reader))?;
+        let processor = crate::hybrid::parallel_streaming::ParallelStreaming::new();
+        let mid_level_pending = processor.begin_decrypt_hybrid_pipeline(Box::new(reader))?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
@@ -258,7 +260,12 @@ impl<'a> PendingInMemoryDecryptor<'a> {
     pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        let typed_key = key.into_typed(self.header().payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?)?;
+        let typed_key = key.into_typed(
+            self.header()
+                .payload
+                .asymmetric_algorithm()
+                .ok_or(FormatError::InvalidHeader)?,
+        )?;
         self.inner.into_plaintext(&typed_key, self.aad.as_deref())
     }
 }
@@ -290,7 +297,12 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
     pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        let typed_key = key.into_typed(self.header().payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?)?;
+        let typed_key = key.into_typed(
+            self.header()
+                .payload
+                .asymmetric_algorithm()
+                .ok_or(FormatError::InvalidHeader)?,
+        )?;
         self.inner.into_plaintext(&typed_key, self.aad.as_deref())
     }
 }
@@ -322,7 +334,12 @@ impl<'a> PendingStreamingDecryptor<'a> {
     pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Box<dyn Read + 'a>> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        let typed_key = key.into_typed(self.header().payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?)?;
+        let typed_key = key.into_typed(
+            self.header()
+                .payload
+                .asymmetric_algorithm()
+                .ok_or(FormatError::InvalidHeader)?,
+        )?;
         self.inner.into_decryptor(&typed_key, self.aad.as_deref())
     }
 }
@@ -361,7 +378,12 @@ impl<'a> PendingParallelStreamingDecryptor<'a> {
     ) -> crate::Result<()> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        let typed_key = key.into_typed(self.header().payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?)?;
+        let typed_key = key.into_typed(
+            self.header()
+                .payload
+                .asymmetric_algorithm()
+                .ok_or(FormatError::InvalidHeader)?,
+        )?;
         self.inner
             .decrypt_to_writer(&typed_key, Box::new(writer), self.aad.as_deref())
     }
@@ -400,10 +422,13 @@ impl<'a> PendingAsyncStreamingDecryptor<'a> {
     ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 'a>> {
         self.header()
             .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        
-        let typed_key = key.into_typed(self.header().payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?)?;
-        self.inner
-            .into_decryptor(&typed_key, self.aad)
-            .await
+
+        let typed_key = key.into_typed(
+            self.header()
+                .payload
+                .asymmetric_algorithm()
+                .ok_or(FormatError::InvalidHeader)?,
+        )?;
+        self.inner.into_decryptor(&typed_key, self.aad).await
     }
 }

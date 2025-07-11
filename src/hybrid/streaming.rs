@@ -64,7 +64,10 @@ impl HybridStreamingProcessor for Streaming {
             .asymmetric_algorithm()
             .ok_or(FormatError::InvalidHeader)?
             .into_asymmetric_wrapper();
-        let sym_algo = header.payload.symmetric_algorithm().into_symmetric_wrapper();
+        let sym_algo = header
+            .payload
+            .symmetric_algorithm()
+            .into_symmetric_wrapper();
         let algorithm = HybridAlgorithmWrapper::new(asym_algo, sym_algo);
 
         let pending = PendingDecryptor {
@@ -139,10 +142,7 @@ mod tests {
     use std::io::Cursor;
 
     fn get_test_algorithm() -> HybridAlgorithmWrapper {
-        HybridAlgorithmWrapper::new(
-            Rsa2048Sha256Wrapper::new(),
-            Aes256GcmWrapper::new(),
-        )
+        HybridAlgorithmWrapper::new(Rsa2048Sha256Wrapper::new(), Aes256GcmWrapper::new())
     }
 
     fn generate_test_keys() -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {

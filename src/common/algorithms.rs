@@ -1,6 +1,5 @@
 use bincode::{Decode, Encode};
 
-
 /// Symmetric encryption algorithm enum.
 ///
 /// 对称加密算法枚举。
@@ -16,12 +15,22 @@ pub enum SymmetricAlgorithm {
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 impl SymmetricAlgorithm {
     pub fn into_symmetric_wrapper(self) -> SymmetricAlgorithmWrapper {
-        use crate::algorithms::symmetric::{Aes128GcmWrapper, Aes256GcmWrapper, ChaCha20Poly1305Wrapper, XChaCha20Poly1305Wrapper};
+        use crate::algorithms::symmetric::{
+            Aes128GcmWrapper, Aes256GcmWrapper, ChaCha20Poly1305Wrapper, XChaCha20Poly1305Wrapper,
+        };
         match self {
-            SymmetricAlgorithm::Aes128Gcm => SymmetricAlgorithmWrapper::new(Box::new(Aes128GcmWrapper::default())),
-            SymmetricAlgorithm::Aes256Gcm => SymmetricAlgorithmWrapper::new(Box::new(Aes256GcmWrapper::default())),
-            SymmetricAlgorithm::ChaCha20Poly1305 => SymmetricAlgorithmWrapper::new(Box::new(ChaCha20Poly1305Wrapper::default())),
-            SymmetricAlgorithm::XChaCha20Poly1305 => SymmetricAlgorithmWrapper::new(Box::new(XChaCha20Poly1305Wrapper::default())),
+            SymmetricAlgorithm::Aes128Gcm => {
+                SymmetricAlgorithmWrapper::new(Box::new(Aes128GcmWrapper::default()))
+            }
+            SymmetricAlgorithm::Aes256Gcm => {
+                SymmetricAlgorithmWrapper::new(Box::new(Aes256GcmWrapper::default()))
+            }
+            SymmetricAlgorithm::ChaCha20Poly1305 => {
+                SymmetricAlgorithmWrapper::new(Box::new(ChaCha20Poly1305Wrapper::default()))
+            }
+            SymmetricAlgorithm::XChaCha20Poly1305 => {
+                SymmetricAlgorithmWrapper::new(Box::new(XChaCha20Poly1305Wrapper::default()))
+            }
         }
     }
 }
@@ -42,13 +51,26 @@ pub enum AsymmetricAlgorithm {
 use crate::algorithms::asymmetric::AsymmetricAlgorithmWrapper;
 impl AsymmetricAlgorithm {
     pub fn into_asymmetric_wrapper(self) -> AsymmetricAlgorithmWrapper {
-        use crate::algorithms::definitions::asymmetric::{Rsa2048Sha256Wrapper, Rsa4096Sha256Wrapper, Kyber512Wrapper, Kyber768Wrapper, Kyber1024Wrapper};
+        use crate::algorithms::definitions::asymmetric::{
+            Kyber1024Wrapper, Kyber512Wrapper, Kyber768Wrapper, Rsa2048Sha256Wrapper,
+            Rsa4096Sha256Wrapper,
+        };
         match self {
-            AsymmetricAlgorithm::Rsa2048Sha256 => AsymmetricAlgorithmWrapper::new(Box::new(Rsa2048Sha256Wrapper::default())),
-            AsymmetricAlgorithm::Rsa4096Sha256 => AsymmetricAlgorithmWrapper::new(Box::new(Rsa4096Sha256Wrapper::default())),
-            AsymmetricAlgorithm::Kyber512 => AsymmetricAlgorithmWrapper::new(Box::new(Kyber512Wrapper::default())),
-            AsymmetricAlgorithm::Kyber768 => AsymmetricAlgorithmWrapper::new(Box::new(Kyber768Wrapper::default())),
-            AsymmetricAlgorithm::Kyber1024 => AsymmetricAlgorithmWrapper::new(Box::new(Kyber1024Wrapper::default())),
+            AsymmetricAlgorithm::Rsa2048Sha256 => {
+                AsymmetricAlgorithmWrapper::new(Box::new(Rsa2048Sha256Wrapper::default()))
+            }
+            AsymmetricAlgorithm::Rsa4096Sha256 => {
+                AsymmetricAlgorithmWrapper::new(Box::new(Rsa4096Sha256Wrapper::default()))
+            }
+            AsymmetricAlgorithm::Kyber512 => {
+                AsymmetricAlgorithmWrapper::new(Box::new(Kyber512Wrapper::default()))
+            }
+            AsymmetricAlgorithm::Kyber768 => {
+                AsymmetricAlgorithmWrapper::new(Box::new(Kyber768Wrapper::default()))
+            }
+            AsymmetricAlgorithm::Kyber1024 => {
+                AsymmetricAlgorithmWrapper::new(Box::new(Kyber1024Wrapper::default()))
+            }
         }
     }
 }

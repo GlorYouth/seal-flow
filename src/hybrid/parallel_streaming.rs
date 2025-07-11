@@ -11,7 +11,7 @@ use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::pending::PendingDecryptor;
-use crate::keys::{TypedAsymmetricPublicKey, TypedSymmetricKey, TypedAsymmetricPrivateKey};
+use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 
@@ -54,12 +54,7 @@ impl HybridParallelStreamingProcessor for ParallelStreaming {
 
         let algo = algorithm.symmetric_algorithm().clone_box_symmetric();
         ParallelStreamingBodyProcessor::encrypt_body_pipeline(
-            &algo,
-            dek,
-            base_nonce,
-            reader,
-            writer,
-            aad,
+            &algo, dek, base_nonce, reader, writer, aad,
         )
     }
 
@@ -73,7 +68,10 @@ impl HybridParallelStreamingProcessor for ParallelStreaming {
             .asymmetric_algorithm()
             .ok_or(FormatError::InvalidHeader)?
             .into_asymmetric_wrapper();
-        let sym_algo = header.payload.symmetric_algorithm().into_symmetric_wrapper();
+        let sym_algo = header
+            .payload
+            .symmetric_algorithm()
+            .into_symmetric_wrapper();
         let algorithm = HybridAlgorithmWrapper::new(asym_algo, sym_algo);
 
         let pending = PendingDecryptor {
@@ -85,7 +83,9 @@ impl HybridParallelStreamingProcessor for ParallelStreaming {
     }
 }
 
-impl<'a> HybridParallelStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Read + Send + 'a>> {
+impl<'a> HybridParallelStreamingPendingDecryptor<'a>
+    for PendingDecryptor<Box<dyn Read + Send + 'a>>
+{
     fn decrypt_to_writer(
         self: Box<Self>,
         sk: &TypedAsymmetricPrivateKey,
@@ -127,12 +127,7 @@ impl<'a> HybridParallelStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dy
 
         let algo = self.algorithm.symmetric_algorithm().clone_box_symmetric();
         ParallelStreamingBodyProcessor::decrypt_body_pipeline(
-            &algo,
-            dek,
-            base_nonce,
-            reader,
-            writer,
-            aad,
+            &algo, dek, base_nonce, reader, writer, aad,
         )
     }
 
@@ -145,7 +140,8 @@ impl<'a> HybridParallelStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dy
 mod tests {
     use super::*;
     use crate::algorithms::definitions::{
-        asymmetric::Rsa2048Sha256Wrapper, hybrid::HybridAlgorithmWrapper, symmetric::Aes256GcmWrapper,
+        asymmetric::Rsa2048Sha256Wrapper, hybrid::HybridAlgorithmWrapper,
+        symmetric::Aes256GcmWrapper,
     };
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
@@ -160,10 +156,7 @@ mod tests {
     }
 
     fn get_test_algorithm() -> HybridAlgorithmWrapper {
-        HybridAlgorithmWrapper::new(
-            Rsa2048Sha256Wrapper::new(),
-            Aes256GcmWrapper::new(),
-        )
+        HybridAlgorithmWrapper::new(Rsa2048Sha256Wrapper::new(), Aes256GcmWrapper::new())
     }
 
     fn generate_test_keys() -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {
@@ -185,7 +178,16 @@ mod tests {
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
         processor
-            .encrypt_hybrid_pipeline(&algorithm, &pk, reader, writer, kek_id.clone(), None, None, None)
+            .encrypt_hybrid_pipeline(
+                &algorithm,
+                &pk,
+                reader,
+                writer,
+                kek_id.clone(),
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         let mut decrypted_data = Vec::new();
@@ -212,7 +214,16 @@ mod tests {
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
         processor
-            .encrypt_hybrid_pipeline(&algorithm, &pk, reader, writer, kek_id.clone(), None, None, None)
+            .encrypt_hybrid_pipeline(
+                &algorithm,
+                &pk,
+                reader,
+                writer,
+                kek_id.clone(),
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         let mut decrypted_data = Vec::new();
@@ -239,7 +250,16 @@ mod tests {
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
         processor
-            .encrypt_hybrid_pipeline(&algorithm, &pk, reader, writer, kek_id.clone(), None, None, None)
+            .encrypt_hybrid_pipeline(
+                &algorithm,
+                &pk,
+                reader,
+                writer,
+                kek_id.clone(),
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         // Tamper
@@ -268,7 +288,16 @@ mod tests {
         let reader = Box::new(Cursor::new(&plaintext));
         let writer = Box::new(&mut encrypted_data);
         processor
-            .encrypt_hybrid_pipeline(&algorithm, &pk, reader, writer, kek_id.clone(), None, None, None)
+            .encrypt_hybrid_pipeline(
+                &algorithm,
+                &pk,
+                reader,
+                writer,
+                kek_id.clone(),
+                None,
+                None,
+                None,
+            )
             .unwrap();
 
         let mut decrypted_data = Vec::new();

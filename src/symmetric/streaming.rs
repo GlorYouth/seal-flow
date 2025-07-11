@@ -63,7 +63,10 @@ impl SymmetricStreamingProcessor for Streaming {
         mut reader: Box<dyn Read + 'a>,
     ) -> Result<Box<dyn SymmetricStreamingPendingDecryptor<'a> + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
-        let algorithm = header.payload.symmetric_algorithm().into_symmetric_wrapper();
+        let algorithm = header
+            .payload
+            .symmetric_algorithm()
+            .into_symmetric_wrapper();
         let pending = PendingDecryptor {
             source: reader,
             header,
@@ -149,9 +152,7 @@ mod tests {
         let pending = processor
             .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
-        let mut decrypt_stream = pending
-            .into_decryptor(key.clone(), aad)
-            .unwrap();
+        let mut decrypt_stream = pending.into_decryptor(key.clone(), aad).unwrap();
         let mut decrypted_data = Vec::new();
         decrypt_stream.read_to_end(&mut decrypted_data).unwrap();
 
@@ -291,9 +292,7 @@ mod tests {
         let pending = processor
             .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&encrypted_data)))
             .unwrap();
-        let mut decryptor = pending
-            .into_decryptor(key.clone(), Some(aad))
-            .unwrap();
+        let mut decryptor = pending.into_decryptor(key.clone(), Some(aad)).unwrap();
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
         assert_eq!(decrypted_data, plaintext);

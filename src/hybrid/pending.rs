@@ -13,4 +13,4 @@ pub struct PendingDecryptor<Source> {
     pub(super) source: Source,
     pub(super) header: Header,
     pub(super) algorithm: HybridAlgorithmWrapper,
-} 
+}

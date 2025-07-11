@@ -3,7 +3,10 @@
 //! 定义用于类型安全算法规范的核心 trait。
 
 use crate::error::Result;
-use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey, SymmetricKey as UntypedSymmetricKey};
+use crate::keys::{
+    SymmetricKey as UntypedSymmetricKey, TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey,
+    TypedSymmetricKey,
+};
 use crate::{common, keys::TypedAsymmetricKeyPair};
 use seal_crypto::prelude::*;
 use seal_crypto::zeroize::Zeroizing;

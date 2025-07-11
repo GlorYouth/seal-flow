@@ -3,12 +3,12 @@
 //! 用于构建和执行混合加密操作的高级 API。
 
 use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
+use crate::algorithms::traits::HybridAlgorithm;
 use crate::algorithms::traits::{
     AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, XofAlgorithm,
 };
 use crate::common::algorithms::{
-    AsymmetricAlgorithm as AsymmetricAlgorithmEnum,
-    SymmetricAlgorithm as SymmetricAlgorithmEnum,
+    AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
 use crate::common::header::{DerivationInfo, KdfInfo, XofInfo};
 use crate::common::{DerivationSet, SignerSet};
@@ -28,7 +28,6 @@ use seal_crypto::zeroize::Zeroizing;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use tokio::io::AsyncWrite;
-use crate::algorithms::traits::HybridAlgorithm;
 
 // --- Builder ---
 
@@ -140,7 +139,12 @@ impl HybridEncryptor {
 
         let deriver_fn = Box::new(move |ikm: &TypedSymmetricKey| {
             deriver
-                .derive(ikm.as_ref(), salt.as_deref(), info.as_deref(), output_len as usize)
+                .derive(
+                    ikm.as_ref(),
+                    salt.as_deref(),
+                    info.as_deref(),
+                    output_len as usize,
+                )
                 .map_err(Into::into)
                 .and_then(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm()))
         });
@@ -179,7 +183,10 @@ impl HybridEncryptor {
             let mut reader = deriver.reader(ikm.as_ref(), salt.as_deref(), info.as_deref())?;
             let mut dek_bytes = vec![0u8; output_len as usize];
             reader.read(&mut dek_bytes);
-            Ok(TypedSymmetricKey::from_bytes(dek_bytes.as_slice(), ikm.algorithm())?)
+            Ok(TypedSymmetricKey::from_bytes(
+                dek_bytes.as_slice(),
+                ikm.algorithm(),
+            )?)
         });
 
         self.derivation_config = Some(DerivationSet {

@@ -11,9 +11,7 @@ use crate::common::header::{Header, HeaderPayload};
 use crate::common::{DerivationSet, SignerSet};
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::pending::PendingDecryptor;
-use crate::keys::{
-    TypedAsymmetricPublicKey, TypedSymmetricKey, TypedAsymmetricPrivateKey,
-};
+use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 use seal_crypto::zeroize::Zeroizing;
 
 pub struct Ordinary;
@@ -53,9 +51,13 @@ impl HybridOrdinaryProcessor for Ordinary {
         // 3. Serialize the header.
         let header_bytes = header.encode_to_vec()?;
 
-        algorithm
-            .symmetric_algorithm()
-            .encrypt_body_in_memory(dek, &base_nonce, header_bytes, plaintext, aad)
+        algorithm.symmetric_algorithm().encrypt_body_in_memory(
+            dek,
+            &base_nonce,
+            header_bytes,
+            plaintext,
+            aad,
+        )
     }
 
     fn begin_decrypt_hybrid_in_memory<'a>(
@@ -63,8 +65,15 @@ impl HybridOrdinaryProcessor for Ordinary {
         ciphertext: &'a [u8],
     ) -> Result<Box<dyn HybridOrdinaryPendingDecryptor + 'a>> {
         let (header, _) = Header::decode_from_prefixed_slice(ciphertext)?;
-        let asym_algo = header.payload.asymmetric_algorithm().ok_or(FormatError::InvalidHeader)?.into_asymmetric_wrapper();
-        let sym_algo = header.payload.symmetric_algorithm().into_symmetric_wrapper();
+        let asym_algo = header
+            .payload
+            .asymmetric_algorithm()
+            .ok_or(FormatError::InvalidHeader)?
+            .into_asymmetric_wrapper();
+        let sym_algo = header
+            .payload
+            .symmetric_algorithm()
+            .into_symmetric_wrapper();
         let algorithm = HybridAlgorithmWrapper::new(asym_algo, sym_algo);
 
         let pending = PendingDecryptor {
@@ -116,9 +125,12 @@ impl HybridOrdinaryPendingDecryptor for PendingDecryptor<&[u8]> {
             self.algorithm.symmetric_algorithm().algorithm(),
         )?;
 
-        self.algorithm
-            .symmetric_algorithm()
-            .decrypt_body_in_memory(dek, &base_nonce, ciphertext_body, aad)
+        self.algorithm.symmetric_algorithm().decrypt_body_in_memory(
+            dek,
+            &base_nonce,
+            ciphertext_body,
+            aad,
+        )
     }
 
     fn header(&self) -> &Header {
@@ -140,10 +152,7 @@ mod tests {
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
 
     fn get_test_algorithm() -> HybridAlgorithmWrapper {
-        HybridAlgorithmWrapper::new(
-            Rsa2048Sha256Wrapper::new(),
-            Aes256GcmWrapper::new(),
-        )
+        HybridAlgorithmWrapper::new(Rsa2048Sha256Wrapper::new(), Aes256GcmWrapper::new())
     }
 
     fn generate_test_keys() -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {
