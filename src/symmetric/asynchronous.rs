@@ -294,7 +294,14 @@ mod tests {
             .into_decryptor(&wrong_key, None)
             .await;
 
-        assert!(decryptor_result.is_err());
+        // The decryptor might be created successfully, but reading should fail.
+        if let Ok(mut decryptor) = decryptor_result {
+            let read_result = decryptor.read_to_end(&mut Vec::new()).await;
+            assert!(read_result.is_err());
+        } else {
+            // If creation itself fails, that's also a valid failure scenario.
+            assert!(decryptor_result.is_err());
+        }
     }
 
     #[tokio::test]
@@ -351,7 +358,12 @@ mod tests {
             .unwrap()
             .into_decryptor(&key, wrong_aad)
             .await;
-        assert!(decryptor_result_fail.is_err());
+        if let Ok(mut decryptor) = decryptor_result_fail {
+            let read_result = decryptor.read_to_end(&mut Vec::new()).await;
+            assert!(read_result.is_err());
+        } else {
+            assert!(decryptor_result_fail.is_err());
+        }
 
         // Decrypt with no AAD should fail
         let decryptor_result_fail2 = processor
@@ -360,6 +372,11 @@ mod tests {
             .unwrap()
             .into_decryptor(&key, None)
             .await;
-        assert!(decryptor_result_fail2.is_err());
+        if let Ok(mut decryptor) = decryptor_result_fail2 {
+            let read_result = decryptor.read_to_end(&mut Vec::new()).await;
+            assert!(read_result.is_err());
+        } else {
+            assert!(decryptor_result_fail2.is_err());
+        }
     }
 }

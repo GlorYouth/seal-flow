@@ -263,7 +263,7 @@ mod tests {
             .into_writer(&mut encrypted_data)
             .unwrap();
         encryptor.write_all(plaintext).unwrap();
-        drop(encryptor);
+        encryptor.finish().unwrap();
 
         // Decrypt
         let pending = seal.decrypt().reader(Cursor::new(&encrypted_data)).unwrap();
