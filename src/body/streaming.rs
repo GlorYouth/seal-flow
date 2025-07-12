@@ -19,7 +19,7 @@ use super::traits::FinishingWrite;
 /// The implementation of a synchronous, streaming encryptor.
 ///
 /// 同步、流式加密器的实现。
-pub struct EncryptorImpl<W: Write> {
+pub(crate) struct EncryptorImpl<W: Write> {
     writer: W,
     algorithm: SymmetricAlgorithmWrapper,
     key: TypedSymmetricKey,

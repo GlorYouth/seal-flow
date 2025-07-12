@@ -30,7 +30,7 @@ impl ArcConfig {
     }
 }
 
-pub(crate) struct DecryptorConfig {
+pub struct DecryptorConfig {
     pub chunk_size: u32,
     pub arc_config: ArcConfig,
 }

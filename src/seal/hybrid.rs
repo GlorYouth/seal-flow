@@ -496,7 +496,6 @@ mod tests {
         b"This is a reasonably long test message to ensure that we cross chunk boundaries."
     }
 
-    const TEST_KEM: AsymmetricAlgorithmEnum = AsymmetricAlgorithmEnum::Rsa2048Sha256;
     const TEST_DEM: SymmetricAlgorithmEnum = SymmetricAlgorithmEnum::Aes256Gcm;
     const TEST_SIGNER: SignatureAlgorithmEnum = SignatureAlgorithmEnum::Dilithium2;
 

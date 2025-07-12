@@ -24,7 +24,7 @@ use std::borrow::Cow;
 /// for a hybrid encryption stream.
 ///
 /// 为混合加密流创建一个完整的标头、一个新的 base_nonce 和共享密钥 (DEK)。
-pub fn create_header<H: HybridAlgorithm + ?Sized>(
+pub(super) fn create_header<H: HybridAlgorithm + ?Sized>(
     algorithm: &H,
     public_key: &TypedAsymmetricPublicKey,
     kek_id: String,

@@ -16,7 +16,7 @@ pub mod header;
 pub const DEFAULT_CHUNK_SIZE: u32 = 65536;
 
 /// Derives a nonce for a specific chunk index from a base nonce.
-pub fn derive_nonce(base_nonce: &[u8; 12], chunk_index: u64) -> [u8; 12] {
+pub(crate) fn derive_nonce(base_nonce: &[u8; 12], chunk_index: u64) -> [u8; 12] {
     let mut nonce_bytes = *base_nonce;
     let i_bytes = chunk_index.to_le_bytes(); // u64 -> 8 bytes, little-endian
 
@@ -58,15 +58,15 @@ impl Ord for OrderedChunk {
 }
 
 pub struct SignerSet {
-    pub(crate) signer_key_id: String,
-    pub(crate) signer: SignatureAlgorithmWrapper,
-    pub(crate) signing_key: TypedSignaturePrivateKey,
+    pub signer_key_id: String,
+    pub signer: SignatureAlgorithmWrapper,
+    pub signing_key: TypedSignaturePrivateKey,
 }
 
 use crate::algorithms::kdf::key::KdfKeyWrapper;
 use crate::algorithms::xof::XofWrapper;
 
-pub(crate) enum DerivationWrapper {
+pub enum DerivationWrapper {
     Kdf(KdfKeyWrapper),
     Xof(XofWrapper),
 }
@@ -89,8 +89,8 @@ impl DerivationWrapper {
 }
 
 pub struct DerivationSet {
-    pub(crate) derivation_info: header::DerivationInfo,
-    pub(crate) wrapper: DerivationWrapper,
+    pub derivation_info: header::DerivationInfo,
+    pub wrapper: DerivationWrapper,
 }
 
 impl DerivationSet {

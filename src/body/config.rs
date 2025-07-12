@@ -13,23 +13,23 @@ pub struct BodyEncryptConfig<'a> {
 }
 
 impl<'a> BodyEncryptConfig<'a> {
-    pub(crate) fn key(&self) -> &TypedSymmetricKey {
+    pub fn key(&self) -> &TypedSymmetricKey {
         self.key.as_ref()
     }
 
-    pub(crate) fn nonce(&self) -> &[u8; 12] {
+    pub fn nonce(&self) -> &[u8; 12] {
         &self.nonce
     }
 
-    pub(crate) fn aad(&self) -> Option<&[u8]> {
+    pub fn aad(&self) -> Option<&[u8]> {
         self.aad.as_deref()
     }
 
-    pub(crate) fn chunk_size(&self) -> usize {
+    pub fn chunk_size(&self) -> usize {
         self.config.chunk_size() as usize
     }
 
-    pub(crate) fn channel_bound(&self) -> usize {
+    pub fn channel_bound(&self) -> usize {
         self.config.channel_bound()
     }
 }
@@ -42,23 +42,23 @@ pub struct BodyDecryptConfig<'a> {
 }
 
 impl<'a> BodyDecryptConfig<'a> {
-    pub(crate) fn key(&self) -> &TypedSymmetricKey {
+    pub fn key(&self) -> &TypedSymmetricKey {
         self.key.as_ref()
     }
 
-    pub(crate) fn nonce(&self) -> &[u8; 12] {
+    pub fn nonce(&self) -> &[u8; 12] {
         &self.nonce
     }
 
-    pub(crate) fn aad(&self) -> Option<&[u8]> {
+    pub fn aad(&self) -> Option<&[u8]> {
         self.aad.as_deref()
     }
 
-    pub(crate) fn chunk_size(&self) -> usize {
+    pub fn chunk_size(&self) -> usize {
         self.config.chunk_size() as usize
     }
 
-    pub(crate) fn channel_bound(&self) -> usize {
+    pub fn channel_bound(&self) -> usize {
         self.config.channel_bound()
     }
 }

@@ -379,7 +379,7 @@ where
     })
 }
 
-impl ParallelStreamingBodyProcessor for Box<dyn SymmetricAlgorithm> {
+impl<S: SymmetricAlgorithm + ?Sized> ParallelStreamingBodyProcessor for S {
     fn encrypt_body_pipeline<'a>(
         &self,
         reader: Box<dyn Read + Send + 'a>,
