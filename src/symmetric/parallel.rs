@@ -5,7 +5,7 @@
 use crate::body::traits::ParallelBodyProcessor;
 use crate::common::config::ArcConfig;
 use crate::common::header::Header;
-use crate::error::{Error, FormatError, Result};
+use crate::error::{Result};
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::pending::PendingDecryptor;
@@ -65,9 +65,6 @@ impl SymmetricParallelProcessor for Parallel {
         config: ArcConfig,
     ) -> Result<Box<dyn SymmetricParallelPendingDecryptor<'a> + 'a>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
-        if !header.is_symmetric() {
-            return Err(Error::Format(FormatError::InvalidHeader));
-        }
         let algorithm = header
             .payload
             .symmetric_algorithm()

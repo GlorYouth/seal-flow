@@ -5,7 +5,7 @@
 use crate::body::traits::{FinishingWrite, StreamingBodyProcessor};
 use crate::common::config::ArcConfig;
 use crate::common::header::Header;
-use crate::error::{Error, FormatError, Result};
+use crate::error::{Result};
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::pending::PendingDecryptor;
@@ -57,9 +57,6 @@ impl SymmetricStreamingProcessor for Streaming {
         config: ArcConfig,
     ) -> Result<Box<dyn SymmetricStreamingPendingDecryptor<'a> + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
-        if !header.is_symmetric() {
-            return Err(Error::Format(FormatError::InvalidHeader));
-        }
         let algorithm = header
             .payload
             .symmetric_algorithm()

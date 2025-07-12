@@ -2,7 +2,7 @@
 //!
 //! 同步、流式混合加密和解密实现。
 use super::traits::{HybridStreamingPendingDecryptor, HybridStreamingProcessor};
-use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
+use crate::algorithms::hybrid::HybridAlgorithmWrapper;
 use crate::algorithms::traits::HybridAlgorithm;
 use crate::body::traits::{FinishingWrite, StreamingBodyProcessor};
 use crate::common::config::ArcConfig;
@@ -92,9 +92,8 @@ impl<'a> HybridStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Read +
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::{
-        asymmetric::Rsa2048Sha256Wrapper, symmetric::Aes256GcmWrapper,
-    };
+    use crate::algorithms::asymmetric::Rsa2048Sha256Wrapper;
+    use crate::algorithms::symmetric::Aes256GcmWrapper;
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
     use crate::common::DerivationSet;

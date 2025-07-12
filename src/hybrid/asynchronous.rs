@@ -3,12 +3,12 @@
 //! 异步、流式混合加密和解密实现。
 #![cfg(feature = "async")]
 
-use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
+use crate::algorithms::hybrid::HybridAlgorithmWrapper;
 use crate::algorithms::traits::HybridAlgorithm;
 use crate::body::traits::AsynchronousBodyProcessor;
 use crate::common::config::ArcConfig;
 use crate::common::header::Header;
-use crate::error::{Error, FormatError, Result};
+use crate::error::{FormatError, Result};
 use crate::hybrid::config::HybridConfig;
 use crate::hybrid::pending::PendingDecryptor;
 use crate::hybrid::traits::{HybridAsynchronousPendingDecryptor, HybridAsynchronousProcessor};
@@ -78,9 +78,6 @@ impl HybridAsynchronousProcessor for Asynchronous {
         config: ArcConfig,
     ) -> Result<Box<dyn HybridAsynchronousPendingDecryptor<'a> + Send + 'a>> {
         let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
-        if !header.is_hybrid() {
-            return Err(Error::Format(FormatError::InvalidHeader));
-        }
         let asym_algo = header
             .payload
             .asymmetric_algorithm()
@@ -108,9 +105,8 @@ impl HybridAsynchronousProcessor for Asynchronous {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::{
-        asymmetric::Rsa2048Sha256Wrapper, symmetric::Aes256GcmWrapper as SymAlgo,
-    };
+    use crate::algorithms::asymmetric::Rsa2048Sha256Wrapper;
+    use crate::algorithms::symmetric::Aes256GcmWrapper as SymAlgo;
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
     use crate::common::{DerivationSet, DEFAULT_CHUNK_SIZE};

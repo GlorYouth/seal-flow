@@ -1,4 +1,4 @@
-use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey, SignaturePublicKey, SymmetricKey};
+use crate::keys::{SignaturePublicKey, TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 
 #[derive(Debug, thiserror::Error)]
 pub enum KeyProviderError {
@@ -26,7 +26,7 @@ pub trait KeyProvider: Send + Sync {
     ///
     /// 通过 ID 查找对称密钥。
     /// 用于对称解密。
-    fn get_symmetric_key(&self, key_id: &str) -> Result<SymmetricKey, KeyProviderError>;
+    fn get_symmetric_key(&self, key_id: &str) -> Result<TypedSymmetricKey, KeyProviderError>;
 
     /// Looks up an asymmetric private key by its ID.
     /// Used for key unwrapping in hybrid decryption.
@@ -36,7 +36,7 @@ pub trait KeyProvider: Send + Sync {
     fn get_asymmetric_private_key(
         &self,
         key_id: &str,
-    ) -> Result<AsymmetricPrivateKey, KeyProviderError>;
+    ) -> Result<TypedAsymmetricPrivateKey, KeyProviderError>;
 
     /// Looks up a signature verification public key by its ID.
     /// Used for verifying metadata signatures during hybrid decryption.
@@ -66,7 +66,7 @@ pub trait EncryptionKeyProvider: Send + Sync {
     fn get_asymmetric_public_key(
         &self,
         key_id: &str,
-    ) -> Result<AsymmetricPublicKey, KeyProviderError>;
+    ) -> Result<TypedAsymmetricPublicKey, KeyProviderError>;
 
     /// Looks up an asymmetric private key by its ID.
     /// Used for signing in hybrid encryption (sender's signing key).
@@ -76,5 +76,5 @@ pub trait EncryptionKeyProvider: Send + Sync {
     fn get_signing_private_key(
         &self,
         key_id: &str,
-    ) -> Result<AsymmetricPrivateKey, KeyProviderError>;
+    ) -> Result<TypedAsymmetricPrivateKey, KeyProviderError>;
 }

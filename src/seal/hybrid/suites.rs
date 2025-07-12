@@ -13,7 +13,7 @@ use crate::common::algorithms::{
 };
 use crate::common::config::ArcConfig;
 use crate::keys::provider::EncryptionKeyProvider;
-use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
+use crate::keys::{AsymmetricPrivateKey, TypedAsymmetricPublicKey};
 use crate::seal::traits::{
     AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor, WithAad,
 };
@@ -66,7 +66,7 @@ impl PqcEncryptorBuilder {
     /// Configures the encryptor with a recipient's public key provided directly.
     ///
     /// 使用直接提供的接收方公钥配置加密器。
-    pub fn with_recipient(self, pk: AsymmetricPublicKey, kek_id: String) -> PqcEncryptor {
+    pub fn with_recipient(self, pk: TypedAsymmetricPublicKey, kek_id: String) -> PqcEncryptor {
         PqcEncryptor {
             inner: self.inner.with_recipient(pk, kek_id),
         }
@@ -174,7 +174,7 @@ impl InMemoryEncryptor for PqcEncryptor {
     /// 使用 PQC 套件在内存中加密给定的明文。
     fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
         self.inner
-            .execute_with(PQC_KEM_ALGORITHM, PQC_DEM_ALGORITHM)
+            .execute_with(PQC_DEM_ALGORITHM)
             .to_vec(plaintext)
     }
 
@@ -183,7 +183,7 @@ impl InMemoryEncryptor for PqcEncryptor {
     /// 使用 PQC 套件通过并行处理在内存中加密给定的明文。
     fn to_vec_parallel(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
         self.inner
-            .execute_with(PQC_KEM_ALGORITHM, PQC_DEM_ALGORITHM)
+            .execute_with(PQC_DEM_ALGORITHM)
             .to_vec_parallel(plaintext)
     }
 }
@@ -198,7 +198,7 @@ impl StreamingEncryptor for PqcEncryptor {
         W: Write + Send,
     {
         self.inner
-            .execute_with(PQC_KEM_ALGORITHM, PQC_DEM_ALGORITHM)
+            .execute_with(PQC_DEM_ALGORITHM)
             .pipe_parallel(reader, writer)
     }
 
@@ -207,7 +207,7 @@ impl StreamingEncryptor for PqcEncryptor {
         writer: W,
     ) -> crate::Result<Box<dyn FinishingWrite + 'a>> {
         self.inner
-            .execute_with(PQC_KEM_ALGORITHM, PQC_DEM_ALGORITHM)
+            .execute_with(PQC_DEM_ALGORITHM)
             .into_writer(writer)
     }
 }
@@ -223,7 +223,7 @@ impl AsyncStreamingEncryptor for PqcEncryptor {
         writer: W,
     ) -> crate::Result<Box<dyn AsyncWrite + Unpin + Send + 'a>> {
         self.inner
-            .execute_with(PQC_KEM_ALGORITHM, PQC_DEM_ALGORITHM)
+            .execute_with(PQC_DEM_ALGORITHM)
             .into_async_writer(writer)
             .await
     }

@@ -2,12 +2,11 @@
 //!
 //! 用于构建和执行混合加密操作的高级 API。
 
-use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
-use crate::algorithms::traits::HybridAlgorithm;
+use crate::algorithms::hybrid::HybridAlgorithmWrapper;
 use crate::algorithms::traits::{KdfAlgorithm, SignatureAlgorithm, XofAlgorithm};
 use crate::body::traits::FinishingWrite;
 use crate::common::algorithms::{
-    AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
+    SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
 use crate::common::config::ArcConfig;
 use crate::common::header::{DerivationInfo, KdfInfo, XofInfo};
@@ -19,7 +18,7 @@ use crate::hybrid::traits::{
     HybridParallelStreamingProcessor, HybridStreamingProcessor,
 };
 use crate::keys::provider::EncryptionKeyProvider;
-use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey, TypedSymmetricKey};
+use crate::keys::{AsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
 use crate::seal::traits::{
     AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor as StreamingEncryptorTrait,
     WithAad,
@@ -65,7 +64,7 @@ impl HybridEncryptorBuilder {
     /// Configures the encryptor with a recipient's public key provided directly.
     ///
     /// 使用直接提供的接收方公钥配置加密器。
-    pub fn with_recipient(self, pk: AsymmetricPublicKey, kek_id: String) -> HybridEncryptor {
+    pub fn with_recipient(self, pk: TypedAsymmetricPublicKey, kek_id: String) -> HybridEncryptor {
         HybridEncryptor {
             pk,
             kek_id,
@@ -104,7 +103,7 @@ impl HybridEncryptorBuilder {
 ///
 /// 混合加密操作的上下文，允许选择执行模式。
 pub struct HybridEncryptor {
-    pub(crate) pk: AsymmetricPublicKey,
+    pub(crate) pk: TypedAsymmetricPublicKey,
     pub(crate) kek_id: String,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) signer: Option<SignerSet>,
@@ -222,7 +221,7 @@ impl HybridEncryptor {
             signer_key_id: signer_key_id.to_string(),
             signer_algorithm: SignerAlgo::ALGORITHM,
             signer: Box::new(move |message, aad| {
-                let sk = SignerAlgo::PrivateKey::from_bytes(signing_key.as_bytes())?;
+                let sk = SignerAlgo::PrivateKey::from_bytes(signing_key.to_bytes().as_slice())?;
                 let mut data_to_sign = message.to_vec();
                 if let Some(aad_data) = aad {
                     data_to_sign.extend_from_slice(aad_data);
@@ -265,13 +264,12 @@ impl HybridEncryptor {
 
     /// Configures the encryptor to use specific asymmetric and symmetric algorithms.
     ///
-    /// 配置加密器以使用特定的非对称和对称算法。
+    /// 配置加密器以使用特定的对称算法。
     pub fn execute_with(
         self,
-        asymmetric: AsymmetricAlgorithmEnum,
         symmetric: SymmetricAlgorithmEnum,
     ) -> HybridEncryptorWithAlgorithms {
-        let asym_algo = asymmetric.into_asymmetric_wrapper();
+        let asym_algo = self.pk.algorithm().into_asymmetric_wrapper();
         let sym_algo = symmetric.into_symmetric_wrapper();
         let algorithm = HybridAlgorithmWrapper::new(asym_algo, sym_algo);
         HybridEncryptorWithAlgorithms {
@@ -297,8 +295,7 @@ impl InMemoryEncryptor for HybridEncryptorWithAlgorithms {
         let processor = crate::hybrid::ordinary::Ordinary::new();
         let pk = self
             .inner
-            .pk
-            .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
+            .pk;
 
         let config = HybridConfig {
             algorithm: Cow::Borrowed(&self.algorithm),
@@ -319,8 +316,7 @@ impl InMemoryEncryptor for HybridEncryptorWithAlgorithms {
         let processor = crate::hybrid::parallel::Parallel::new();
         let pk = self
             .inner
-            .pk
-            .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
+            .pk;
 
         let config = HybridConfig {
             algorithm: Cow::Borrowed(&self.algorithm),
@@ -346,8 +342,7 @@ impl StreamingEncryptorTrait for HybridEncryptorWithAlgorithms {
         let processor = crate::hybrid::streaming::Streaming::new();
         let pk = self
             .inner
-            .pk
-            .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
+            .pk;
 
         let config = HybridConfig {
             algorithm: Cow::Owned(self.algorithm),
@@ -372,8 +367,7 @@ impl StreamingEncryptorTrait for HybridEncryptorWithAlgorithms {
         let processor = crate::hybrid::parallel_streaming::ParallelStreaming::new();
         let pk = self
             .inner
-            .pk
-            .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
+            .pk;
         let config = HybridConfig {
             algorithm: Cow::Borrowed(&self.algorithm),
             public_key: Cow::Borrowed(&pk),
@@ -399,8 +393,7 @@ impl AsyncStreamingEncryptor for HybridEncryptorWithAlgorithms {
     ) -> crate::Result<Box<dyn AsyncWrite + Unpin + Send + 'a>> {
         let pk = self
             .inner
-            .pk
-            .into_typed(self.algorithm.asymmetric_algorithm().algorithm())?;
+            .pk;
         let processor = crate::hybrid::asynchronous::Asynchronous::new();
         let config = HybridConfig {
             algorithm: Cow::Owned(self.algorithm),

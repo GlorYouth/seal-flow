@@ -6,6 +6,7 @@ use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::body::config::BodyDecryptConfig;
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::common::header::{Header, HeaderPayload, SpecificHeaderPayload};
+use crate::error::{Error, FormatError};
 use crate::keys::TypedSymmetricKey;
 use rand::{rngs::OsRng, TryRngCore};
 use std::borrow::Cow;
@@ -41,21 +42,30 @@ pub(super) fn prepare_body_decrypt_config(
     aad: Option<Vec<u8>>,
     arc_config: ArcConfig,
 ) -> crate::Result<BodyDecryptConfig<'static>> {
-    let HeaderPayload {
+    if let HeaderPayload {
         base_nonce,
         chunk_size,
-        ..
-    } = header.payload;
+        specific_payload: SpecificHeaderPayload::Symmetric { 
+            algorithm,
+            ..
+         },
+    } = header.payload {
+        if algorithm != key.algorithm() {
+            return Err(Error::Format(FormatError::InvalidKeyType));
+        }
 
-    let config = BodyDecryptConfig {
-        key: Cow::Owned(key.clone()),
-        nonce: base_nonce,
-        aad,
-        config: DecryptorConfig {
-            chunk_size,
-            arc_config,
-        },
-    };
-
-    Ok(config)
+        let config = BodyDecryptConfig {
+            key: Cow::Owned(key.clone()),
+            nonce: base_nonce,
+            aad,
+            config: DecryptorConfig {
+                chunk_size,
+                arc_config,
+            },
+        };
+    
+        Ok(config)
+    } else {
+        Err(Error::Format(FormatError::InvalidHeader))
+    }
 }

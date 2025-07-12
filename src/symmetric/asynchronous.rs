@@ -10,7 +10,7 @@
 use crate::body::traits::AsynchronousBodyProcessor;
 use crate::common::config::ArcConfig;
 use crate::common::header::Header;
-use crate::error::{Error, FormatError, Result};
+use crate::error::{Result};
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::pending::PendingDecryptor;
@@ -70,9 +70,6 @@ impl SymmetricAsynchronousProcessor for Asynchronous {
         config: ArcConfig,
     ) -> Result<Box<dyn SymmetricAsynchronousPendingDecryptor<'a> + Send + 'a>> {
         let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
-        if !header.is_symmetric() {
-            return Err(Error::Format(FormatError::InvalidHeader));
-        }
         let algorithm = header
             .payload
             .symmetric_algorithm()

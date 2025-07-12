@@ -51,7 +51,7 @@ pub enum AsymmetricAlgorithm {
 use crate::algorithms::asymmetric::AsymmetricAlgorithmWrapper;
 impl AsymmetricAlgorithm {
     pub fn into_asymmetric_wrapper(self) -> AsymmetricAlgorithmWrapper {
-        use crate::algorithms::definitions::asymmetric::{
+        use crate::algorithms::asymmetric::{
             Kyber1024Wrapper, Kyber512Wrapper, Kyber768Wrapper, Rsa2048Sha256Wrapper,
             Rsa4096Sha256Wrapper,
         };

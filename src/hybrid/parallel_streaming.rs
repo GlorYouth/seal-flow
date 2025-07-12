@@ -3,7 +3,7 @@
 //! 实现并行流式混合加解密方案。
 
 use super::traits::{HybridParallelStreamingPendingDecryptor, HybridParallelStreamingProcessor};
-use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
+use crate::algorithms::hybrid::HybridAlgorithmWrapper;
 use crate::algorithms::traits::HybridAlgorithm;
 use crate::body::traits::ParallelStreamingBodyProcessor;
 use crate::common::config::ArcConfig;
@@ -98,9 +98,8 @@ impl<'a> HybridParallelStreamingPendingDecryptor<'a>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::{
-        asymmetric::Rsa2048Sha256Wrapper, symmetric::Aes256GcmWrapper,
-    };
+    use crate::algorithms::asymmetric::Rsa2048Sha256Wrapper;
+    use crate::algorithms::symmetric::Aes256GcmWrapper;
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
     use crate::common::DerivationSet;

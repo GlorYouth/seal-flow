@@ -248,7 +248,7 @@ impl TypedSignatureKeyPair {
     /// Returns the algorithm of the key pair.
     ///
     /// 返回密钥对的算法。
-    pub fn get_algorithm(&self) -> SignatureAlgorithmEnum {
+    pub fn algorithm(&self) -> SignatureAlgorithmEnum {
         match self {
             Self::Dilithium2(_) => SignatureAlgorithmEnum::Dilithium2,
             Self::Dilithium3(_) => SignatureAlgorithmEnum::Dilithium3,
@@ -272,6 +272,28 @@ pub enum TypedAsymmetricPublicKey {
     Kyber1024(<Kyber1024 as AsymmetricKeySet>::PublicKey),
 }
 
+impl TypedAsymmetricPublicKey {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Rsa2048Sha256(pk) => pk.to_bytes(),
+            Self::Rsa4096Sha256(pk) => pk.to_bytes(),
+            Self::Kyber512(pk) => pk.to_bytes(),
+            Self::Kyber768(pk) => pk.to_bytes(),
+            Self::Kyber1024(pk) => pk.to_bytes(),
+        }
+    }
+
+    pub fn algorithm(&self) -> AsymmetricAlgorithmEnum {
+        match self {
+            Self::Rsa2048Sha256(_) => AsymmetricAlgorithmEnum::Rsa2048Sha256,
+            Self::Rsa4096Sha256(_) => AsymmetricAlgorithmEnum::Rsa4096Sha256,
+            Self::Kyber512(_) => AsymmetricAlgorithmEnum::Kyber512,
+            Self::Kyber768(_) => AsymmetricAlgorithmEnum::Kyber768,
+            Self::Kyber1024(_) => AsymmetricAlgorithmEnum::Kyber1024,
+        }
+    }
+}
+
 /// An enum wrapping a typed asymmetric private key.
 ///
 /// 包装了类型化非对称私钥的枚举。
@@ -283,6 +305,29 @@ pub enum TypedAsymmetricPrivateKey {
     Kyber512(<Kyber512 as AsymmetricKeySet>::PrivateKey),
     Kyber768(<Kyber768 as AsymmetricKeySet>::PrivateKey),
     Kyber1024(<Kyber1024 as AsymmetricKeySet>::PrivateKey),
+}
+
+impl TypedAsymmetricPrivateKey {
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Rsa2048Sha256(sk) => sk.to_bytes(),
+            Self::Rsa4096Sha256(sk) => sk.to_bytes(),
+            Self::Kyber512(sk) => sk.to_bytes(),
+            Self::Kyber768(sk) => sk.to_bytes(),
+            Self::Kyber1024(sk) => sk.to_bytes(),
+        }
+    }
+
+    pub fn algorithm(&self) -> AsymmetricAlgorithmEnum {
+        match self {
+            Self::Rsa2048Sha256(_) => AsymmetricAlgorithmEnum::Rsa2048Sha256,
+            Self::Rsa4096Sha256(_) => AsymmetricAlgorithmEnum::Rsa4096Sha256,
+            Self::Kyber512(_) => AsymmetricAlgorithmEnum::Kyber512,
+            Self::Kyber768(_) => AsymmetricAlgorithmEnum::Kyber768,
+            Self::Kyber1024(_) => AsymmetricAlgorithmEnum::Kyber1024,
+        }
+    }
 }
 
 /// An enum wrapping a typed symmetric key.

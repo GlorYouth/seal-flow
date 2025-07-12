@@ -108,11 +108,19 @@ pub(super) fn prepare_body_decrypt_config(
             SpecificHeaderPayload::Hybrid {
                 encrypted_dek,
                 derivation_info,
+                dek_algorithm,
+                kek_algorithm,
                 ..
             },
         ..
     } = header.payload
     {
+        if dek_algorithm != algorithm.symmetric_algorithm().algorithm()
+            || kek_algorithm != algorithm.asymmetric_algorithm().algorithm()
+        {
+            return Err(Error::Format(FormatError::InvalidKeyType));
+        }
+
         (
             Zeroizing::new(encrypted_dek.clone()),
             base_nonce,

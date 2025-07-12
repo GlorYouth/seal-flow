@@ -6,7 +6,6 @@ use crate::body::traits::OrdinaryBodyProcessor;
 use crate::common::config::ArcConfig;
 use crate::common::header::Header;
 use crate::error::Result;
-use crate::error::{Error, FormatError};
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::pending::PendingDecryptor;
@@ -66,9 +65,6 @@ impl SymmetricOrdinaryProcessor for Ordinary {
         config: ArcConfig,
     ) -> Result<Box<dyn SymmetricOrdinaryPendingDecryptor<'a> + 'a>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
-        if !header.is_symmetric() {
-            return Err(Error::Format(FormatError::InvalidHeader));
-        }
         let algorithm = header
             .payload
             .symmetric_algorithm()

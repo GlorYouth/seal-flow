@@ -11,6 +11,7 @@ use crate::hybrid::traits::{
 use crate::keys::provider::KeyProvider;
 use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
 use crate::seal::traits::{WithAad, WithVerificationKey};
+use crate::keys::TypedAsymmetricPrivateKey;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use tokio::io::AsyncRead;
@@ -241,6 +242,24 @@ impl HybridDecryptorBuilder {
 }
 
 impl<'a> PendingInMemoryDecryptor<'a> {
+    /// Supplies typed private key for decryption.
+    ///
+    /// The algorithm types must match what was used for encryption. This method
+    /// is useful when the algorithm is known out-of-band and does not rely on
+    /// parsing it from the ciphertext header.
+    ///
+    /// 提供类型化的私钥以进行解密。
+    ///
+    /// 算法类型必须与加密时使用的类型匹配。当算法是带外获知且不依赖于
+    /// 从密文标头解析时，此方法很有用。
+    pub fn with_typed_key(
+        self,
+        key: &TypedAsymmetricPrivateKey,
+    ) -> crate::Result<Vec<u8>> {
+        self.header().verify(self.verification_key.as_ref(), self.aad.as_deref())?;
+        self.inner.into_plaintext(key, self.aad)
+    }
+
     /// Automatically resolves keys using the attached `KeyProvider` and completes decryption.
     ///
     /// 使用附加的 `KeyProvider` 自动解析密钥并完成解密。
@@ -258,16 +277,16 @@ impl<'a> PendingInMemoryDecryptor<'a> {
         let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
         let private_key = provider.get_asymmetric_private_key(kek_id)?;
 
-        self.with_key(private_key)
+        self.with_typed_key(&private_key)
     }
 
     /// Supplies a private key directly from its wrapper for decryption
     ///
     /// 提供包装好的私钥以进行解密。
-    pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
+    pub fn with_key(self, key: &AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
         self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        let typed_key = key.into_typed(
+            .verify(self.verification_key.as_ref(), self.aad.as_deref())?;
+        let typed_key = key.clone().into_typed(
             self.header()
                 .payload
                 .asymmetric_algorithm()
@@ -278,6 +297,18 @@ impl<'a> PendingInMemoryDecryptor<'a> {
 }
 
 impl<'a> PendingInMemoryParallelDecryptor<'a> {
+    /// Supplies typed private key for decryption.
+    ///
+    /// The algorithm types must match what was used for encryption.
+    ///
+    /// 提供类型化的私钥以进行解密。
+    ///
+    /// 算法类型必须与加密时使用的类型匹配。
+    pub fn with_typed_key(self, key: &TypedAsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
+        self.header().verify(self.verification_key.as_ref(), self.aad.as_deref())?;
+        self.inner.into_plaintext(&key, self.aad)
+    }
+
     /// Automatically resolves keys using the attached `KeyProvider` and completes decryption.
     ///
     /// 使用附加的 `KeyProvider` 自动解析密钥并完成解密。
@@ -295,16 +326,16 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
         let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
         let private_key = provider.get_asymmetric_private_key(kek_id)?;
 
-        self.with_key(private_key)
+        self.with_typed_key(&private_key)
     }
 
     /// Supplies a private key directly from its wrapper for decryption
     ///
     /// 提供包装好的私钥以进行解密。
-    pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
+    pub fn with_key(self, key: &AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
         self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        let typed_key = key.into_typed(
+            .verify(self.verification_key.as_ref(), self.aad.as_deref())?;
+        let typed_key = key.clone().into_typed(
             self.header()
                 .payload
                 .asymmetric_algorithm()
@@ -315,6 +346,19 @@ impl<'a> PendingInMemoryParallelDecryptor<'a> {
 }
 
 impl<'a> PendingStreamingDecryptor<'a> {
+    /// Supplies typed private key for decryption.
+    ///
+    /// The algorithm types must match what was used for encryption.
+    ///
+    /// 提供类型化的私钥以进行解密。
+    ///
+    /// 算法类型必须与加密时使用的类型匹配。
+    pub fn with_typed_key(self, key: &TypedAsymmetricPrivateKey) -> crate::Result<Box<dyn Read + 'a>>
+    {
+        self.header().verify(self.verification_key.as_ref(), self.aad.as_deref())?;
+        self.inner.into_decryptor(key, self.aad)
+    }
+
     /// Automatically resolves keys using the attached `KeyProvider` and completes decryption.
     ///
     /// 使用附加的 `KeyProvider` 自动解析密钥并完成解密。
@@ -332,7 +376,8 @@ impl<'a> PendingStreamingDecryptor<'a> {
         let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
         let private_key = provider.get_asymmetric_private_key(kek_id)?;
 
-        self.with_key(private_key)
+
+        self.with_typed_key(&private_key)
     }
 
     /// Supplies a private key directly from its wrapper for decryption
@@ -340,7 +385,7 @@ impl<'a> PendingStreamingDecryptor<'a> {
     /// 提供包装好的私钥以进行解密。
     pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Box<dyn Read + 'a>> {
         self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
+            .verify(self.verification_key.as_ref(), self.aad.as_deref())?;
         let typed_key = key.into_typed(
             self.header()
                 .payload
@@ -352,6 +397,23 @@ impl<'a> PendingStreamingDecryptor<'a> {
 }
 
 impl<'a> PendingParallelStreamingDecryptor<'a> {
+    /// Supplies a typed private key and decrypts the stream to the provided writer.
+    ///
+    /// The algorithm types must match what was used for encryption.
+    ///
+    /// 提供类型化的私钥并将流解密到提供的写入器。
+    ///
+    /// 算法类型必须与加密时使用的类型匹配。
+    pub fn with_typed_key_to_writer<W: Write + Send + 'a>(
+        self,
+        key: &TypedAsymmetricPrivateKey,
+        writer: W,
+    ) -> crate::Result<()>
+    {
+        self.header().verify(self.verification_key.as_ref(), self.aad.as_deref())?;
+        self.inner.decrypt_to_writer(key, Box::new(writer), self.aad)
+    }
+
     /// Automatically resolves keys and decrypts the stream to the provided writer.
     ///
     /// 自动解析密钥并将流解密到提供的写入器。
@@ -372,7 +434,7 @@ impl<'a> PendingParallelStreamingDecryptor<'a> {
         let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
         let private_key = provider.get_asymmetric_private_key(kek_id)?;
 
-        self.with_key_to_writer(private_key, writer)
+        self.with_typed_key_to_writer(&private_key, writer)
     }
 
     /// Supplies a private key directly from its wrapper for decryption
@@ -380,12 +442,12 @@ impl<'a> PendingParallelStreamingDecryptor<'a> {
     /// 提供包装好的私钥以进行解密。
     pub fn with_key_to_writer<W: Write + Send + 'a>(
         self,
-        key: AsymmetricPrivateKey,
+        key: &AsymmetricPrivateKey,
         writer: W,
     ) -> crate::Result<()> {
         self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        let typed_key = key.into_typed(
+            .verify(self.verification_key.as_ref(), self.aad.as_deref())?;
+        let typed_key = key.clone().into_typed(
             self.header()
                 .payload
                 .asymmetric_algorithm()
@@ -398,6 +460,21 @@ impl<'a> PendingParallelStreamingDecryptor<'a> {
 
 #[cfg(feature = "async")]
 impl<'a> PendingAsyncStreamingDecryptor<'a> {
+    /// Supplies typed private key for decryption.
+    ///
+    /// The algorithm types must match what was used for encryption.
+    ///
+    /// 提供类型化的私钥以进行解密。
+    ///
+    /// 算法类型必须与加密时使用的类型匹配。
+    pub async fn with_typed_key(
+        self,
+        key: &TypedAsymmetricPrivateKey,
+    ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 'a>> {
+        self.header().verify(self.verification_key.as_ref(), self.aad.as_deref())?;
+        self.inner.into_decryptor(key, self.aad).await
+    }
+
     /// Automatically resolves keys and returns a decrypting async reader.
     ///
     /// 自动解析密钥并返回一个解密的异步读取器。
@@ -417,7 +494,7 @@ impl<'a> PendingAsyncStreamingDecryptor<'a> {
         let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
         let private_key = provider.get_asymmetric_private_key(kek_id)?;
 
-        self.with_key(private_key).await
+        self.with_typed_key(&private_key).await
     }
 
     /// Supplies a private key directly from its wrapper for decryption
@@ -425,12 +502,12 @@ impl<'a> PendingAsyncStreamingDecryptor<'a> {
     /// 提供包装好的私钥以进行解密。
     pub async fn with_key(
         self,
-        key: AsymmetricPrivateKey,
+        key: &AsymmetricPrivateKey,
     ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 'a>> {
         self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
+            .verify(self.verification_key.as_ref(), self.aad.as_deref())?;
 
-        let typed_key = key.into_typed(
+        let typed_key = key.clone().into_typed(
             self.header()
                 .payload
                 .asymmetric_algorithm()

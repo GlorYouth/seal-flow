@@ -2,7 +2,7 @@
 //!
 //! 定义用于不同混合加密模式的通用 PendingDecryptor。
 
-use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
+use crate::algorithms::hybrid::HybridAlgorithmWrapper;
 use crate::common::config::ArcConfig;
 use crate::common::header::Header;
 

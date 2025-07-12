@@ -3,7 +3,7 @@
 //! 普通（单线程、内存中）混合加密和解密。
 
 use super::traits::{HybridOrdinaryPendingDecryptor, HybridOrdinaryProcessor};
-use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
+use crate::algorithms::hybrid::HybridAlgorithmWrapper;
 use crate::algorithms::traits::HybridAlgorithm;
 use crate::body::traits::OrdinaryBodyProcessor;
 use crate::common::config::ArcConfig;
@@ -97,9 +97,8 @@ impl<'a> HybridOrdinaryPendingDecryptor for PendingDecryptor<&'a [u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algorithms::definitions::{
-        asymmetric::Rsa2048Sha256Wrapper, symmetric::Aes256GcmWrapper,
-    };
+    use crate::algorithms::asymmetric::Rsa2048Sha256Wrapper;
+    use crate::algorithms::symmetric::Aes256GcmWrapper;
     use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
     use crate::common::DerivationSet;

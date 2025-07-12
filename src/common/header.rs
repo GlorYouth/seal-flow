@@ -6,6 +6,7 @@ use crate::common::algorithms::{
     AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm,
 };
 use crate::error::{CryptoError, Error, FormatError, Result};
+use crate::keys::SignaturePublicKey;
 use std::io::Read;
 
 #[cfg(feature = "async")]
@@ -347,19 +348,6 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn is_symmetric(&self) -> bool {
-        matches!(
-            self.payload.specific_payload,
-            SpecificHeaderPayload::Symmetric { .. }
-        )
-    }
-
-    pub fn is_hybrid(&self) -> bool {
-        matches!(
-            self.payload.specific_payload,
-            SpecificHeaderPayload::Hybrid { .. }
-        )
-    }
 
     /// Encodes the header into a byte vector.
     ///
@@ -445,7 +433,7 @@ impl Header {
     /// 如果提供了验证密钥，则验证标头签名。
     pub fn verify(
         &self,
-        verification_key: Option<crate::keys::SignaturePublicKey>,
+        verification_key: Option<&SignaturePublicKey>,
         aad: Option<&[u8]>,
     ) -> Result<()> {
         // If no verification key is provided, skip verification.

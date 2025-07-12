@@ -2,7 +2,7 @@
 //!
 //! 定义用于不同对称加密模式的通用 PendingDecryptor。
 
-use crate::algorithms::definitions::symmetric::SymmetricAlgorithmWrapper;
+use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::common::config::ArcConfig;
 use crate::common::header::Header;
 
