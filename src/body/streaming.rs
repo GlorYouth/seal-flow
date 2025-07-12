@@ -12,6 +12,8 @@ use crate::error::Result;
 use crate::keys::TypedSymmetricKey;
 use std::io::{self, Read, Write};
 
+use super::traits::FinishingWrite;
+
 // --- Encryptor ---
 
 /// The implementation of a synchronous, streaming encryptor.
@@ -59,7 +61,9 @@ impl<W: Write> EncryptorImpl<W> {
             aad,
         })
     }
+}
 
+impl<W: Write> FinishingWrite for EncryptorImpl<W> {
     /// Finalizes the encryption stream.
     /// This method must be called to ensure that the last partial chunk of data is
     /// encrypted and the authentication tag is written to the underlying writer.
@@ -67,7 +71,7 @@ impl<W: Write> EncryptorImpl<W> {
     /// 完成加密流。
     /// 必须调用此方法以确保最后的数据块被加密，
     /// 并且认证标签被写入底层的 writer。
-    pub fn finish(mut self) -> Result<()> {
+    fn finish(mut self: Box<Self>) -> Result<()> {
         if !self.buffer.is_empty() {
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
             let bytes_written = self
@@ -265,7 +269,7 @@ impl<S: SymmetricAlgorithm + ?Sized> StreamingBodyProcessor for S {
         &self,
         writer: Box<dyn Write + 'a>,
         config: BodyEncryptConfig<'a>,
-    ) -> Result<Box<dyn Write + 'a>> {
+    ) -> Result<Box<dyn FinishingWrite + 'a>> {
         let encryptor =
             EncryptorImpl::new(writer, self.algorithm().into_symmetric_wrapper(), config)?;
         Ok(Box::new(encryptor))

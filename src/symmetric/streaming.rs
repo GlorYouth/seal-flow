@@ -3,7 +3,7 @@
 //! 为同步、流式对称加密实现 `std::io` trait。
 
 use crate::body::config::BodyDecryptConfig;
-use crate::body::traits::StreamingBodyProcessor;
+use crate::body::traits::{FinishingWrite, StreamingBodyProcessor};
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::common::header::{Header, HeaderPayload};
 use crate::error::{Error, FormatError, Result};
@@ -56,7 +56,7 @@ impl SymmetricStreamingProcessor for Streaming {
         &self,
         mut writer: Box<dyn Write + 'a>,
         config: SymmetricConfig<'a>,
-    ) -> Result<Box<dyn Write + 'a>> {
+    ) -> Result<Box<dyn FinishingWrite + 'a>> {
         let algo = config.algorithm.clone();
         let config = config.into_encrypt_config()?;
 
@@ -123,7 +123,7 @@ mod tests {
                 )
                 .unwrap();
             encryptor.write_all(plaintext).unwrap();
-            encryptor.flush().unwrap();
+            encryptor.finish().unwrap();
         }
 
         // Decrypt using the new two-step process
@@ -164,12 +164,12 @@ mod tests {
                         key_id: "proc_key".to_string(),
                         config: ArcConfig::default(),
                         key: Cow::Borrowed(&key),
-                        aad: None,
+                        aad: aad.clone(),
                     },
                 )
                 .unwrap();
             encrypt_stream.write_all(plaintext).unwrap();
-            encrypt_stream.flush().unwrap();
+            encrypt_stream.finish().unwrap();
         }
 
         // Decrypt
@@ -232,7 +232,7 @@ mod tests {
                 )
                 .unwrap();
             encryptor.write_all(plaintext).unwrap();
-            encryptor.flush().unwrap();
+            encryptor.finish().unwrap();
         }
 
         // Tamper with the ciphertext body, after the header
@@ -279,7 +279,7 @@ mod tests {
                 )
                 .unwrap();
             encryptor.write_all(plaintext).unwrap();
-            encryptor.flush().unwrap();
+            encryptor.finish().unwrap();
         }
 
         // Attempt to decrypt with the wrong key
@@ -329,7 +329,7 @@ mod tests {
                 )
                 .unwrap();
             encryptor.write_all(plaintext).unwrap();
-            encryptor.flush().unwrap();
+            encryptor.finish().unwrap();
         }
 
         // Decrypt with correct AAD

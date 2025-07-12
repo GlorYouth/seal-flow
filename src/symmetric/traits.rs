@@ -1,7 +1,8 @@
-//! Defines the traits for different body processing modes.
+//! Defines the traits for symmetric encryption operations.
 //!
-//! 定义不同消息体处理模式的 trait。
+//! 定义对称加密操作的 trait。
 
+use crate::body::traits::FinishingWrite;
 use crate::common::config::ArcConfig;
 use crate::common::header::Header;
 use crate::error::Result;
@@ -38,7 +39,7 @@ pub trait SymmetricStreamingProcessor {
         &self,
         writer: Box<dyn Write + 'a>,
         config: SymmetricConfig<'a>,
-    ) -> Result<Box<dyn Write + 'a>>;
+    ) -> Result<Box<dyn FinishingWrite + 'a>>;
 
     fn begin_decrypt_symmetric_from_stream<'a>(
         &self,

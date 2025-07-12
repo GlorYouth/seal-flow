@@ -13,6 +13,7 @@ use crate::common::algorithms::{
 use crate::common::config::ArcConfig;
 use crate::keys::provider::EncryptionKeyProvider;
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
+use crate::body::traits::FinishingWrite;
 use crate::seal::traits::{
     AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor, WithAad,
 };
@@ -201,7 +202,10 @@ impl StreamingEncryptor for PqcEncryptor {
             .pipe_parallel(reader, writer)
     }
 
-    fn into_writer<'a, W: Write + 'a>(self, writer: W) -> crate::Result<Box<dyn Write + 'a>> {
+    fn into_writer<'a, W: Write + 'a>(
+        self,
+        writer: W,
+    ) -> crate::Result<Box<dyn FinishingWrite + 'a>> {
         self.inner
             .execute_with(PQC_KEM_ALGORITHM, PQC_DEM_ALGORITHM)
             .into_writer(writer)

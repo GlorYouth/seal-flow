@@ -1,4 +1,5 @@
 use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
+use crate::body::traits::FinishingWrite;
 use crate::common::config::ArcConfig;
 use crate::keys::SymmetricKey;
 use crate::prelude::SymmetricAlgorithmEnum;
@@ -117,7 +118,10 @@ impl StreamingEncryptor for SymmetricEncryptorWithAlgorithm {
     /// Creates a streaming encryptor that wraps the given `Write` implementation.
     ///
     /// 创建一个包装了给定 `Write` 实现的流式加密器。
-    fn into_writer<'a, W: Write + 'a>(self, writer: W) -> crate::Result<Box<dyn Write + 'a>> {
+    fn into_writer<'a, W: Write + 'a>(
+        self,
+        writer: W,
+    ) -> crate::Result<Box<dyn FinishingWrite + 'a>> {
         let processor = Streaming::new();
         let typed_key = self.inner.key.into_typed(self.algorithm.algorithm())?;
         processor.encrypt_symmetric_to_stream(

@@ -2,6 +2,7 @@
 //!
 //! 定义混合加密模式的高级 trait。
 
+use crate::body::traits::FinishingWrite;
 use crate::common::config::ArcConfig;
 use crate::common::header::Header;
 use crate::error::Result;
@@ -40,7 +41,7 @@ pub trait HybridStreamingProcessor {
         &self,
         writer: Box<dyn Write + 'a>,
         config: HybridConfig<'a>,
-    ) -> Result<Box<dyn Write + 'a>>;
+    ) -> Result<Box<dyn FinishingWrite + 'a>>;
 
     fn begin_decrypt_hybrid_from_stream<'a>(
         &self,

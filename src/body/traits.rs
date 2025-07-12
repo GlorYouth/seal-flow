@@ -24,13 +24,17 @@ pub trait StreamingBodyProcessor {
         &self,
         writer: Box<dyn Write + 'a>,
         config: BodyEncryptConfig<'a>,
-    ) -> Result<Box<dyn Write + 'a>>;
+    ) -> Result<Box<dyn FinishingWrite + 'a>>;
 
     fn decrypt_body_from_stream<'a>(
         &self,
         reader: Box<dyn Read + 'a>,
         config: BodyDecryptConfig<'a>,
     ) -> Result<Box<dyn Read + 'a>>;
+}
+
+pub trait FinishingWrite: Write {
+    fn finish(self: Box<Self>) -> Result<()>;
 }
 
 pub trait ParallelBodyProcessor {

@@ -4,6 +4,7 @@
 //! 该模块定义了一组 trait，用于统一对称加密和混合加密的解密 API。
 //! 这些 trait 为各种解密模式（如内存解密和流式解密）提供了一致的接口。
 
+use crate::body::traits::FinishingWrite;
 use crate::common::header::Header;
 use crate::error::Result;
 use crate::keys::SignaturePublicKey;
@@ -157,7 +158,7 @@ pub trait StreamingEncryptor {
     /// Creates a streaming encryptor that wraps the given `Write` implementation.
     ///
     /// 创建一个包装了给定 `Write` 实现的流式加密器。
-    fn into_writer<'a, W: Write + 'a>(self, writer: W) -> Result<Box<dyn Write + 'a>>;
+    fn into_writer<'a, W: Write + 'a>(self, writer: W) -> Result<Box<dyn FinishingWrite + 'a>>;
 
     /// Encrypts data from a reader and writes to a writer using parallel processing.
     ///

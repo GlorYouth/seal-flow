@@ -19,8 +19,10 @@ use crate::hybrid::traits::{
 };
 use crate::keys::provider::EncryptionKeyProvider;
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey, TypedSymmetricKey};
+use crate::body::traits::FinishingWrite;
 use crate::seal::traits::{
-    AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor as StreamingEncryptorTrait,
+    AsyncStreamingEncryptor, InMemoryEncryptor,
+    StreamingEncryptor as StreamingEncryptorTrait,
     WithAad,
 };
 #[cfg(feature = "async")]
@@ -338,7 +340,10 @@ impl StreamingEncryptorTrait for HybridEncryptorWithAlgorithms {
     /// Creates a streaming encryptor that wraps the given `Write` implementation.
     ///
     /// 创建一个包装了给定 `Write` 实现的流式加密器。
-    fn into_writer<'a, W: Write + 'a>(self, writer: W) -> crate::Result<Box<dyn Write + 'a>> {
+    fn into_writer<'a, W: Write + 'a>(
+        self,
+        writer: W,
+    ) -> crate::Result<Box<dyn FinishingWrite + 'a>> {
         let processor = crate::hybrid::streaming::Streaming::new();
         let pk = self
             .inner

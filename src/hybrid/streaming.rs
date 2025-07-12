@@ -5,7 +5,7 @@ use super::traits::{HybridStreamingPendingDecryptor, HybridStreamingProcessor};
 use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
 use crate::algorithms::traits::HybridAlgorithm;
 use crate::body::config::BodyDecryptConfig;
-use crate::body::traits::StreamingBodyProcessor;
+use crate::body::traits::{FinishingWrite, StreamingBodyProcessor};
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::common::header::{Header, HeaderPayload, SpecificHeaderPayload};
 use crate::error::{Error, FormatError, Result};
@@ -29,7 +29,7 @@ impl HybridStreamingProcessor for Streaming {
         &self,
         mut writer: Box<dyn Write + 'a>,
         config: HybridConfig<'a>,
-    ) -> Result<Box<dyn Write + 'a>> {
+    ) -> Result<Box<dyn FinishingWrite + 'a>> {
         let algo = config.algorithm.clone();
         let body_config = config.into_encrypt_config()?;
         let header_bytes = body_config.header_bytes();
@@ -207,9 +207,7 @@ mod tests {
         let mut encryptor = processor.encrypt_hybrid_to_stream(writer, config).unwrap();
 
         encryptor.write_all(plaintext).unwrap();
-
-        // Drop the encryptor to ensure finish is called via Drop trait.
-        std::mem::drop(encryptor);
+        encryptor.finish().unwrap();
 
         // Decrypt
         let pending_decryptor = processor
@@ -293,7 +291,7 @@ mod tests {
         let writer = Box::new(&mut encrypted_data);
         let mut encryptor = processor.encrypt_hybrid_to_stream(writer, config).unwrap();
         encryptor.write_all(plaintext).unwrap();
-        std::mem::drop(encryptor);
+        encryptor.finish().unwrap();
 
         // Tamper with the ciphertext body
         let header_len = 4 + u32::from_le_bytes(encrypted_data[0..4].try_into().unwrap()) as usize;
@@ -334,7 +332,7 @@ mod tests {
         let writer = Box::new(&mut encrypted_data);
         let mut encryptor = processor.encrypt_hybrid_to_stream(writer, config).unwrap();
         encryptor.write_all(plaintext).unwrap();
-        std::mem::drop(encryptor);
+        encryptor.finish().unwrap();
 
         let (_, sk2) = generate_test_keys();
         let pending = processor
@@ -370,7 +368,7 @@ mod tests {
         let writer = Box::new(&mut encrypted_data);
         let mut encryptor = processor.encrypt_hybrid_to_stream(writer, config).unwrap();
         encryptor.write_all(plaintext).unwrap();
-        std::mem::drop(encryptor);
+        encryptor.finish().unwrap();
 
         let pending = processor
             .begin_decrypt_hybrid_from_stream(
