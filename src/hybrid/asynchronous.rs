@@ -8,12 +8,12 @@ use crate::algorithms::traits::HybridAlgorithm;
 use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::AsynchronousBodyProcessor;
 use crate::common::config::{ArcConfig, DecryptorConfig};
-use crate::common::header::{Header, HeaderPayload};
+use crate::common::header::{Header, HeaderPayload, SpecificHeaderPayload};
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::config::HybridConfig;
 use crate::hybrid::pending::PendingDecryptor;
 use crate::hybrid::traits::{HybridAsynchronousPendingDecryptor, HybridAsynchronousProcessor};
-use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+use crate::keys::{TypedAsymmetricPrivateKey, TypedSymmetricKey};
 use async_trait::async_trait;
 use seal_crypto::zeroize::Zeroizing;
 use std::borrow::Cow;
@@ -29,19 +29,20 @@ impl<'decr_life> HybridAsynchronousPendingDecryptor<'decr_life>
         aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn AsyncRead + Send + Unpin + 'decr_life>> {
         let (encapsulated_key, base_nonce, derivation_info, chunk_size) =
-            if let HeaderPayload::Hybrid {
-                stream_info: Some(info),
-                encrypted_dek,
-                derivation_info,
+            if let HeaderPayload {
+                base_nonce,
                 chunk_size,
-                ..
-            } = &self.header.payload
-            {
+                specific_payload: SpecificHeaderPayload::Hybrid {
+                    encrypted_dek,
+                    derivation_info,
+                    ..
+                },
+            } = self.header.payload {
                 (
                     Zeroizing::new(encrypted_dek.clone()),
-                    info.base_nonce,
+                    base_nonce,
                     derivation_info.clone(),
-                    *chunk_size,
+                    chunk_size,
                 )
             } else {
                 return Err(Error::Format(FormatError::InvalidHeader));
@@ -119,6 +120,9 @@ impl HybridAsynchronousProcessor for Asynchronous {
         config: ArcConfig,
     ) -> Result<Box<dyn HybridAsynchronousPendingDecryptor<'a> + Send + 'a>> {
         let header = Header::decode_from_prefixed_async_reader(&mut reader).await?;
+        if !header.is_hybrid() {
+            return Err(Error::Format(FormatError::InvalidHeader));
+        }
         let asym_algo = header
             .payload
             .asymmetric_algorithm()

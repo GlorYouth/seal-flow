@@ -4,7 +4,7 @@
 
 use crate::algorithms::traits::HybridAlgorithm;
 use crate::common::header::{
-    DerivationInfo, Header, HeaderPayload, SealMode, SignerInfo, StreamInfo,
+    DerivationInfo, Header, HeaderPayload, SignerInfo, SpecificHeaderPayload
 };
 use crate::common::SignerSet;
 use crate::error::Result;
@@ -37,15 +37,17 @@ pub fn create_header<H: HybridAlgorithm + ?Sized>(
 
     // 3. Construct Header payload, starting without a signature
     // 3. 构造标头有效载荷，初始不带签名
-    let mut payload = HeaderPayload::Hybrid {
-        kek_id,
-        kek_algorithm: algorithm.asymmetric_algorithm().algorithm(),
-        dek_algorithm: algorithm.symmetric_algorithm().algorithm(),
-        encrypted_dek: encapsulated_key.to_bytes(),
+    let mut payload = HeaderPayload {
         chunk_size,
-        stream_info: Some(StreamInfo { base_nonce }),
-        signature: None,
-        derivation_info,
+        base_nonce,
+        specific_payload: SpecificHeaderPayload::Hybrid {
+            kek_id,
+            kek_algorithm: algorithm.asymmetric_algorithm().algorithm(),
+            dek_algorithm: algorithm.symmetric_algorithm().algorithm(),
+            encrypted_dek: encapsulated_key.to_bytes(),
+            signature: None,
+            derivation_info,
+        },
     };
 
     // 4. Sign the payload and mutate it if a signer is provided
@@ -58,8 +60,12 @@ pub fn create_header<H: HybridAlgorithm + ?Sized>(
 
         // Now, set the signature on the actual payload by mutating it.
         // 现在，通过修改可变载荷来设置签名。
-        if let HeaderPayload::Hybrid {
-            ref mut signature, ..
+        if let HeaderPayload {
+            specific_payload: SpecificHeaderPayload::Hybrid {
+                ref mut signature,
+                ..
+            },
+            ..
         } = payload
         {
             *signature = Some(SignerInfo {
@@ -72,7 +78,6 @@ pub fn create_header<H: HybridAlgorithm + ?Sized>(
 
     let header = Header {
         version: 1,
-        mode: SealMode::Hybrid,
         payload,
     };
 

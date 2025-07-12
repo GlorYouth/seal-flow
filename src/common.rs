@@ -1,6 +1,5 @@
 use crate::{common::algorithms::SignatureAlgorithm, keys::TypedSymmetricKey};
 use bytes::BytesMut;
-use std::borrow::Borrow;
 
 /// This module re-exports common functionalities from the `common` directory.
 ///

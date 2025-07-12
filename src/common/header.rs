@@ -11,32 +11,6 @@ use std::io::Read;
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-/// Defines the mode of the encryption operation.
-///
-/// 定义加密操作的模式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Decode, Encode)]
-pub enum SealMode {
-    /// Symmetric encryption mode.
-    ///
-    /// 对称加密模式。
-    Symmetric,
-    /// Hybrid encryption mode.
-    ///
-    /// 混合加密模式。
-    Hybrid,
-}
-
-/// Metadata for streaming processing.
-///
-/// 流式处理的元数据。
-#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
-pub struct StreamInfo {
-    /// The base nonce for stream encryption.
-    ///
-    /// 流加密的基础 nonce。
-    pub base_nonce: [u8; 12],
-}
-
 /// Information about the signer.
 ///
 /// 签名者信息。
@@ -182,11 +156,11 @@ impl DerivationInfo {
     }
 }
 
-/// `HeaderPayload` contains metadata specific to the encryption mode.
+/// Specific header payload for different encryption modes.
 ///
-/// `HeaderPayload` 包含特定于加密模式的元数据。
+/// 不同加密模式的具体头部有效载荷。
 #[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
-pub enum HeaderPayload {
+pub enum SpecificHeaderPayload {
     /// Payload for symmetric encryption.
     ///
     /// 对称加密的有效载荷。
@@ -199,14 +173,6 @@ pub enum HeaderPayload {
         ///
         /// 使用的对称算法。
         algorithm: SymmetricAlgorithm,
-        /// The chunk size for the symmetric algorithm.
-        ///
-        /// 对称算法的分块大小。
-        chunk_size: u32,
-        /// Streaming metadata, if applicable.
-        ///
-        /// 流式处理元数据（如果适用）。
-        stream_info: Option<StreamInfo>,
     },
     /// Payload for hybrid encryption.
     ///
@@ -228,14 +194,6 @@ pub enum HeaderPayload {
         ///
         /// 加密的数据加密密钥 (DEK)。
         encrypted_dek: Vec<u8>,
-        /// The chunk size for the symmetric algorithm.
-        ///
-        /// 对称算法的分块大小。
-        chunk_size: u32,
-        /// Streaming metadata, theoretically applicable to hybrid mode as well.
-        ///
-        /// 流式处理元数据，理论上也适用于混合模式。
-        stream_info: Option<StreamInfo>,
         /// Signature information, if the header is signed.
         ///
         /// 签名信息，如果头部已签名。
@@ -247,13 +205,32 @@ pub enum HeaderPayload {
     },
 }
 
+/// Header payload for different encryption modes.
+///
+/// 不同加密模式的头有效载荷。
+#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
+pub struct HeaderPayload {
+    /// The chunk size for the symmetric algorithm.
+    ///
+    /// 对称算法的分块大小。
+    pub chunk_size: u32,
+    /// The base nonce for stream encryption.
+    ///
+    /// 流加密的基础 nonce。
+    pub base_nonce: [u8; 12],
+    /// The specific payload for the encryption mode.
+    ///
+    /// 特定于加密模式的有效载荷。
+    pub specific_payload: SpecificHeaderPayload,
+}
+
 impl HeaderPayload {
     /// Returns the key ID if the payload is for symmetric encryption.
     ///
     /// 如果有效载荷用于对称加密，则返回密钥 ID。
     pub fn key_id(&self) -> Option<&str> {
-        match self {
-            HeaderPayload::Symmetric { key_id, .. } => Some(key_id),
+        match &self.specific_payload {
+            SpecificHeaderPayload::Symmetric { key_id, .. } => Some(key_id),
             _ => None,
         }
     }
@@ -262,8 +239,8 @@ impl HeaderPayload {
     ///
     /// 如果有效载荷用于混合加密，则返回密钥加密密钥 (KEK) 的 ID。
     pub fn kek_id(&self) -> Option<&str> {
-        match self {
-            HeaderPayload::Hybrid { kek_id, .. } => Some(kek_id),
+        match &self.specific_payload {
+            SpecificHeaderPayload::Hybrid { kek_id, .. } => Some(kek_id),
             _ => None,
         }
     }
@@ -272,8 +249,8 @@ impl HeaderPayload {
     ///
     /// 如果有效载荷用于混合加密，则返回签名者密钥 ID。
     pub fn signer_key_id(&self) -> Option<&str> {
-        match self {
-            HeaderPayload::Hybrid { signature, .. } => {
+        match &self.specific_payload {
+            SpecificHeaderPayload::Hybrid { signature, .. } => {
                 signature.as_ref().map(|s| s.signer_key_id.as_str())
             }
             _ => None,
@@ -286,9 +263,9 @@ impl HeaderPayload {
     /// 返回用于数据加密的对称算法。
     /// 在混合模式下，这是数据加密密钥 (DEK) 的算法。
     pub fn symmetric_algorithm(&self) -> SymmetricAlgorithm {
-        match self {
-            HeaderPayload::Symmetric { algorithm, .. } => *algorithm,
-            HeaderPayload::Hybrid { dek_algorithm, .. } => *dek_algorithm,
+        match &self.specific_payload {
+            SpecificHeaderPayload::Symmetric { algorithm, .. } => *algorithm,
+            SpecificHeaderPayload::Hybrid { dek_algorithm, .. } => *dek_algorithm,
         }
     }
 
@@ -298,8 +275,8 @@ impl HeaderPayload {
     /// 如果适用，返回用于密钥封装的非对称算法。
     /// 这仅存在于混合模式中。
     pub fn asymmetric_algorithm(&self) -> Option<AsymmetricAlgorithm> {
-        match self {
-            HeaderPayload::Hybrid { kek_algorithm, .. } => Some(*kek_algorithm),
+        match &self.specific_payload {
+            SpecificHeaderPayload::Hybrid { kek_algorithm, .. } => Some(*kek_algorithm),
             _ => None,
         }
     }
@@ -308,8 +285,8 @@ impl HeaderPayload {
     ///
     /// 如果适用，返回签名算法。
     pub fn signer_algorithm(&self) -> Option<SignatureAlgorithm> {
-        match self {
-            HeaderPayload::Hybrid { signature, .. } => {
+        match &self.specific_payload {
+            SpecificHeaderPayload::Hybrid { signature, .. } => {
                 signature.as_ref().map(|s| s.signer_algorithm)
             }
             _ => None,
@@ -320,8 +297,8 @@ impl HeaderPayload {
     ///
     /// 如果适用，返回签名。
     pub fn signature(&self) -> Option<&[u8]> {
-        match self {
-            HeaderPayload::Hybrid { signature, .. } => {
+        match &self.specific_payload {
+            SpecificHeaderPayload::Hybrid { signature, .. } => {
                 signature.as_ref().map(|s| s.signature.as_slice())
             }
             _ => None,
@@ -332,16 +309,16 @@ impl HeaderPayload {
     ///
     /// 获取要签名的有效载荷和签名本身。
     pub(crate) fn get_signed_payload_and_sig(&self) -> Result<(Vec<u8>, Vec<u8>)> {
-        if let HeaderPayload::Hybrid { .. } = self {
+        if let SpecificHeaderPayload::Hybrid { .. } = &self.specific_payload {
             let signature = self
                 .signature()
                 .ok_or(CryptoError::MissingSignature)?
                 .to_vec();
 
             let mut temp_payload = self.clone();
-            if let HeaderPayload::Hybrid {
+            if let SpecificHeaderPayload::Hybrid {
                 ref mut signature, ..
-            } = temp_payload
+            } = &mut temp_payload.specific_payload  
             {
                 *signature = None;
             }
@@ -363,10 +340,6 @@ pub struct Header {
     ///
     /// 标头格式的版本。
     pub version: u16,
-    /// The encryption mode used.
-    ///
-    /// 使用的加密模式。
-    pub mode: SealMode,
     /// The payload containing mode-specific metadata.
     ///
     /// 包含特定于模式的元数据的有效载荷。
@@ -374,6 +347,14 @@ pub struct Header {
 }
 
 impl Header {
+    pub fn is_symmetric(&self) -> bool {
+        matches!(self.payload.specific_payload, SpecificHeaderPayload::Symmetric { .. })
+    }
+
+    pub fn is_hybrid(&self) -> bool {
+        matches!(self.payload.specific_payload, SpecificHeaderPayload::Hybrid { .. })
+    }
+
     /// Encodes the header into a byte vector.
     ///
     /// 将标头编码为字节向量。

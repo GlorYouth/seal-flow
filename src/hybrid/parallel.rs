@@ -8,7 +8,7 @@ use crate::algorithms::traits::HybridAlgorithm;
 use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::ParallelBodyProcessor;
 use crate::common::config::{ArcConfig, DecryptorConfig};
-use crate::common::header::{Header, HeaderPayload};
+use crate::common::header::{Header, HeaderPayload, SpecificHeaderPayload};
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::config::HybridConfig;
 use crate::hybrid::pending::PendingDecryptor;
@@ -68,19 +68,22 @@ impl<'a> HybridParallelPendingDecryptor for PendingDecryptor<&'a [u8]> {
     ) -> Result<Vec<u8>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(self.source)?;
         let (encapsulated_key, base_nonce, derivation_info, chunk_size) =
-            if let HeaderPayload::Hybrid {
-                encrypted_dek,
-                stream_info: Some(info),
-                derivation_info,
+            if let HeaderPayload {
+                base_nonce,
                 chunk_size,
+                specific_payload: SpecificHeaderPayload::Hybrid {
+                    encrypted_dek,
+                    derivation_info,
+                    ..
+                },
                 ..
-            } = &header.payload
+            } = header.payload
             {
                 (
                     Zeroizing::new(encrypted_dek.clone()),
-                    info.base_nonce,
+                    base_nonce,
                     derivation_info.clone(),
-                    *chunk_size,
+                    chunk_size,
                 )
             } else {
                 return Err(Error::Format(FormatError::InvalidHeader));

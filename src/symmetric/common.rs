@@ -3,7 +3,7 @@
 //! 对称加密模式的通用工具。
 
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
+use crate::common::header::{Header, HeaderPayload, SpecificHeaderPayload};
 use rand::{rngs::OsRng, TryRngCore};
 
 /// Creates a complete header and a new base_nonce for a symmetric encryption stream.
@@ -19,12 +19,13 @@ pub fn create_header<S: SymmetricAlgorithm>(
 
     let header = Header {
         version: 1,
-        mode: SealMode::Symmetric,
-        payload: HeaderPayload::Symmetric {
-            key_id,
-            algorithm: algorithm.algorithm(),
+        payload: HeaderPayload {
             chunk_size,
-            stream_info: Some(StreamInfo { base_nonce }),
+            base_nonce,
+            specific_payload: SpecificHeaderPayload::Symmetric {
+                key_id,
+                algorithm: algorithm.algorithm(),
+            },
         },
     };
     Ok((header, base_nonce))

@@ -9,7 +9,8 @@ use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::ParallelStreamingBodyProcessor;
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::common::header::{Header, HeaderPayload};
-use crate::error::{Error, FormatError, Result};
+use crate::error::Result;
+use crate::error::{Error, FormatError};
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::pending::PendingDecryptor;
@@ -28,18 +29,15 @@ impl<'a> SymmetricParallelStreamingPendingDecryptor<'a>
         writer: Box<dyn Write + Send + 'a>,
         aad: Option<Vec<u8>>,
     ) -> Result<()> {
-        let (nonce, &chunk_size) = match &self.header.payload {
-            HeaderPayload::Symmetric {
-                stream_info: Some(info),
-                chunk_size,
-                ..
-            } => (info.base_nonce, chunk_size),
-            _ => return Err(Error::Format(FormatError::InvalidHeader)),
-        };
+        let HeaderPayload {
+            base_nonce,
+            chunk_size,
+            ..
+        } = self.header.payload;
 
         let config = BodyDecryptConfig {
             key: Cow::Borrowed(key),
-            nonce,
+            nonce: base_nonce,
             aad,
             config: DecryptorConfig {
                 chunk_size,
@@ -85,6 +83,9 @@ impl SymmetricParallelStreamingProcessor for ParallelStreaming {
         config: ArcConfig,
     ) -> Result<Box<dyn SymmetricParallelStreamingPendingDecryptor<'a> + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
+        if !header.is_symmetric() {
+            return Err(Error::Format(FormatError::InvalidHeader));
+        }
         let algorithm = header
             .payload
             .symmetric_algorithm()

@@ -8,7 +8,7 @@ use crate::algorithms::traits::HybridAlgorithm;
 use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::ParallelStreamingBodyProcessor;
 use crate::common::config::{ArcConfig, DecryptorConfig};
-use crate::common::header::{Header, HeaderPayload};
+use crate::common::header::{Header, HeaderPayload, SpecificHeaderPayload};
 use crate::error::{Error, FormatError, Result};
 use crate::hybrid::config::HybridConfig;
 use crate::hybrid::pending::PendingDecryptor;
@@ -83,19 +83,22 @@ impl<'a> HybridParallelStreamingPendingDecryptor<'a>
     ) -> Result<()> {
         let reader = self.source;
         let (encapsulated_key, base_nonce, derivation_info, chunk_size) =
-            if let HeaderPayload::Hybrid {
-                stream_info: Some(info),
-                encrypted_dek,
-                derivation_info,
+            if let HeaderPayload {
+                base_nonce,
                 chunk_size,
+                specific_payload: SpecificHeaderPayload::Hybrid {
+                    encrypted_dek,
+                    derivation_info,
+                    ..
+                },
                 ..
-            } = &self.header.payload
+            } = self.header.payload
             {
                 (
                     Zeroizing::new(encrypted_dek.clone()),
-                    info.base_nonce,
+                    base_nonce,
                     derivation_info.clone(),
-                    *chunk_size,
+                    chunk_size,
                 )
             } else {
                 return Err(Error::Format(FormatError::InvalidHeader));

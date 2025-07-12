@@ -20,18 +20,15 @@ impl<'a> SymmetricStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Rea
         key: &TypedSymmetricKey,
         aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn Read + 'a>> {
-        let (nonce, &chunk_size) = match &self.header.payload {
-            HeaderPayload::Symmetric {
-                stream_info: Some(info),
-                chunk_size,
-                ..
-            } => (info.base_nonce, chunk_size),
-            _ => return Err(Error::Format(FormatError::InvalidHeader)),
-        };
+        let HeaderPayload {
+            base_nonce,
+            chunk_size,
+            ..
+        } = self.header.payload;
 
         let config = BodyDecryptConfig {
             key: Cow::Owned(key.clone()),
-            nonce,
+            nonce: base_nonce,
             aad,
             config: DecryptorConfig {
                 chunk_size,
@@ -75,6 +72,9 @@ impl SymmetricStreamingProcessor for Streaming {
         config: ArcConfig,
     ) -> Result<Box<dyn SymmetricStreamingPendingDecryptor<'a> + 'a>> {
         let header = Header::decode_from_prefixed_reader(&mut reader)?;
+        if !header.is_symmetric() {
+            return Err(Error::Format(FormatError::InvalidHeader));
+        }
         let algorithm = header
             .payload
             .symmetric_algorithm()

@@ -19,18 +19,15 @@ impl<'a> SymmetricParallelPendingDecryptor<'a> for PendingDecryptor<&'a [u8]> {
         key: &TypedSymmetricKey,
         aad: Option<Vec<u8>>,
     ) -> Result<Vec<u8>> {
-        let (nonce, &chunk_size) = match &self.header.payload {
-            HeaderPayload::Symmetric {
-                stream_info: Some(info),
-                chunk_size,
-                ..
-            } => (info.base_nonce, chunk_size),
-            _ => return Err(Error::Format(FormatError::InvalidHeader)),
-        };
-
+        let HeaderPayload {
+            base_nonce,
+            chunk_size,
+            ..
+        } = self.header.payload;
+        
         let config = BodyDecryptConfig {
             key: Cow::Borrowed(key),
-            nonce,
+            nonce: base_nonce,
             aad,
             config: DecryptorConfig {
                 chunk_size,
@@ -74,6 +71,9 @@ impl SymmetricParallelProcessor for Parallel {
         config: ArcConfig,
     ) -> Result<Box<dyn SymmetricParallelPendingDecryptor<'a> + 'a>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
+        if !header.is_symmetric() {
+            return Err(Error::Format(FormatError::InvalidHeader));
+        }
         let algorithm = header
             .payload
             .symmetric_algorithm()

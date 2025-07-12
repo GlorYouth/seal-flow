@@ -4,10 +4,9 @@
 
 use crate::common::config::ArcConfig;
 use crate::common::header::Header;
-use crate::common::{DerivationSet, SignerSet};
 use crate::error::Result;
 use crate::hybrid::config::HybridConfig;
-use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey};
+use crate::keys::TypedAsymmetricPrivateKey;
 use std::io::{Read, Write};
 
 /// Trait for ordinary (in-memory) hybrid encryption.
