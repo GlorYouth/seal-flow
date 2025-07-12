@@ -30,8 +30,7 @@ impl HybridParallelProcessor for Parallel {
             .symmetric_algorithm()
             .encrypt_body_parallel(plaintext, body_config)?;
 
-        let mut final_output =
-            Vec::with_capacity(4 + header_bytes.len() + encrypted_body.len());
+        let mut final_output = Vec::with_capacity(4 + header_bytes.len() + encrypted_body.len());
         final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
         final_output.extend_from_slice(&header_bytes);
         final_output.extend_from_slice(&encrypted_body);

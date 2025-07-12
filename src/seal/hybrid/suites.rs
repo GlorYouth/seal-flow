@@ -7,13 +7,13 @@ use std::sync::Arc;
 use tokio::io::AsyncWrite;
 
 use crate::algorithms::traits::SignatureAlgorithm;
+use crate::body::traits::FinishingWrite;
 use crate::common::algorithms::{
     AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
 use crate::common::config::ArcConfig;
 use crate::keys::provider::EncryptionKeyProvider;
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey};
-use crate::body::traits::FinishingWrite;
 use crate::seal::traits::{
     AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor, WithAad,
 };

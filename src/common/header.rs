@@ -318,7 +318,7 @@ impl HeaderPayload {
             let mut temp_payload = self.clone();
             if let SpecificHeaderPayload::Hybrid {
                 ref mut signature, ..
-            } = &mut temp_payload.specific_payload  
+            } = &mut temp_payload.specific_payload
             {
                 *signature = None;
             }
@@ -348,11 +348,17 @@ pub struct Header {
 
 impl Header {
     pub fn is_symmetric(&self) -> bool {
-        matches!(self.payload.specific_payload, SpecificHeaderPayload::Symmetric { .. })
+        matches!(
+            self.payload.specific_payload,
+            SpecificHeaderPayload::Symmetric { .. }
+        )
     }
 
     pub fn is_hybrid(&self) -> bool {
-        matches!(self.payload.specific_payload, SpecificHeaderPayload::Hybrid { .. })
+        matches!(
+            self.payload.specific_payload,
+            SpecificHeaderPayload::Hybrid { .. }
+        )
     }
 
     /// Encodes the header into a byte vector.

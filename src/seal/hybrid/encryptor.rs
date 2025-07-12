@@ -5,6 +5,7 @@
 use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
 use crate::algorithms::traits::HybridAlgorithm;
 use crate::algorithms::traits::{KdfAlgorithm, SignatureAlgorithm, XofAlgorithm};
+use crate::body::traits::FinishingWrite;
 use crate::common::algorithms::{
     AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
@@ -19,10 +20,8 @@ use crate::hybrid::traits::{
 };
 use crate::keys::provider::EncryptionKeyProvider;
 use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey, TypedSymmetricKey};
-use crate::body::traits::FinishingWrite;
 use crate::seal::traits::{
-    AsyncStreamingEncryptor, InMemoryEncryptor,
-    StreamingEncryptor as StreamingEncryptorTrait,
+    AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor as StreamingEncryptorTrait,
     WithAad,
 };
 #[cfg(feature = "async")]

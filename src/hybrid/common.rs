@@ -4,7 +4,7 @@
 
 use crate::algorithms::traits::HybridAlgorithm;
 use crate::common::header::{
-    DerivationInfo, Header, HeaderPayload, SignerInfo, SpecificHeaderPayload
+    DerivationInfo, Header, HeaderPayload, SignerInfo, SpecificHeaderPayload,
 };
 use crate::common::SignerSet;
 use crate::error::Result;
@@ -13,7 +13,7 @@ use crate::keys::TypedSymmetricKey;
 use rand::{rngs::OsRng, TryRngCore};
 use seal_crypto::prelude::Key;
 
-use crate::body::config::{BodyDecryptConfig};
+use crate::body::config::BodyDecryptConfig;
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::error::{Error, FormatError};
 use crate::keys::TypedAsymmetricPrivateKey;
@@ -68,10 +68,10 @@ pub fn create_header<H: HybridAlgorithm + ?Sized>(
         // Now, set the signature on the actual payload by mutating it.
         // 现在，通过修改可变载荷来设置签名。
         if let HeaderPayload {
-            specific_payload: SpecificHeaderPayload::Hybrid {
-                ref mut signature,
-                ..
-            },
+            specific_payload:
+                SpecificHeaderPayload::Hybrid {
+                    ref mut signature, ..
+                },
             ..
         } = payload
         {
@@ -101,27 +101,27 @@ pub(super) fn prepare_body_decrypt_config(
     aad: Option<Vec<u8>>,
     arc_config: ArcConfig,
 ) -> Result<BodyDecryptConfig<'static>> {
-    let (encapsulated_key, base_nonce, derivation_info, chunk_size) =
-        if let HeaderPayload {
-            base_nonce,
-            chunk_size,
-            specific_payload: SpecificHeaderPayload::Hybrid {
+    let (encapsulated_key, base_nonce, derivation_info, chunk_size) = if let HeaderPayload {
+        base_nonce,
+        chunk_size,
+        specific_payload:
+            SpecificHeaderPayload::Hybrid {
                 encrypted_dek,
                 derivation_info,
                 ..
             },
-            ..
-        } = header.payload
-        {
-            (
-                Zeroizing::new(encrypted_dek.clone()),
-                base_nonce,
-                derivation_info.clone(),
-                chunk_size,
-            )
-        } else {
-            return Err(Error::Format(FormatError::InvalidHeader));
-        };
+        ..
+    } = header.payload
+    {
+        (
+            Zeroizing::new(encrypted_dek.clone()),
+            base_nonce,
+            derivation_info.clone(),
+            chunk_size,
+        )
+    } else {
+        return Err(Error::Format(FormatError::InvalidHeader));
+    };
 
     let shared_secret = algorithm
         .asymmetric_algorithm()
@@ -133,10 +133,8 @@ pub(super) fn prepare_body_decrypt_config(
         shared_secret
     };
 
-    let dek = TypedSymmetricKey::from_bytes(
-        dek.as_ref(),
-        algorithm.symmetric_algorithm().algorithm(),
-    )?;
+    let dek =
+        TypedSymmetricKey::from_bytes(dek.as_ref(), algorithm.symmetric_algorithm().algorithm())?;
 
     let body_config = BodyDecryptConfig {
         key: Cow::Owned(dek),
