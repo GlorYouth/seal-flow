@@ -61,9 +61,17 @@ impl SymmetricOrdinaryProcessor for Ordinary {
         config: SymmetricConfig<'a>,
     ) -> Result<Vec<u8>> {
         let algo = config.algorithm.clone();
-        let config = config.into_encrypt_config()?;
+        let (body_config, header_bytes) = config.into_body_config_and_header()?;
 
-        algo.as_ref().encrypt_body_in_memory(plaintext, config)
+        let encrypted_body = algo.as_ref().encrypt_body_in_memory(plaintext, body_config)?;
+
+        let mut final_output =
+            Vec::with_capacity(4 + header_bytes.len() + encrypted_body.len());
+        final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
+        final_output.extend_from_slice(&header_bytes);
+        final_output.extend_from_slice(&encrypted_body);
+
+        Ok(final_output)
     }
 
     fn begin_decrypt_symmetric_in_memory<'a>(

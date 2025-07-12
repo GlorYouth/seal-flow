@@ -8,7 +8,6 @@ use crate::{
 pub struct BodyEncryptConfig<'a> {
     pub key: Cow<'a, TypedSymmetricKey>,
     pub nonce: [u8; 12],
-    pub header_bytes: Vec<u8>,
     pub aad: Option<Vec<u8>>,
     pub config: ArcConfig,
 }
@@ -20,10 +19,6 @@ impl<'a> BodyEncryptConfig<'a> {
 
     pub(crate) fn nonce(&self) -> &[u8; 12] {
         &self.nonce
-    }
-
-    pub(crate) fn header_bytes(&self) -> &Vec<u8> {
-        &self.header_bytes
     }
 
     pub(crate) fn aad(&self) -> Option<&[u8]> {

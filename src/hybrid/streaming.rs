@@ -31,10 +31,9 @@ impl HybridStreamingProcessor for Streaming {
         config: HybridConfig<'a>,
     ) -> Result<Box<dyn FinishingWrite + 'a>> {
         let algo = config.algorithm.clone();
-        let body_config = config.into_encrypt_config()?;
-        let header_bytes = body_config.header_bytes();
+        let (body_config, header_bytes) = config.into_body_config_and_header()?;
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
-        writer.write_all(header_bytes)?;
+        writer.write_all(&header_bytes)?;
         algo.as_ref()
             .symmetric_algorithm()
             .encrypt_body_to_stream(writer, body_config)

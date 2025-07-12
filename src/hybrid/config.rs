@@ -17,7 +17,7 @@ pub struct HybridConfig<'a> {
 }
 
 impl<'a> HybridConfig<'a> {
-    pub fn into_encrypt_config(self) -> crate::Result<BodyEncryptConfig<'a>> {
+    pub fn into_body_config_and_header(self) -> crate::Result<(BodyEncryptConfig<'a>, Vec<u8>)> {
         let (derivation_info, deriver_fn) = self
             .derivation_config
             .map(|d| (d.derivation_info, d.deriver_fn))
@@ -44,11 +44,10 @@ impl<'a> HybridConfig<'a> {
         let body_config = BodyEncryptConfig {
             key: Cow::Owned(dek),
             nonce: base_nonce,
-            header_bytes,
             aad: self.aad,
             config: self.config,
         };
 
-        Ok(body_config)
+        Ok((body_config, header_bytes))
     }
 }

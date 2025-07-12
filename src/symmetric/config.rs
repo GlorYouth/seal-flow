@@ -14,7 +14,7 @@ pub struct SymmetricConfig<'a> {
 }
 
 impl<'a> SymmetricConfig<'a> {
-    pub fn into_encrypt_config(self) -> crate::Result<BodyEncryptConfig<'a>> {
+    pub fn into_body_config_and_header(self) -> crate::Result<(BodyEncryptConfig<'a>, Vec<u8>)> {
         let (header, base_nonce) = create_header(
             self.algorithm.as_ref(),
             self.key_id,
@@ -22,12 +22,13 @@ impl<'a> SymmetricConfig<'a> {
         )?;
         let header_bytes = header.encode_to_vec()?;
 
-        Ok(BodyEncryptConfig {
+        let body_config = BodyEncryptConfig {
             key: self.key,
             nonce: base_nonce,
-            header_bytes,
             aad: self.aad,
             config: self.config,
-        })
+        };
+
+        Ok((body_config, header_bytes))
     }
 }

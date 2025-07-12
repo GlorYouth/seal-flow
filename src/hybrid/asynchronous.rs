@@ -100,8 +100,7 @@ impl HybridAsynchronousProcessor for Asynchronous {
         config: HybridConfig<'a>,
     ) -> Result<Box<dyn AsyncWrite + Send + Unpin + 'a>> {
         let algo = config.algorithm.clone();
-        let body_config = config.into_encrypt_config()?;
-        let header_bytes = body_config.header_bytes();
+        let (body_config, header_bytes) = config.into_body_config_and_header()?;
 
         writer
             .write_all(&(header_bytes.len() as u32).to_le_bytes())

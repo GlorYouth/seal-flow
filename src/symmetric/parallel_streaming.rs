@@ -70,10 +70,9 @@ impl SymmetricParallelStreamingProcessor for ParallelStreaming {
         config: SymmetricConfig<'a>,
     ) -> Result<()> {
         let algo = config.algorithm.clone();
-        let config = config.into_encrypt_config()?;
-        let header_bytes = config.header_bytes();
+        let (config, header_bytes) = config.into_body_config_and_header()?;
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
-        writer.write_all(header_bytes)?;
+        writer.write_all(&header_bytes)?;
         algo.as_ref().encrypt_body_pipeline(reader, writer, config)
     }
 

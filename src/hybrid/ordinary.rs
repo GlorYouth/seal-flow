@@ -31,10 +31,19 @@ impl HybridOrdinaryProcessor for Ordinary {
         config: HybridConfig<'a>,
     ) -> Result<Vec<u8>> {
         let algo = config.algorithm.clone();
-        let body_config = config.into_encrypt_config()?;
-        algo.as_ref()
+        let (body_config, header_bytes) = config.into_body_config_and_header()?;
+        let encrypted_body = algo
+            .as_ref()
             .symmetric_algorithm()
-            .encrypt_body_in_memory(plaintext, body_config)
+            .encrypt_body_in_memory(plaintext, body_config)?;
+
+        let mut final_output =
+            Vec::with_capacity(4 + header_bytes.len() + encrypted_body.len());
+        final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
+        final_output.extend_from_slice(&header_bytes);
+        final_output.extend_from_slice(&encrypted_body);
+
+        Ok(final_output)
     }
 
     fn begin_decrypt_hybrid_in_memory<'a>(

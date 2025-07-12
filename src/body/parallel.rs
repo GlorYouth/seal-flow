@@ -24,10 +24,8 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
         let BodyEncryptConfig {
             key,
             nonce,
-            header_bytes,
             aad,
             config,
-            ..
         } = config;
         let chunk_size = config.chunk_size() as usize;
         let tag_size = self.tag_size();
@@ -50,20 +48,12 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
         } else {
             (num_chunks.saturating_sub(1)) * (chunk_size + tag_size) + (last_chunk_len + tag_size)
         };
-        let mut final_output = Vec::with_capacity(4 + header_bytes.len() + total_body_size);
-        final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
-        final_output.extend_from_slice(&header_bytes);
-        // The rest of the buffer is for the body, which we will fill in parallel
-        // 缓冲区的其余部分用于存放将要并行填充的主体
-        let body_len = total_body_size;
-        final_output.resize(4 + header_bytes.len() + body_len, 0);
-
-        let (_header_part, body_part) = final_output.split_at_mut(4 + header_bytes.len());
+        let mut encrypted_body = vec![0u8; total_body_size];
 
         // Process chunks in parallel using Rayon, writing directly to the output buffer
         // 使用 Rayon 并行处理数据块，直接写入输出缓冲区
         if !plaintext.is_empty() {
-            body_part
+            encrypted_body
                 .par_chunks_mut(chunk_size + tag_size)
                 .zip(plaintext.par_chunks(chunk_size))
                 .enumerate()
@@ -84,7 +74,7 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
                 })?;
         }
 
-        Ok(final_output)
+        Ok(encrypted_body)
     }
 
     /// Decrypts a ciphertext body in parallel.

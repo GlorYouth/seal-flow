@@ -38,13 +38,7 @@ impl<S: SymmetricAlgorithm + ?Sized> OrdinaryBodyProcessor for S {
             encrypted_body.extend_from_slice(&temp_chunk_buffer[..bytes_written]);
         }
 
-        let mut final_output =
-            Vec::with_capacity(4 + config.header_bytes().len() + encrypted_body.len());
-        final_output.extend_from_slice(&(config.header_bytes().len() as u32).to_le_bytes());
-        final_output.extend_from_slice(config.header_bytes());
-        final_output.extend_from_slice(&encrypted_body);
-
-        Ok(final_output)
+        Ok(encrypted_body)
     }
     /// Decrypts a ciphertext body sequentially.
     ///

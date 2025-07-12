@@ -58,12 +58,11 @@ impl SymmetricStreamingProcessor for Streaming {
         config: SymmetricConfig<'a>,
     ) -> Result<Box<dyn FinishingWrite + 'a>> {
         let algo = config.algorithm.clone();
-        let config = config.into_encrypt_config()?;
+        let (body_config, header_bytes) = config.into_body_config_and_header()?;
 
-        let header_bytes = config.header_bytes();
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
         writer.write_all(&header_bytes)?;
-        algo.as_ref().encrypt_body_to_stream(writer, config)
+        algo.as_ref().encrypt_body_to_stream(writer, body_config)
     }
 
     fn begin_decrypt_symmetric_from_stream<'a>(

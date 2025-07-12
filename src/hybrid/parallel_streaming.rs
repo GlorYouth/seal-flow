@@ -37,10 +37,9 @@ impl HybridParallelStreamingProcessor for ParallelStreaming {
             .as_ref()
             .symmetric_algorithm()
             .clone_box_symmetric();
-        let body_config = config.into_encrypt_config()?;
-        let header_bytes = body_config.header_bytes();
+        let (body_config, header_bytes) = config.into_body_config_and_header()?;
         writer.write_all(&(header_bytes.len() as u32).to_le_bytes())?;
-        writer.write_all(header_bytes)?;
+        writer.write_all(&header_bytes)?;
 
         algo.encrypt_body_pipeline(reader, writer, body_config)
     }
