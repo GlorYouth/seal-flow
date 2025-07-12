@@ -1,5 +1,4 @@
-use seal_flow::algorithms::symmetric::Aes256Gcm;
-use seal_flow::prelude::SymmetricKeyGenerator;
+use seal_flow::base::keys::TypedSymmetricKey;
 use seal_flow::prelude::*;
 use std::collections::HashMap;
 
@@ -11,8 +10,9 @@ fn main() -> seal_flow::error::Result<()> {
     // For this example, we use a HashMap to simulate a key store.
     // 在真实应用中，您应该在 KMS 或其他安全存储中管理密钥。
     // 在本示例中，我们使用 HashMap 模拟一个密钥存储。
-    let mut key_store = HashMap::new();
-    let key = Aes256Gcm::generate_key()?;
+    let mut key_store: HashMap<String, TypedSymmetricKey> = HashMap::new();
+    let algo = SymmetricAlgorithmEnum::Aes256Gcm;
+    let key = algo.into_symmetric_wrapper().generate_typed_key()?;
     let key_id = "my-encryption-key-v1".to_string();
     key_store.insert(key_id.clone(), key.clone());
 
@@ -27,24 +27,23 @@ fn main() -> seal_flow::error::Result<()> {
 
     // The high-level API factory is stateless and reusable.
     // 高级 API 工厂是无状态且可重用的。
-    let seal = SymmetricSeal::new();
+    let seal = SymmetricSeal::default();
 
     // --- 1. Encryption ---
     // --- 1. 加密 ---
 
-    // The key is wrapped in `SymmetricKey` for type safety and to carry metadata.
-    // 密钥被包装在 `SymmetricKey` 中，以确保类型安全并携带元数据。
-    let key_wrapped = SymmetricKey::new(key);
+    // The key is a `TypedSymmetricKey` which carries algorithm information.
+    // 密钥是一个 `TypedSymmetricKey`，它携带了算法信息。
     let ciphertext = seal
-        .encrypt(key_wrapped, key_id)
+        .encrypt(key, key_id)
         // Bind the ciphertext to the AAD. The same AAD must be provided during decryption.
         // 将密文与 AAD 绑定。解密时必须提供完全相同的 AAD。
         .with_aad(aad)
-        // Specify the encryption algorithm and execute the encryption.
+        // The algorithm is inferred from the key, so we just execute `to_vec`.
         // This consumes the builder and returns the ciphertext.
-        // 指定加密算法并执行加密操作。
+        // 算法是从密钥中推断出来的，所以我们直接执行 `to_vec`。
         // 这会消耗构建器并返回密文。
-        .to_vec::<Aes256Gcm>(plaintext)?;
+        .to_vec(plaintext)?;
 
     println!("Encryption successful!");
 
@@ -66,16 +65,17 @@ fn main() -> seal_flow::error::Result<()> {
 
     // c. Use the ID to fetch the correct key from your key store.
     // c. 使用该 ID 从您的密钥存储中获取正确的密钥。
-    let decryption_key_bytes = key_store.get(found_key_id).unwrap();
-    let decryption_key_wrapped = SymmetricKey::new(decryption_key_bytes.clone());
+    let decryption_key = key_store.get(found_key_id).unwrap();
 
     // d. Provide the key and AAD to complete decryption.
-    //    The `with_key` method automatically infers the algorithm from the header.
+    //    The `with_key_to_vec` method automatically infers the algorithm from the header
+    //    and verifies it matches the provided key's type.
     // d. 提供密钥和 AAD 以完成解密。
-    //    `with_key` 方法会自动从头部推断出加密算法。
+    //    `with_key_to_vec` 方法会自动从头部推断出加密算法，
+    //    并验证它与所提供密钥的类型相匹配。
     let decrypted_text = pending_decryptor
         .with_aad(aad) // You must provide the same AAD used for encryption. / 必须提供与加密时相同的 AAD。
-        .with_key(decryption_key_wrapped)?;
+        .with_key_to_vec(decryption_key)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully decrypted data!");
