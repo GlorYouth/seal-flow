@@ -1,4 +1,7 @@
-use crate::{common::algorithms::SignatureAlgorithm, keys::TypedSymmetricKey};
+use crate::{
+    algorithms::signature::SignatureAlgorithmWrapper,
+    keys::{TypedSignaturePrivateKey, TypedSymmetricKey},
+};
 use bytes::BytesMut;
 
 /// This module re-exports common functionalities from the `common` directory.
@@ -55,12 +58,51 @@ impl Ord for OrderedChunk {
 
 pub struct SignerSet {
     pub(crate) signer_key_id: String,
-    pub(crate) signer_algorithm: SignatureAlgorithm,
-    pub(crate) signer: Box<dyn Fn(&[u8], Option<&[u8]>) -> crate::Result<Vec<u8>> + Send + Sync>,
+    pub(crate) signer: SignatureAlgorithmWrapper,
+    pub(crate) signing_key: TypedSignaturePrivateKey,
+}
+
+use crate::algorithms::kdf::key::KdfKeyWrapper;
+use crate::algorithms::xof::XofWrapper;
+
+pub(crate) enum DerivationWrapper {
+    Kdf(KdfKeyWrapper),
+    Xof(XofWrapper),
+}
+
+impl DerivationWrapper {
+    pub fn derive(
+        &self,
+        ikm: &TypedSymmetricKey,
+        salt: Option<&[u8]>,
+        info: Option<&[u8]>,
+    ) -> crate::Result<TypedSymmetricKey> {
+        use crate::algorithms::traits::KdfKeyAlgorithm;
+        use crate::algorithms::traits::XofAlgorithm;
+        match self {
+            DerivationWrapper::Kdf(kdf_wrapper) => kdf_wrapper.derive(ikm, salt, info),
+            DerivationWrapper::Xof(xof_wrapper) => xof_wrapper.derive(ikm, salt, info),
+        }
+    }
 }
 
 pub struct DerivationSet {
     pub(crate) derivation_info: header::DerivationInfo,
-    pub(crate) deriver_fn:
-        Box<dyn Fn(&TypedSymmetricKey) -> crate::Result<TypedSymmetricKey> + Send + Sync>,
+    pub(crate) wrapper: DerivationWrapper,
+}
+
+impl DerivationSet {
+    pub fn salt(&self) -> Option<&[u8]> {
+        match &self.derivation_info {
+            header::DerivationInfo::Kdf(kdf_info) => kdf_info.salt.as_deref(),
+            header::DerivationInfo::Xof(xof_info) => xof_info.salt.as_deref(),
+        }
+    }
+
+    pub fn info(&self) -> Option<&[u8]> {
+        match &self.derivation_info {
+            header::DerivationInfo::Kdf(kdf_info) => kdf_info.info.as_deref(),
+            header::DerivationInfo::Xof(xof_info) => xof_info.info.as_deref(),
+        }
+    }
 }

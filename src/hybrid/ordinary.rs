@@ -103,9 +103,6 @@ mod tests {
     use crate::common::header::{DerivationInfo, KdfInfo};
     use crate::common::DerivationSet;
     use crate::keys::TypedAsymmetricPublicKey;
-    use crate::keys::TypedSymmetricKey;
-    use seal_crypto::prelude::KeyBasedDerivation;
-    use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use std::borrow::Cow;
 
     fn get_test_algorithm() -> HybridAlgorithmWrapper {
@@ -127,22 +124,16 @@ mod tests {
         let plaintext = b"This is a test message with KDF.";
         let salt = b"salt";
         let info = b"info";
-        let output_len = 32;
 
         let kdf_info = KdfInfo {
-            kdf_algorithm: crate::common::algorithms::KdfAlgorithm::HkdfSha256,
+            kdf_algorithm: crate::common::algorithms::KdfKeyAlgorithm::HkdfSha256,
             salt: Some(salt.to_vec()),
             info: Some(info.to_vec()),
-            output_len,
         };
 
-        let deriver = HkdfSha256::default();
-        let kdf_fn = Box::new(move |ikm: &TypedSymmetricKey| {
-            deriver
-                .derive(ikm.as_ref(), Some(salt), Some(info), output_len as usize)
-                .map(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm()))?
-        });
+        let kdf_algorithm = crate::common::algorithms::KdfKeyAlgorithm::HkdfSha256;
 
+        use crate::common::DerivationWrapper;
         let config = HybridConfig {
             algorithm: Cow::Borrowed(&algorithm),
             public_key: Cow::Borrowed(&pk),
@@ -151,7 +142,7 @@ mod tests {
             aad: None,
             derivation_config: Some(DerivationSet {
                 derivation_info: DerivationInfo::Kdf(kdf_info),
-                deriver_fn: kdf_fn,
+                wrapper: DerivationWrapper::Kdf(kdf_algorithm.into_kdf_key_wrapper()),
             }),
             config: ArcConfig::default(),
         };

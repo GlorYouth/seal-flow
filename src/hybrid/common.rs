@@ -2,7 +2,7 @@
 //!
 //! 混合加密模式的通用工具。
 
-use crate::algorithms::traits::HybridAlgorithm;
+use crate::algorithms::traits::{HybridAlgorithm, SignatureAlgorithm};
 use crate::common::header::{
     DerivationInfo, Header, HeaderPayload, SignerInfo, SpecificHeaderPayload,
 };
@@ -63,7 +63,7 @@ pub fn create_header<H: HybridAlgorithm + ?Sized>(
         // The payload already has signature: None, so we can serialize it directly.
         // 有效载荷的签名字段为 None，所以我们可以直接序列化它。
         let payload_bytes = bincode::encode_to_vec(&payload, bincode::config::standard())?;
-        let signature_bytes = (s.signer)(&payload_bytes, aad)?;
+        let signature_bytes = s.signer.sign(&payload_bytes, &s.signing_key)?;
 
         // Now, set the signature on the actual payload by mutating it.
         // 现在，通过修改可变载荷来设置签名。
@@ -77,7 +77,7 @@ pub fn create_header<H: HybridAlgorithm + ?Sized>(
         {
             *signature = Some(SignerInfo {
                 signer_key_id: s.signer_key_id,
-                signer_algorithm: s.signer_algorithm,
+                signer_algorithm: s.signer.algorithm(),
                 signature: signature_bytes,
             });
         }
@@ -135,8 +135,27 @@ pub(super) fn prepare_body_decrypt_config(
         .asymmetric_algorithm()
         .decapsulate_key(private_key, &encapsulated_key)?;
 
+    let shared_secret = TypedSymmetricKey::from_bytes(
+        shared_secret.as_ref(),
+        algorithm.symmetric_algorithm().algorithm(),
+    )?;
+
     let dek = if let Some(info) = derivation_info {
-        info.derive_key(&shared_secret)?
+        use crate::algorithms::traits::KdfKeyAlgorithm;
+        use crate::algorithms::traits::XofAlgorithm;
+        use crate::common::header::DerivationInfo::{Kdf, Xof};
+        match info {
+            Kdf(kdf_info) => kdf_info.kdf_algorithm.into_kdf_key_wrapper().derive(
+                &shared_secret,
+                kdf_info.salt.as_deref(),
+                kdf_info.info.as_deref(),
+            )?,
+            Xof(xof_info) => xof_info.xof_algorithm.into_xof_wrapper().derive(
+                &shared_secret,
+                xof_info.salt.as_deref(),
+                xof_info.info.as_deref(),
+            )?,
+        }
     } else {
         shared_secret
     };

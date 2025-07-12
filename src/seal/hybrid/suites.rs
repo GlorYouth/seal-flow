@@ -6,14 +6,14 @@ use std::sync::Arc;
 #[cfg(feature = "async")]
 use tokio::io::AsyncWrite;
 
-use crate::algorithms::traits::SignatureAlgorithm;
 use crate::body::traits::FinishingWrite;
 use crate::common::algorithms::{
     AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
 use crate::common::config::ArcConfig;
 use crate::keys::provider::EncryptionKeyProvider;
-use crate::keys::{AsymmetricPrivateKey, TypedAsymmetricPublicKey};
+use crate::keys::{TypedAsymmetricPublicKey, TypedSignaturePrivateKey};
+use crate::prelude::{KdfKeyAlgorithmEnum, XofAlgorithmEnum};
 use crate::seal::traits::{
     AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor, WithAad,
 };
@@ -107,63 +107,47 @@ impl PqcEncryptor {
     /// Use a Key Derivation Function (KDF) to derive the Data Encryption Key (DEK).
     ///
     /// 使用密钥派生函数 (KDF) 派生数据加密密钥 (DEK)。
-    pub fn with_kdf<Kdf>(
+    pub fn with_kdf(
         mut self,
-        deriver: Kdf,
+        algorithm: KdfKeyAlgorithmEnum,
         salt: Option<impl Into<Vec<u8>>>,
         info: Option<impl Into<Vec<u8>>>,
-        output_len: u32,
-    ) -> Self
-    where
-        Kdf: crate::algorithms::traits::KdfAlgorithm + 'static,
-    {
-        self.inner = self.inner.with_kdf(deriver, salt, info, output_len);
+    ) -> Self {
+        self.inner = self.inner.with_kdf(algorithm, salt, info);
         self
     }
 
     /// Use an Extendable-Output Function (XOF) to derive the Data Encryption Key (DEK).
     ///
     /// 使用可扩展输出函数 (XOF) 派生数据加密密钥 (DEK)。
-    pub fn with_xof<Xof>(
+    pub fn with_xof(
         mut self,
-        deriver: Xof,
+        algorithm: XofAlgorithmEnum,
         salt: Option<impl Into<Vec<u8>>>,
         info: Option<impl Into<Vec<u8>>>,
-        output_len: u32,
-    ) -> Self
-    where
-        Xof: crate::algorithms::traits::XofAlgorithm,
-    {
-        self.inner = self.inner.with_xof(deriver, salt, info, output_len);
+    ) -> Self {
+        self.inner = self.inner.with_xof(algorithm, salt, info);
         self
     }
 
     /// Signs the encryption metadata (header) with the given private key.
     ///
     /// 使用给定的私钥对加密元数据（标头）进行签名。
-    pub fn with_signer<SignerAlgo>(
+    pub fn with_signer(
         mut self,
-        signing_key: AsymmetricPrivateKey,
+        signing_key: TypedSignaturePrivateKey,
         signer_key_id: String,
-    ) -> Self
-    where
-        SignerAlgo: SignatureAlgorithm,
-    {
-        self.inner = self
-            .inner
-            .with_signer::<SignerAlgo>(signing_key, signer_key_id);
-        self
+    ) -> crate::Result<Self> {
+        self.inner = self.inner.with_signer(signing_key, signer_key_id)?;
+        Ok(self)
     }
 
     /// Signs the encryption metadata (header) using a key resolved from the `EncryptionKeyProvider`.
     ///
     /// 使用从 `EncryptionKeyProvider` 解析的密钥对加密元数据（标头）进行签名。
-    pub fn with_signer_id<SignerAlgo>(self, signer_key_id: &str) -> crate::Result<Self>
-    where
-        SignerAlgo: SignatureAlgorithm,
-    {
+    pub fn with_signer_id(self, signer_key_id: &str) -> crate::Result<Self> {
         self.inner
-            .with_signer_id::<SignerAlgo>(signer_key_id)
+            .with_signer_id(signer_key_id)
             .map(|encryptor| Self { inner: encryptor })
     }
 }
@@ -173,9 +157,7 @@ impl InMemoryEncryptor for PqcEncryptor {
     ///
     /// 使用 PQC 套件在内存中加密给定的明文。
     fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
-        self.inner
-            .execute_with(PQC_DEM_ALGORITHM)
-            .to_vec(plaintext)
+        self.inner.execute_with(PQC_DEM_ALGORITHM).to_vec(plaintext)
     }
 
     /// Encrypts the given plaintext in-memory using parallel processing with the PQC suite.
@@ -189,6 +171,15 @@ impl InMemoryEncryptor for PqcEncryptor {
 }
 
 impl StreamingEncryptor for PqcEncryptor {
+    fn into_writer<'a, W: Write + 'a>(
+        self,
+        writer: W,
+    ) -> crate::Result<Box<dyn FinishingWrite + 'a>> {
+        self.inner
+            .execute_with(PQC_DEM_ALGORITHM)
+            .into_writer(writer)
+    }
+
     /// Encrypts data from a reader and writes to a writer using parallel processing with the PQC suite.
     ///
     /// 使用 PQC 套件通过并行处理从 reader 加密数据并写入 writer。
@@ -200,15 +191,6 @@ impl StreamingEncryptor for PqcEncryptor {
         self.inner
             .execute_with(PQC_DEM_ALGORITHM)
             .pipe_parallel(reader, writer)
-    }
-
-    fn into_writer<'a, W: Write + 'a>(
-        self,
-        writer: W,
-    ) -> crate::Result<Box<dyn FinishingWrite + 'a>> {
-        self.inner
-            .execute_with(PQC_DEM_ALGORITHM)
-            .into_writer(writer)
     }
 }
 

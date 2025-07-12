@@ -122,7 +122,7 @@ async fn main() -> seal_flow::error::Result<()> {
     );
     let key_id = pending_decryptor5.key_id().unwrap();
     let key_to_decrypt = key_store.get_key(key_id).unwrap();
-    pending_decryptor5.with_key_to_writer(key_to_decrypt, &mut decrypted5)?;
+    pending_decryptor5.with_untyped_key_to_writer(key_to_decrypt, &mut decrypted5)?;
     assert_eq!(plaintext, &decrypted5[..]);
     println!("Parallel Streaming roundtrip successful!");
 

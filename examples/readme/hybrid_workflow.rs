@@ -82,7 +82,7 @@ fn main() -> seal_flow::error::Result<()> {
     //    The symmetric algorithm is automatically inferred from the header.
     // c. 提供私钥以解密 DEK，进而解密明文。
     //    对称算法会自动从头部信息中推断出来。
-    let decrypted_text = pending_decryptor.with_key(sk_wrapped)?;
+    let decrypted_text = pending_decryptor.with_untyped_key(sk_wrapped)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully performed hybrid encryption and decryption!");

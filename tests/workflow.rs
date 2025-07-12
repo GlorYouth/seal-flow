@@ -124,7 +124,7 @@ fn test_hybrid_workflow() {
 
     // 3. Decrypt using the retrieved private key.
     let decrypted = pending_decryptor
-        .with_typed_key::<TestKem, TestDek>(decryption_key)
+        .with_key::<TestKem, TestDek>(decryption_key)
         .unwrap();
 
     // --- Verification ---
@@ -222,7 +222,7 @@ mod async_workflow_tests {
         // 3. Decrypt asynchronously.
         let mut decrypted_data = Vec::new();
         let mut decryptor = pending_decryptor
-            .with_typed_key::<TestKem, TestDek>(decryption_key.clone())
+            .with_key::<TestKem, TestDek>(decryption_key.clone())
             .await
             .unwrap();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();

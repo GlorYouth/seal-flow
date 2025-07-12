@@ -18,23 +18,24 @@ pub struct HybridConfig<'a> {
 
 impl<'a> HybridConfig<'a> {
     pub fn into_body_config_and_header(self) -> crate::Result<(BodyEncryptConfig<'a>, Vec<u8>)> {
-        let (derivation_info, deriver_fn) = self
-            .derivation_config
-            .map(|d| (d.derivation_info, d.deriver_fn))
-            .unzip();
-
         let (header, base_nonce, shared_secret) = create_header(
             self.algorithm.as_ref(),
             self.public_key.as_ref(),
             self.kek_id,
             self.signer,
             self.aad.as_deref(),
-            derivation_info,
+            self.derivation_config
+                .as_ref()
+                .map(|d| d.derivation_info.clone()),
             self.config.chunk_size(),
         )?;
 
-        let dek = if let Some(f) = deriver_fn {
-            f(&shared_secret)?
+        let dek = if let Some(derivation_set) = self.derivation_config {
+            derivation_set.wrapper.derive(
+                &shared_secret,
+                derivation_set.salt(),
+                derivation_set.info(),
+            )?
         } else {
             shared_secret
         };

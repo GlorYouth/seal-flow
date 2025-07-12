@@ -217,32 +217,29 @@ impl TypedSignatureKeyPair {
         }
     }
 
-    /// Returns the public key as a generic byte wrapper.
-    ///
-    /// 以通用字节包装器形式返回公钥。
-    pub fn public_key(&self) -> SignaturePublicKey {
-        let bytes = match self {
-            Self::Dilithium2((pk, _)) => pk.to_bytes(),
-            Self::Dilithium3((pk, _)) => pk.to_bytes(),
-            Self::Dilithium5((pk, _)) => pk.to_bytes(),
-            Self::Ed25519((pk, _)) => pk.to_bytes(),
-            Self::EcdsaP256((pk, _)) => pk.to_bytes(),
-        };
-        SignaturePublicKey::new(bytes)
-    }
-
-    /// Returns the private key as a generic byte wrapper.
-    ///
-    /// 以通用字节包装器形式返回私钥。
-    pub fn private_key(&self) -> AsymmetricPrivateKey {
-        let bytes = match self {
-            Self::Dilithium2((_, sk)) => sk.to_bytes(),
-            Self::Dilithium3((_, sk)) => sk.to_bytes(),
-            Self::Dilithium5((_, sk)) => sk.to_bytes(),
-            Self::Ed25519((_, sk)) => sk.to_bytes(),
-            Self::EcdsaP256((_, sk)) => sk.to_bytes(),
-        };
-        AsymmetricPrivateKey::new(bytes)
+    pub fn into_keypair(self) -> (TypedSignaturePublicKey, TypedSignaturePrivateKey) {
+        match self {
+            Self::Dilithium2((pk, sk)) => (
+                TypedSignaturePublicKey::Dilithium2(pk),
+                TypedSignaturePrivateKey::Dilithium2(sk),
+            ),
+            Self::Dilithium3((pk, sk)) => (
+                TypedSignaturePublicKey::Dilithium3(pk),
+                TypedSignaturePrivateKey::Dilithium3(sk),
+            ),
+            Self::Dilithium5((pk, sk)) => (
+                TypedSignaturePublicKey::Dilithium5(pk),
+                TypedSignaturePrivateKey::Dilithium5(sk),
+            ),
+            Self::Ed25519((pk, sk)) => (
+                TypedSignaturePublicKey::Ed25519(pk),
+                TypedSignaturePrivateKey::Ed25519(sk),
+            ),
+            Self::EcdsaP256((pk, sk)) => (
+                TypedSignaturePublicKey::EcdsaP256(pk),
+                TypedSignaturePrivateKey::EcdsaP256(sk),
+            ),
+        }
     }
 
     /// Returns the algorithm of the key pair.
@@ -308,7 +305,6 @@ pub enum TypedAsymmetricPrivateKey {
 }
 
 impl TypedAsymmetricPrivateKey {
-
     pub fn to_bytes(&self) -> Vec<u8> {
         match self {
             Self::Rsa2048Sha256(sk) => sk.to_bytes(),
@@ -326,6 +322,66 @@ impl TypedAsymmetricPrivateKey {
             Self::Kyber512(_) => AsymmetricAlgorithmEnum::Kyber512,
             Self::Kyber768(_) => AsymmetricAlgorithmEnum::Kyber768,
             Self::Kyber1024(_) => AsymmetricAlgorithmEnum::Kyber1024,
+        }
+    }
+}
+
+/// An enum wrapping a typed signature public key.
+///
+/// 包装了类型化签名公钥的枚举。
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
+pub enum TypedSignaturePublicKey {
+    Dilithium2(<Dilithium2 as AsymmetricKeySet>::PublicKey),
+    Dilithium3(<Dilithium3 as AsymmetricKeySet>::PublicKey),
+    Dilithium5(<Dilithium5 as AsymmetricKeySet>::PublicKey),
+    Ed25519(<Ed25519 as AsymmetricKeySet>::PublicKey),
+    EcdsaP256(<EcdsaP256 as AsymmetricKeySet>::PublicKey),
+}
+
+impl TypedSignaturePublicKey {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Dilithium2(pk) => pk.to_bytes(),
+            Self::Dilithium3(pk) => pk.to_bytes(),
+            Self::Dilithium5(pk) => pk.to_bytes(),
+            Self::Ed25519(pk) => pk.to_bytes(),
+            Self::EcdsaP256(pk) => pk.to_bytes(),
+        }
+    }
+}
+
+/// An enum wrapping a typed signature private key.
+///
+/// 包装了类型化签名私钥的枚举。
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
+pub enum TypedSignaturePrivateKey {
+    Dilithium2(<Dilithium2 as AsymmetricKeySet>::PrivateKey),
+    Dilithium3(<Dilithium3 as AsymmetricKeySet>::PrivateKey),
+    Dilithium5(<Dilithium5 as AsymmetricKeySet>::PrivateKey),
+    Ed25519(<Ed25519 as AsymmetricKeySet>::PrivateKey),
+    EcdsaP256(<EcdsaP256 as AsymmetricKeySet>::PrivateKey),
+}
+
+impl TypedSignaturePrivateKey {
+    pub fn algorithm(&self) -> SignatureAlgorithmEnum {
+        match self {
+            Self::Dilithium2(_) => SignatureAlgorithmEnum::Dilithium2,
+            Self::Dilithium3(_) => SignatureAlgorithmEnum::Dilithium3,
+            Self::Dilithium5(_) => SignatureAlgorithmEnum::Dilithium5,
+            Self::Ed25519(_) => SignatureAlgorithmEnum::Ed25519,
+            Self::EcdsaP256(_) => SignatureAlgorithmEnum::EcdsaP256,
+        }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Dilithium2(sk) => sk.to_bytes(),
+            Self::Dilithium3(sk) => sk.to_bytes(),
+            Self::Dilithium5(sk) => sk.to_bytes(),
+            Self::Ed25519(sk) => sk.to_bytes(),
+            Self::EcdsaP256(sk) => sk.to_bytes(),
         }
     }
 }

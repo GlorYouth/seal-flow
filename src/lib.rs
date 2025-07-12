@@ -35,7 +35,8 @@
 pub mod prelude {
     //! A "prelude" for users of the `seal-flow` crate.
     pub use crate::common::algorithms::{
-        AsymmetricAlgorithm as AsymmetricAlgorithmEnum, KdfAlgorithm as KdfAlgorithmEnum,
+        AsymmetricAlgorithm as AsymmetricAlgorithmEnum, KdfKeyAlgorithm as KdfKeyAlgorithmEnum,
+        KdfPasswordAlgorithm as KdfPasswordAlgorithmEnum,
         SignatureAlgorithm as SignatureAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
         XofAlgorithm as XofAlgorithmEnum,
     };

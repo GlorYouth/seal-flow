@@ -111,9 +111,6 @@ mod tests {
     use crate::common::header::{DerivationInfo, KdfInfo};
     use crate::common::{DerivationSet, DEFAULT_CHUNK_SIZE};
     use crate::keys::TypedAsymmetricPublicKey;
-    use crate::keys::TypedSymmetricKey;
-    use seal_crypto::prelude::KeyBasedDerivation;
-    use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use std::borrow::Cow;
     use std::io::Cursor;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -367,24 +364,19 @@ mod tests {
 
         let salt = b"salt-async";
         let info = b"info-async";
-        let output_len = 32;
+
+        let kdf_algorithm = crate::common::algorithms::KdfKeyAlgorithm::HkdfSha256;
 
         let kdf_info = KdfInfo {
-            kdf_algorithm: crate::common::algorithms::KdfAlgorithm::HkdfSha256,
+            kdf_algorithm,
             salt: Some(salt.to_vec()),
             info: Some(info.to_vec()),
-            output_len,
         };
 
-        let deriver = HkdfSha256::default();
-        let kdf_fn = Box::new(move |ikm: &TypedSymmetricKey| {
-            let dk = deriver.derive(ikm.as_ref(), Some(salt), Some(info), output_len as usize)?;
-            TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm())
-        });
-
+        use crate::common::DerivationWrapper;
         let derivation_set = DerivationSet {
             derivation_info: DerivationInfo::Kdf(kdf_info),
-            deriver_fn: kdf_fn,
+            wrapper: DerivationWrapper::Kdf(kdf_algorithm.into_kdf_key_wrapper()),
         };
 
         let config = HybridConfig {

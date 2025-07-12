@@ -1,4 +1,7 @@
-use crate::keys::{SignaturePublicKey, TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+use crate::keys::{
+    SignaturePublicKey, TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey,
+    TypedSignaturePrivateKey, TypedSymmetricKey,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum KeyProviderError {
@@ -76,5 +79,5 @@ pub trait EncryptionKeyProvider: Send + Sync {
     fn get_signing_private_key(
         &self,
         key_id: &str,
-    ) -> Result<TypedAsymmetricPrivateKey, KeyProviderError>;
+    ) -> Result<TypedSignaturePrivateKey, KeyProviderError>;
 }

@@ -3,11 +3,8 @@
 //! 用于构建和执行混合加密操作的高级 API。
 
 use crate::algorithms::hybrid::HybridAlgorithmWrapper;
-use crate::algorithms::traits::{KdfAlgorithm, SignatureAlgorithm, XofAlgorithm};
 use crate::body::traits::FinishingWrite;
-use crate::common::algorithms::{
-    SymmetricAlgorithm as SymmetricAlgorithmEnum,
-};
+use crate::common::algorithms::SymmetricAlgorithm as SymmetricAlgorithmEnum;
 use crate::common::config::ArcConfig;
 use crate::common::header::{DerivationInfo, KdfInfo, XofInfo};
 use crate::common::{DerivationSet, SignerSet};
@@ -18,14 +15,14 @@ use crate::hybrid::traits::{
     HybridParallelStreamingProcessor, HybridStreamingProcessor,
 };
 use crate::keys::provider::EncryptionKeyProvider;
-use crate::keys::{AsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey};
+use crate::keys::{TypedAsymmetricPublicKey, TypedSignaturePrivateKey};
+use crate::prelude::{KdfKeyAlgorithmEnum, XofAlgorithmEnum};
 use crate::seal::traits::{
     AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor as StreamingEncryptorTrait,
     WithAad,
 };
 #[cfg(feature = "async")]
 use async_trait::async_trait;
-use seal_crypto::prelude::*;
 use std::borrow::Cow;
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -126,41 +123,25 @@ impl HybridEncryptor {
     /// Use a Key Derivation Function (KDF) to derive the Data Encryption Key (DEK).
     ///
     /// 使用密钥派生函数 (KDF) 派生数据加密密钥 (DEK)。
-    pub fn with_kdf<Kdf>(
+    pub fn with_kdf(
         mut self,
-        deriver: Kdf,
+        algorithm: KdfKeyAlgorithmEnum,
         salt: Option<impl Into<Vec<u8>>>,
         info: Option<impl Into<Vec<u8>>>,
-        output_len: u32,
-    ) -> Self
-    where
-        Kdf: KdfAlgorithm,
-    {
+    ) -> Self {
         let salt = salt.map(|s| s.into());
         let info = info.map(|i| i.into());
 
         let kdf_info = KdfInfo {
-            kdf_algorithm: Kdf::ALGORITHM,
+            kdf_algorithm: algorithm.clone(),
             salt: salt.clone(),
             info: info.clone(),
-            output_len,
         };
-
-        let deriver_fn = Box::new(move |ikm: &TypedSymmetricKey| {
-            deriver
-                .derive(
-                    ikm.as_ref(),
-                    salt.as_deref(),
-                    info.as_deref(),
-                    output_len as usize,
-                )
-                .map_err(Into::into)
-                .and_then(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm()))
-        });
+        use crate::common::DerivationWrapper;
 
         self.derivation_config = Some(DerivationSet {
             derivation_info: DerivationInfo::Kdf(kdf_info),
-            deriver_fn,
+            wrapper: DerivationWrapper::Kdf(algorithm.into_kdf_key_wrapper()),
         });
         self
     }
@@ -168,39 +149,25 @@ impl HybridEncryptor {
     /// Use an Extendable-Output Function (XOF) to derive the Data Encryption Key (DEK).
     ///
     /// 使用可扩展输出函数 (XOF) 派生数据加密密钥 (DEK)。
-    pub fn with_xof<Xof>(
+    pub fn with_xof(
         mut self,
-        deriver: Xof,
+        algorithm: XofAlgorithmEnum,
         salt: Option<impl Into<Vec<u8>>>,
         info: Option<impl Into<Vec<u8>>>,
-        output_len: u32,
-    ) -> Self
-    where
-        Xof: XofAlgorithm,
-    {
+    ) -> Self {
         let salt = salt.map(|s| s.into());
         let info = info.map(|i| i.into());
 
         let xof_info = XofInfo {
-            xof_algorithm: Xof::ALGORITHM,
+            xof_algorithm: algorithm,
             salt: salt.clone(),
             info: info.clone(),
-            output_len,
         };
-
-        let deriver_fn = Box::new(move |ikm: &TypedSymmetricKey| {
-            let mut reader = deriver.reader(ikm.as_ref(), salt.as_deref(), info.as_deref())?;
-            let mut dek_bytes = vec![0u8; output_len as usize];
-            reader.read(&mut dek_bytes);
-            Ok(TypedSymmetricKey::from_bytes(
-                dek_bytes.as_slice(),
-                ikm.algorithm(),
-            )?)
-        });
+        use crate::common::DerivationWrapper;
 
         self.derivation_config = Some(DerivationSet {
             derivation_info: DerivationInfo::Xof(xof_info),
-            deriver_fn,
+            wrapper: DerivationWrapper::Xof(algorithm.into_xof_wrapper()),
         });
         self
     }
@@ -208,10 +175,7 @@ impl HybridEncryptor {
     /// Signs the encryption metadata (header) using a key resolved from the `EncryptionKeyProvider`.
     ///
     /// 使用从 `EncryptionKeyProvider` 解析的密钥对加密元数据（标头）进行签名。
-    pub fn with_signer_id<SignerAlgo>(mut self, signer_key_id: &str) -> crate::Result<Self>
-    where
-        SignerAlgo: SignatureAlgorithm,
-    {
+    pub fn with_signer_id(mut self, signer_key_id: &str) -> crate::Result<Self> {
         let provider = self
             .key_provider
             .as_ref()
@@ -219,17 +183,8 @@ impl HybridEncryptor {
         let signing_key = provider.get_signing_private_key(signer_key_id)?;
         self.signer = Some(SignerSet {
             signer_key_id: signer_key_id.to_string(),
-            signer_algorithm: SignerAlgo::ALGORITHM,
-            signer: Box::new(move |message, aad| {
-                let sk = SignerAlgo::PrivateKey::from_bytes(signing_key.to_bytes().as_slice())?;
-                let mut data_to_sign = message.to_vec();
-                if let Some(aad_data) = aad {
-                    data_to_sign.extend_from_slice(aad_data);
-                }
-                SignerAlgo::sign(&sk, &data_to_sign)
-                    .map(|s| s.0)
-                    .map_err(|e| e.into())
-            }),
+            signer: signing_key.algorithm().into_signature_wrapper(),
+            signing_key: signing_key,
         });
         Ok(self)
     }
@@ -237,38 +192,23 @@ impl HybridEncryptor {
     /// Signs the encryption metadata (header) with the given private key.
     ///
     /// 使用给定的私钥对加密元数据（标头）进行签名。
-    pub fn with_signer<SignerAlgo>(
+    pub fn with_signer(
         mut self,
-        signing_key: AsymmetricPrivateKey,
+        signing_key: TypedSignaturePrivateKey,
         signer_key_id: String,
-    ) -> Self
-    where
-        SignerAlgo: SignatureAlgorithm,
-    {
+    ) -> crate::Result<Self> {
         self.signer = Some(SignerSet {
             signer_key_id,
-            signer_algorithm: SignerAlgo::ALGORITHM,
-            signer: Box::new(move |message, aad| {
-                let sk = SignerAlgo::PrivateKey::from_bytes(signing_key.as_bytes())?;
-                let mut data_to_sign = message.to_vec();
-                if let Some(aad_data) = aad {
-                    data_to_sign.extend_from_slice(aad_data);
-                }
-                SignerAlgo::sign(&sk, &data_to_sign)
-                    .map(|s| s.0)
-                    .map_err(|e| e.into())
-            }),
+            signer: signing_key.algorithm().into_signature_wrapper(),
+            signing_key: signing_key,
         });
-        self
+        Ok(self)
     }
 
     /// Configures the encryptor to use specific asymmetric and symmetric algorithms.
     ///
     /// 配置加密器以使用特定的对称算法。
-    pub fn execute_with(
-        self,
-        symmetric: SymmetricAlgorithmEnum,
-    ) -> HybridEncryptorWithAlgorithms {
+    pub fn execute_with(self, symmetric: SymmetricAlgorithmEnum) -> HybridEncryptorWithAlgorithms {
         let asym_algo = self.pk.algorithm().into_asymmetric_wrapper();
         let sym_algo = symmetric.into_symmetric_wrapper();
         let algorithm = HybridAlgorithmWrapper::new(asym_algo, sym_algo);
@@ -293,9 +233,7 @@ impl InMemoryEncryptor for HybridEncryptorWithAlgorithms {
     /// 在内存中加密给定的明文。
     fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
         let processor = crate::hybrid::ordinary::Ordinary::new();
-        let pk = self
-            .inner
-            .pk;
+        let pk = self.inner.pk;
 
         let config = HybridConfig {
             algorithm: Cow::Borrowed(&self.algorithm),
@@ -314,9 +252,7 @@ impl InMemoryEncryptor for HybridEncryptorWithAlgorithms {
     /// 使用并行处理在内存中加密给定的明文。
     fn to_vec_parallel(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
         let processor = crate::hybrid::parallel::Parallel::new();
-        let pk = self
-            .inner
-            .pk;
+        let pk = self.inner.pk;
 
         let config = HybridConfig {
             algorithm: Cow::Borrowed(&self.algorithm),
@@ -340,9 +276,7 @@ impl StreamingEncryptorTrait for HybridEncryptorWithAlgorithms {
         writer: W,
     ) -> crate::Result<Box<dyn FinishingWrite + 'a>> {
         let processor = crate::hybrid::streaming::Streaming::new();
-        let pk = self
-            .inner
-            .pk;
+        let pk = self.inner.pk;
 
         let config = HybridConfig {
             algorithm: Cow::Owned(self.algorithm),
@@ -365,9 +299,7 @@ impl StreamingEncryptorTrait for HybridEncryptorWithAlgorithms {
         W: Write + Send,
     {
         let processor = crate::hybrid::parallel_streaming::ParallelStreaming::new();
-        let pk = self
-            .inner
-            .pk;
+        let pk = self.inner.pk;
         let config = HybridConfig {
             algorithm: Cow::Borrowed(&self.algorithm),
             public_key: Cow::Borrowed(&pk),
@@ -391,9 +323,7 @@ impl AsyncStreamingEncryptor for HybridEncryptorWithAlgorithms {
         self,
         writer: W,
     ) -> crate::Result<Box<dyn AsyncWrite + Unpin + Send + 'a>> {
-        let pk = self
-            .inner
-            .pk;
+        let pk = self.inner.pk;
         let processor = crate::hybrid::asynchronous::Asynchronous::new();
         let config = HybridConfig {
             algorithm: Cow::Owned(self.algorithm),

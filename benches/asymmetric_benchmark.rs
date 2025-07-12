@@ -140,7 +140,7 @@ fn benchmark_hybrid_decryption(c: &mut Criterion) {
                 .decrypt()
                 .slice(black_box(&in_memory_ciphertext))
                 .unwrap();
-            pending.with_typed_key::<TestKem, TestDek>(&sk).unwrap();
+            pending.with_key::<TestKem, TestDek>(&sk).unwrap();
         });
     });
 
@@ -156,7 +156,7 @@ fn benchmark_hybrid_decryption(c: &mut Criterion) {
                     .decrypt()
                     .slice_parallel(black_box(&in_memory_ciphertext))
                     .unwrap();
-                pending.with_typed_key::<TestKem, TestDek>(&sk).unwrap();
+                pending.with_key::<TestKem, TestDek>(&sk).unwrap();
             });
         });
     });
@@ -168,7 +168,7 @@ fn benchmark_hybrid_decryption(c: &mut Criterion) {
                 .decrypt()
                 .reader(Cursor::new(black_box(in_memory_ciphertext.clone())))
                 .unwrap();
-            let mut decryptor = pending.with_typed_key::<TestKem, TestDek>(&sk).unwrap();
+            let mut decryptor = pending.with_key::<TestKem, TestDek>(&sk).unwrap();
             let mut decrypted_data = Vec::with_capacity(PLAINTEXT_SIZE);
             std::io::copy(&mut decryptor, &mut decrypted_data).unwrap();
         });
@@ -184,7 +184,7 @@ fn benchmark_hybrid_decryption(c: &mut Criterion) {
                 .await
                 .unwrap();
             let mut decryptor = pending
-                .with_typed_key::<TestKem, TestDek>(sk.clone())
+                .with_key::<TestKem, TestDek>(sk.clone())
                 .await
                 .unwrap();
             let mut decrypted_data = Vec::with_capacity(PLAINTEXT_SIZE);
@@ -208,7 +208,7 @@ fn benchmark_hybrid_decryption(c: &mut Criterion) {
                     .reader_parallel(Cursor::new(black_box(&in_memory_ciphertext)))
                     .unwrap();
                 pending
-                    .with_typed_key_to_writer::<TestKem, TestDek, _>(&sk, &mut decrypted_data)
+                    .with_key_to_writer::<TestKem, TestDek, _>(&sk, &mut decrypted_data)
                     .unwrap();
             });
         });

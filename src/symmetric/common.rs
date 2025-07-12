@@ -45,11 +45,9 @@ pub(super) fn prepare_body_decrypt_config(
     if let HeaderPayload {
         base_nonce,
         chunk_size,
-        specific_payload: SpecificHeaderPayload::Symmetric { 
-            algorithm,
-            ..
-         },
-    } = header.payload {
+        specific_payload: SpecificHeaderPayload::Symmetric { algorithm, .. },
+    } = header.payload
+    {
         if algorithm != key.algorithm() {
             return Err(Error::Format(FormatError::InvalidKeyType));
         }
@@ -63,7 +61,7 @@ pub(super) fn prepare_body_decrypt_config(
                 arc_config,
             },
         };
-    
+
         Ok(config)
     } else {
         Err(Error::Format(FormatError::InvalidHeader))

@@ -3,7 +3,7 @@ use bincode::{Decode, Encode};
 // These enums could also be considered for placement in seal-crypto for sharing.
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享。
 use crate::common::algorithms::{
-    AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm,
+    AsymmetricAlgorithm, KdfKeyAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm,
 };
 use crate::error::{CryptoError, Error, FormatError, Result};
 use crate::keys::SignaturePublicKey;
@@ -39,7 +39,7 @@ pub struct KdfInfo {
     /// The KDF algorithm.
     ///
     /// KDF 算法。
-    pub kdf_algorithm: KdfAlgorithm,
+    pub kdf_algorithm: KdfKeyAlgorithm,
     /// The salt for the KDF.
     ///
     /// 用于 KDF 的盐。
@@ -48,10 +48,6 @@ pub struct KdfInfo {
     ///
     /// 用于 KDF 的上下文和特定于应用程序的信息。
     pub info: Option<Vec<u8>>,
-    /// The desired length of the derived key.
-    ///
-    /// 派生密钥的期望长度。
-    pub output_len: u32,
 }
 
 /// XOF (Extendable-Output Function) configuration information.
@@ -71,10 +67,6 @@ pub struct XofInfo {
     ///
     /// 用于 XOF 的上下文和特定于应用程序的信息。
     pub info: Option<Vec<u8>>,
-    /// The desired length of the derived output.
-    ///
-    /// 派生输出的期望长度。
-    pub output_len: u32,
 }
 
 /// Information about the key derivation method used.
@@ -90,71 +82,6 @@ pub enum DerivationInfo {
     ///
     /// 使用可扩展输出函数 (XOF)。
     Xof(XofInfo),
-}
-
-impl DerivationInfo {
-    /// Derives a key from the shared secret using the specified method.
-    ///
-    /// 使用指定的方法从共享秘密派生密钥。
-    pub fn derive_key(
-        &self,
-        shared_secret: &[u8],
-    ) -> Result<seal_crypto::zeroize::Zeroizing<Vec<u8>>> {
-        use seal_crypto::prelude::{DigestXofReader, KeyBasedDerivation, XofDerivation};
-        use seal_crypto::schemes::{
-            kdf::hkdf::{HkdfSha256, HkdfSha384, HkdfSha512},
-            xof::shake::{Shake128, Shake256},
-        };
-        use seal_crypto::zeroize::Zeroizing;
-
-        match self {
-            DerivationInfo::Kdf(kdf_info) => {
-                let derived = match kdf_info.kdf_algorithm {
-                    crate::common::algorithms::KdfAlgorithm::HkdfSha256 => HkdfSha256::default()
-                        .derive(
-                            shared_secret,
-                            kdf_info.salt.as_deref(),
-                            kdf_info.info.as_deref(),
-                            kdf_info.output_len as usize,
-                        )?,
-                    crate::common::algorithms::KdfAlgorithm::HkdfSha384 => HkdfSha384::default()
-                        .derive(
-                            shared_secret,
-                            kdf_info.salt.as_deref(),
-                            kdf_info.info.as_deref(),
-                            kdf_info.output_len as usize,
-                        )?,
-                    crate::common::algorithms::KdfAlgorithm::HkdfSha512 => HkdfSha512::default()
-                        .derive(
-                            shared_secret,
-                            kdf_info.salt.as_deref(),
-                            kdf_info.info.as_deref(),
-                            kdf_info.output_len as usize,
-                        )?,
-                };
-                Ok(Zeroizing::new(derived.as_bytes().to_vec()))
-            }
-            DerivationInfo::Xof(xof_info) => {
-                let mut reader = match xof_info.xof_algorithm {
-                    crate::common::algorithms::XofAlgorithm::Shake256 => Shake256::default()
-                        .reader(
-                            shared_secret,
-                            xof_info.salt.as_deref(),
-                            xof_info.info.as_deref(),
-                        )?,
-                    crate::common::algorithms::XofAlgorithm::Shake128 => Shake128::default()
-                        .reader(
-                            shared_secret,
-                            xof_info.salt.as_deref(),
-                            xof_info.info.as_deref(),
-                        )?,
-                };
-                let mut dek_bytes = vec![0u8; xof_info.output_len as usize];
-                reader.read(&mut dek_bytes);
-                Ok(Zeroizing::new(dek_bytes))
-            }
-        }
-    }
 }
 
 /// Specific header payload for different encryption modes.
@@ -348,7 +275,6 @@ pub struct Header {
 }
 
 impl Header {
-
     /// Encodes the header into a byte vector.
     ///
     /// 将标头编码为字节向量。

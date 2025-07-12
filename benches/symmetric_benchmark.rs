@@ -197,7 +197,7 @@ fn benchmark_symmetric_decryption(c: &mut Criterion) {
                     .reader_parallel(Cursor::new(black_box(&in_memory_ciphertext)))
                     .unwrap();
                 pending
-                    .with_typed_key_to_writer::<TestDek, _>(key.clone(), &mut decrypted_data)
+                    .with_key_to_writer::<TestDek, _>(key.clone(), &mut decrypted_data)
                     .unwrap();
             });
         });

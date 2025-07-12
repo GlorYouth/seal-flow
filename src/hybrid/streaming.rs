@@ -98,9 +98,6 @@ mod tests {
     use crate::common::header::{DerivationInfo, KdfInfo};
     use crate::common::DerivationSet;
     use crate::keys::TypedAsymmetricPublicKey;
-    use crate::keys::TypedSymmetricKey;
-    use seal_crypto::prelude::KeyBasedDerivation;
-    use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
     use std::borrow::Cow;
     use std::io::Cursor;
 
@@ -123,25 +120,19 @@ mod tests {
         let derivation_config = if use_kdf {
             let salt = b"salt-stream";
             let info = b"info-stream";
-            let output_len = 32;
 
             let kdf_info = KdfInfo {
-                kdf_algorithm: crate::common::algorithms::KdfAlgorithm::HkdfSha256,
+                kdf_algorithm: crate::common::algorithms::KdfKeyAlgorithm::HkdfSha256,
                 salt: Some(salt.to_vec()),
                 info: Some(info.to_vec()),
-                output_len,
             };
 
-            let deriver = HkdfSha256::default();
-            let deriver_fn = Box::new(move |ikm: &TypedSymmetricKey| {
-                deriver
-                    .derive(ikm.as_ref(), Some(salt), Some(info), output_len as usize)
-                    .map(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm()))?
-            });
+            let kdf_algorithm = crate::common::algorithms::KdfKeyAlgorithm::HkdfSha256;
 
+            use crate::common::DerivationWrapper;
             Some(DerivationSet {
                 derivation_info: DerivationInfo::Kdf(kdf_info),
-                deriver_fn,
+                wrapper: DerivationWrapper::Kdf(kdf_algorithm.into_kdf_key_wrapper()),
             })
         } else {
             None

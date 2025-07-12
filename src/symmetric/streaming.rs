@@ -5,7 +5,7 @@
 use crate::body::traits::{FinishingWrite, StreamingBodyProcessor};
 use crate::common::config::ArcConfig;
 use crate::common::header::Header;
-use crate::error::{Result};
+use crate::error::Result;
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::pending::PendingDecryptor;

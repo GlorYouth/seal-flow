@@ -5,10 +5,13 @@
 use crate::error::Result;
 use crate::keys::{
     SymmetricKey as UntypedSymmetricKey, TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey,
-    TypedSymmetricKey,
+    TypedSignatureKeyPair, TypedSignaturePrivateKey, TypedSignaturePublicKey, TypedSymmetricKey,
+};
+use crate::prelude::{
+    KdfKeyAlgorithmEnum, KdfPasswordAlgorithmEnum, SymmetricAlgorithmEnum, XofAlgorithmEnum,
 };
 use crate::{common, keys::TypedAsymmetricKeyPair};
-use seal_crypto::prelude::*;
+use seal_crypto::secrecy::SecretBox;
 use seal_crypto::zeroize::Zeroizing;
 
 macro_rules! impl_trait_for_box {
@@ -200,27 +203,6 @@ impl_trait_for_box!(SymmetricAlgorithm {
     ref fn clone_box_symmetric(&self,) -> Box<dyn SymmetricAlgorithm>;
 }, clone_box_symmetric);
 
-/// Trait to provide the details for a specific key-based key derivation function (KDF).
-/// The implementor of this trait is the scheme itself.
-///
-/// 用于提供特定基于密钥的密钥派生函数 (KDF) 详细信息的 trait。
-/// 该 trait 的实现者是算法方案本身。
-pub trait KdfAlgorithmDetails: KeyBasedDerivation + 'static {
-    /// The corresponding algorithm enum.
-    ///
-    /// 对应的算法枚举。
-    const ALGORITHM: common::algorithms::KdfAlgorithm;
-}
-
-/// Represents a concrete key-based key derivation function (KDF).
-/// This is a marker trait that bundles `KdfAlgorithmDetails`.
-///
-/// 表示一个具体的基于密钥的密钥派生函数 (KDF)。
-/// 这是一个标记 trait，它将 `KdfAlgorithmDetails` 捆绑在一起。
-pub trait KdfAlgorithm: KdfAlgorithmDetails {}
-
-impl<T: KdfAlgorithmDetails> KdfAlgorithm for T {}
-
 /// Trait to provide the details for a specific asymmetric algorithm.
 /// The implementor of this trait is the scheme itself.
 ///
@@ -393,44 +375,78 @@ impl Clone for Box<dyn HybridAlgorithm> {
     }
 }
 
-/// Trait to provide the details for a specific digital signature algorithm.
-/// The implementor of this trait is the scheme itself.
-///
-/// 用于提供特定数字签名算法详细信息的 trait。
-/// 该 trait 的实现者是算法方案本身。
-pub trait SignatureAlgorithmDetails: SignatureScheme + 'static {
-    /// The corresponding algorithm enum.
-    ///
-    /// 对应的算法枚举。
-    const ALGORITHM: common::algorithms::SignatureAlgorithm;
+pub trait KdfKeyAlgorithm: Send + Sync + 'static {
+    fn derive(
+        &self,
+        ikm: &TypedSymmetricKey,
+        salt: Option<&[u8]>,
+        info: Option<&[u8]>,
+    ) -> Result<TypedSymmetricKey>;
+
+    fn algorithm(&self) -> KdfKeyAlgorithmEnum;
+
+    fn clone_box(&self) -> Box<dyn KdfKeyAlgorithm>;
 }
 
-/// Represents a concrete digital signature scheme.
-/// This is a marker trait that bundles `SignatureAlgorithmDetails`.
-///
-/// 表示一个具体的数字签名方案。
-/// 这是一个标记 trait，它将 `SignatureAlgorithmDetails` 捆绑在一起。
-pub trait SignatureAlgorithm: SignatureAlgorithmDetails {}
+impl_trait_for_box!(KdfKeyAlgorithm {
+    ref fn clone_box(&self,) -> Box<dyn KdfKeyAlgorithm>;
+    ref fn derive(&self, ikm: &TypedSymmetricKey, salt: Option<&[u8]>, info: Option<&[u8]>) -> Result<TypedSymmetricKey>;
+    ref fn algorithm(&self,) -> KdfKeyAlgorithmEnum;
+}, clone_box);
 
-impl<T: SignatureAlgorithmDetails> SignatureAlgorithm for T {}
+pub trait KdfPasswordAlgorithm {
+    fn derive(
+        &self,
+        password: &SecretBox<[u8]>,
+        salt: &[u8],
+        algorithm: SymmetricAlgorithmEnum,
+    ) -> Result<TypedSymmetricKey>;
 
-/// Trait to provide the details for a specific extendable-output function (XOF).
-/// The implementor of this trait is the scheme itself.
-///
-/// 用于提供特定可扩展输出函数 (XOF) 详细信息的 trait。
-/// 该 trait 的实现者是算法方案本身。
-pub trait XofAlgorithmDetails: XofDerivation + 'static {
-    /// The corresponding algorithm enum.
-    ///
-    /// 对应的算法枚举。
-    const ALGORITHM: common::algorithms::XofAlgorithm;
+    fn algorithm(&self) -> KdfPasswordAlgorithmEnum;
+
+    fn clone_box(&self) -> Box<dyn KdfPasswordAlgorithm>;
 }
 
-/// Represents a concrete extendable-output function (XOF).
-/// This is a marker trait that bundles `XofAlgorithmDetails`.
-///
-/// 表示一个具体的可扩展输出函数 (XOF)。
-/// 这是一个标记 trait，它将 `XofAlgorithmDetails` 捆绑在一起。
-pub trait XofAlgorithm: XofAlgorithmDetails {}
+impl_trait_for_box!(KdfPasswordAlgorithm {
+    ref fn clone_box(&self,) -> Box<dyn KdfPasswordAlgorithm>;
+    ref fn derive(&self, password: &SecretBox<[u8]>, salt: &[u8], algorithm: SymmetricAlgorithmEnum) -> Result<TypedSymmetricKey>;
+    ref fn algorithm(&self,) -> KdfPasswordAlgorithmEnum;
+}, clone_box);
 
-impl<T: XofAlgorithmDetails> XofAlgorithm for T {}
+pub trait XofAlgorithm: Send + Sync + 'static {
+    fn derive(
+        &self,
+        ikm: &TypedSymmetricKey,
+        salt: Option<&[u8]>,
+        info: Option<&[u8]>,
+    ) -> Result<TypedSymmetricKey>;
+    fn clone_box(&self) -> Box<dyn XofAlgorithm>;
+    fn algorithm(&self) -> XofAlgorithmEnum;
+}
+
+impl_trait_for_box!(XofAlgorithm {
+    ref fn derive(&self, ikm: &TypedSymmetricKey, salt: Option<&[u8]>, info: Option<&[u8]>) -> Result<TypedSymmetricKey>;
+    ref fn algorithm(&self,) -> XofAlgorithmEnum;
+    ref fn clone_box(&self,) -> Box<dyn XofAlgorithm>;
+}, clone_box);
+
+pub trait SignatureAlgorithm: Send + Sync + 'static {
+    fn sign(&self, message: &[u8], key: &TypedSignaturePrivateKey) -> Result<Vec<u8>>;
+    fn verify(
+        &self,
+        message: &[u8],
+        key: &TypedSignaturePublicKey,
+        signature: Vec<u8>,
+    ) -> Result<bool>;
+    fn generate_keypair(&self) -> Result<TypedSignatureKeyPair>;
+    fn clone_box(&self) -> Box<dyn SignatureAlgorithm>;
+    fn algorithm(&self) -> common::algorithms::SignatureAlgorithm;
+}
+
+impl_trait_for_box!(SignatureAlgorithm {
+    ref fn sign(&self, message: &[u8], key: &TypedSignaturePrivateKey) -> Result<Vec<u8>>;
+    ref fn verify(&self, message: &[u8], key: &TypedSignaturePublicKey, signature: Vec<u8>) -> Result<bool>;
+    ref fn generate_keypair(&self,) -> Result<TypedSignatureKeyPair>;
+    ref fn clone_box(&self,) -> Box<dyn SignatureAlgorithm>;
+    ref fn algorithm(&self,) -> common::algorithms::SignatureAlgorithm;
+}, clone_box);

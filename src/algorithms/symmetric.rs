@@ -1,14 +1,11 @@
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::keys::{TypedSymmetricKey, SymmetricKey as UntypedSymmetricKey};
-use seal_crypto::prelude::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor};
-pub use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};
-pub use seal_crypto::schemes::symmetric::chacha20_poly1305::{
-    ChaCha20Poly1305, XChaCha20Poly1305,
-};
-use std::ops::Deref;
 use crate::common;
 use crate::error::{Error, FormatError, Result};
-
+use crate::keys::{SymmetricKey as UntypedSymmetricKey, TypedSymmetricKey};
+use seal_crypto::prelude::{SymmetricCipher, SymmetricDecryptor, SymmetricEncryptor};
+use seal_crypto::schemes::symmetric::aes_gcm::{Aes128Gcm, Aes256Gcm};
+use seal_crypto::schemes::symmetric::chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305};
+use std::ops::Deref;
 
 macro_rules! impl_symmetric_algorithm {
     ($wrapper:ident, $algo:ty, $key_variant:path, $algo_enum:path) => {
@@ -133,7 +130,6 @@ macro_rules! impl_symmetric_algorithm {
         }
     };
 }
-
 
 #[derive(Clone)]
 pub struct SymmetricAlgorithmWrapper {

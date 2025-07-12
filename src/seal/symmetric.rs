@@ -227,7 +227,7 @@ mod tests {
             .unwrap();
         let pending = seal.decrypt().slice(&encrypted).unwrap();
         assert_eq!(pending.key_id(), Some(TEST_KEY_ID));
-        let decrypted = pending.with_key_to_vec(key).unwrap();
+        let decrypted = pending.with_untyped_key_to_vec(key).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
     }
 
@@ -246,7 +246,7 @@ mod tests {
 
         let pending = seal.decrypt().slice_parallel(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
-        let decrypted = pending.with_key_to_vec(key)?;
+        let decrypted = pending.with_untyped_key_to_vec(key)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -276,7 +276,7 @@ mod tests {
         let pending = seal.decrypt().reader(Cursor::new(&encrypted_data)).unwrap();
         let key_id = pending.key_id().unwrap();
         let _decryption_key = key_store.get(key_id).unwrap();
-        let mut decryptor = pending.with_key_to_reader(key).unwrap();
+        let mut decryptor = pending.with_untyped_key_to_reader(key).unwrap();
 
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
@@ -300,7 +300,7 @@ mod tests {
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
 
         let mut decrypted = Vec::new();
-        pending.with_key_to_writer(key, &mut decrypted)?;
+        pending.with_untyped_key_to_writer(key, &mut decrypted)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -323,7 +323,7 @@ mod tests {
         // 使用密钥字节解密
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
-        let decrypted = pending.with_key_to_vec(key)?;
+        let decrypted = pending.with_untyped_key_to_vec(key)?;
 
         assert_eq!(plaintext, &decrypted[..]);
         Ok(())
@@ -347,17 +347,17 @@ mod tests {
         // Decrypt with correct AAD
         let pending = seal.decrypt().with_aad(aad).slice(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
-        let decrypted = pending.with_key_to_vec(key.clone())?;
+        let decrypted = pending.with_untyped_key_to_vec(key.clone())?;
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
         let pending_fail = seal.decrypt().with_aad(b"wrong-aad").slice(&encrypted)?;
-        let result = pending_fail.with_key_to_vec(key.clone());
+        let result = pending_fail.with_untyped_key_to_vec(key.clone());
         assert!(result.is_err());
 
         // Decrypt with no AAD fails
         let pending_fail2 = seal.decrypt().slice(&encrypted)?;
-        let result2 = pending_fail2.with_key_to_vec(key);
+        let result2 = pending_fail2.with_untyped_key_to_vec(key);
         assert!(result2.is_err());
 
         Ok(())
@@ -401,7 +401,7 @@ mod tests {
                 .unwrap();
             let key_id = pending.key_id().unwrap();
             let _decryption_key = key_store.get(key_id).unwrap();
-            let mut decryptor = pending.with_key_to_async_reader(key).await.unwrap();
+            let mut decryptor = pending.with_untyped_key_to_async_reader(key).await.unwrap();
 
             let mut decrypted_data = Vec::new();
             decryptor.read_to_end(&mut decrypted_data).await.unwrap();

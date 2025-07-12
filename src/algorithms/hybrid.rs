@@ -1,9 +1,7 @@
 use crate::algorithms::traits::{
     AsymmetricAlgorithm, HybridAlgorithm as HybridAlgorithmTrait, SymmetricAlgorithm,
 };
-use crate::keys::{
-    SymmetricKey as UntypedSymmetricKey, TypedAsymmetricKeyPair, TypedSymmetricKey,
-};
+use crate::keys::{SymmetricKey as UntypedSymmetricKey, TypedAsymmetricKeyPair, TypedSymmetricKey};
 use crate::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey};
 use seal_crypto::zeroize::Zeroizing;
 
