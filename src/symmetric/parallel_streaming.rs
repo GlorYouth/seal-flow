@@ -5,10 +5,9 @@
 //! 实现并行流式对称加解密方案。
 //! 此模式通过将 I/O 与并行计算重叠，专为高性能处理大文件或数据流而设计。
 
-use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::ParallelStreamingBodyProcessor;
-use crate::common::config::{ArcConfig, DecryptorConfig};
-use crate::common::header::{Header, HeaderPayload};
+use crate::common::config::ArcConfig;
+use crate::common::header::Header;
 use crate::error::Result;
 use crate::error::{Error, FormatError};
 use crate::keys::TypedSymmetricKey;
@@ -17,7 +16,6 @@ use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{
     SymmetricParallelStreamingPendingDecryptor, SymmetricParallelStreamingProcessor,
 };
-use std::borrow::Cow;
 use std::io::{Read, Write};
 
 impl<'a> SymmetricParallelStreamingPendingDecryptor<'a>
@@ -29,24 +27,11 @@ impl<'a> SymmetricParallelStreamingPendingDecryptor<'a>
         writer: Box<dyn Write + Send + 'a>,
         aad: Option<Vec<u8>>,
     ) -> Result<()> {
-        let HeaderPayload {
-            base_nonce,
-            chunk_size,
-            ..
-        } = self.header.payload;
-
-        let config = BodyDecryptConfig {
-            key: Cow::Borrowed(key),
-            nonce: base_nonce,
-            aad,
-            config: DecryptorConfig {
-                chunk_size,
-                arc_config: self.config,
-            },
-        };
+        let body_config =
+            super::common::prepare_body_decrypt_config(&self.header, key, aad, self.config)?;
         self.algorithm
             .algorithm
-            .decrypt_body_pipeline(self.source, writer, config)
+            .decrypt_body_pipeline(self.source, writer, body_config)
     }
 
     fn header(&self) -> &Header {
@@ -105,6 +90,7 @@ mod tests {
     use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
     use crate::common::DEFAULT_CHUNK_SIZE;
     use crate::prelude::SymmetricAlgorithmEnum;
+    use std::borrow::Cow;
     use std::io::Cursor;
 
     fn get_wrapper() -> SymmetricAlgorithmWrapper {

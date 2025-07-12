@@ -2,16 +2,14 @@
 //!
 //! 为同步、流式对称加密实现 `std::io` trait。
 
-use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::{FinishingWrite, StreamingBodyProcessor};
-use crate::common::config::{ArcConfig, DecryptorConfig};
-use crate::common::header::{Header, HeaderPayload};
+use crate::common::config::ArcConfig;
+use crate::common::header::Header;
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::config::SymmetricConfig;
 use crate::symmetric::pending::PendingDecryptor;
 use crate::symmetric::traits::{SymmetricStreamingPendingDecryptor, SymmetricStreamingProcessor};
-use std::borrow::Cow;
 use std::io::{Read, Write};
 
 impl<'a> SymmetricStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Read + 'a>> {
@@ -20,22 +18,10 @@ impl<'a> SymmetricStreamingPendingDecryptor<'a> for PendingDecryptor<Box<dyn Rea
         key: &TypedSymmetricKey,
         aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn Read + 'a>> {
-        let HeaderPayload {
-            base_nonce,
-            chunk_size,
-            ..
-        } = self.header.payload;
-
-        let config = BodyDecryptConfig {
-            key: Cow::Owned(key.clone()),
-            nonce: base_nonce,
-            aad,
-            config: DecryptorConfig {
-                chunk_size,
-                arc_config: self.config,
-            },
-        };
-        self.algorithm.decrypt_body_from_stream(self.source, config)
+        let body_config =
+            super::common::prepare_body_decrypt_config(&self.header, key, aad, self.config)?;
+        self.algorithm
+            .decrypt_body_from_stream(self.source, body_config)
     }
 
     fn header(&self) -> &Header {
@@ -93,6 +79,7 @@ mod tests {
     use super::*;
     use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
     use crate::prelude::SymmetricAlgorithmEnum;
+    use std::borrow::Cow;
     use std::io::Cursor;
     use std::io::Write;
 

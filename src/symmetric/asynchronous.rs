@@ -7,10 +7,9 @@
 
 #![cfg(feature = "async")]
 
-use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::AsynchronousBodyProcessor;
-use crate::common::config::{ArcConfig, DecryptorConfig};
-use crate::common::header::{Header, HeaderPayload};
+use crate::common::config::ArcConfig;
+use crate::common::header::Header;
 use crate::error::{Error, FormatError, Result};
 use crate::keys::TypedSymmetricKey;
 use crate::symmetric::config::SymmetricConfig;
@@ -19,7 +18,6 @@ use crate::symmetric::traits::{
     SymmetricAsynchronousPendingDecryptor, SymmetricAsynchronousProcessor,
 };
 use async_trait::async_trait;
-use std::borrow::Cow;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
 #[async_trait]
@@ -31,23 +29,10 @@ impl<'decr> SymmetricAsynchronousPendingDecryptor<'decr>
         key: &'a TypedSymmetricKey,
         aad: Option<Vec<u8>>,
     ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'decr>> {
-        let HeaderPayload {
-            base_nonce,
-            chunk_size,
-            ..
-        } = self.header.payload;
+        let body_config =
+            super::common::prepare_body_decrypt_config(&self.header, key, aad, self.config)?;
 
-        let config = BodyDecryptConfig {
-            key: Cow::Owned(key.clone()),
-            nonce: base_nonce,
-            aad,
-            config: DecryptorConfig {
-                chunk_size,
-                arc_config: self.config,
-            },
-        };
-
-        self.algorithm.decrypt_body_async(self.source, config)
+        self.algorithm.decrypt_body_async(self.source, body_config)
     }
 
     fn header(&self) -> &Header {
@@ -109,6 +94,7 @@ mod tests {
     use crate::{
         algorithms::symmetric::SymmetricAlgorithmWrapper, prelude::SymmetricAlgorithmEnum,
     };
+    use std::borrow::Cow;
     use std::io::Cursor;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
