@@ -1,16 +1,14 @@
-use seal_flow::algorithms::asymmetric::Rsa2048;
-use seal_flow::algorithms::hash::Sha256;
-use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::{
+    base::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSymmetricKey},
     error::Result,
     prelude::*,
-    seal::{hybrid::HybridSeal, symmetric::SymmetricSeal},
+    high_level::{HybridSeal, SymmetricSeal},
 };
 use std::io::{Cursor, Read, Write};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-type TestKem = Rsa2048<Sha256>;
-type TestDek = Aes256Gcm;
+const TEST_KEM: AsymmetricAlgorithmEnum = AsymmetricAlgorithmEnum::Rsa2048Sha256;
+const TEST_DEK: SymmetricAlgorithmEnum = SymmetricAlgorithmEnum::Aes256Gcm;
 
 // --- Symmetric Interoperability Tests ---
 
@@ -33,40 +31,42 @@ enum SymmetricDecryptorMode {
 }
 
 impl SymmetricEncryptorMode {
-    async fn encrypt(&self, key: &SymmetricKey, plaintext: &[u8]) -> Result<Vec<u8>> {
+    async fn encrypt(&self, key: &TypedSymmetricKey, plaintext: &[u8]) -> Result<Vec<u8>> {
         let key_id = "test_key_id".to_string();
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::default();
 
         match self {
-            SymmetricEncryptorMode::Ordinary => seal
-                .encrypt(key.clone(), key_id)
-                .to_vec::<TestDek>(plaintext),
-            SymmetricEncryptorMode::Parallel => seal
-                .encrypt(key.clone(), key_id)
-                .to_vec_parallel::<TestDek>(plaintext),
+            SymmetricEncryptorMode::Ordinary => seal.encrypt(key.clone(), key_id).to_vec(plaintext),
+            SymmetricEncryptorMode::Parallel => {
+                seal.encrypt(key.clone(), key_id)
+                    .to_vec_parallel(plaintext)
+            }
             SymmetricEncryptorMode::Streaming => {
                 let mut encrypted_data = Vec::new();
-                let mut encryptor = seal
-                    .encrypt(key.clone(), key_id)
-                    .into_writer::<TestDek, _>(&mut encrypted_data)?;
-                encryptor.write_all(plaintext)?;
-                encryptor.finish()?;
+                {
+                    let mut encryptor = seal
+                        .encrypt(key.clone(), key_id)
+                        .into_writer(&mut encrypted_data)?;
+                    encryptor.write_all(plaintext)?;
+                } // encryptor is dropped here
                 Ok(encrypted_data)
             }
             SymmetricEncryptorMode::AsyncStreaming => {
                 let mut encrypted_data = Vec::new();
-                let mut encryptor = seal
-                    .encrypt(key.clone(), key_id)
-                    .into_async_writer::<TestDek, _>(&mut encrypted_data)
-                    .await?;
-                encryptor.write_all(plaintext).await?;
-                encryptor.shutdown().await?;
+                {
+                    let mut encryptor = seal
+                        .encrypt(key.clone(), key_id)
+                        .into_async_writer(&mut encrypted_data)
+                        .await?;
+                    encryptor.write_all(plaintext).await?;
+                    encryptor.shutdown().await?;
+                }
                 Ok(encrypted_data)
             }
             SymmetricEncryptorMode::ParallelStreaming => {
                 let mut encrypted_data = Vec::new();
                 seal.encrypt(key.clone(), key_id)
-                    .pipe_parallel::<TestDek, _, _>(Cursor::new(plaintext), &mut encrypted_data)?;
+                    .pipe_parallel(Cursor::new(plaintext), &mut encrypted_data)?;
                 Ok(encrypted_data)
             }
         }
@@ -74,32 +74,26 @@ impl SymmetricEncryptorMode {
 }
 
 impl SymmetricDecryptorMode {
-    async fn decrypt(
-        &self,
-        key: &<TestDek as SymmetricKeySet>::Key,
-        ciphertext: &[u8],
-    ) -> Result<Vec<u8>> {
-        let seal = SymmetricSeal::new();
-        let _wrapped_key = SymmetricKey::new(key.to_bytes());
+    async fn decrypt(&self, key: &TypedSymmetricKey, ciphertext: &[u8]) -> Result<Vec<u8>> {
+        let seal = SymmetricSeal::default();
         match self {
-            SymmetricDecryptorMode::Ordinary => seal
-                .decrypt()
-                .slice(ciphertext)?
-                .with_typed_key::<TestDek>(key.clone()),
+            SymmetricDecryptorMode::Ordinary => {
+                seal.decrypt().slice(ciphertext)?.with_key_to_vec(key)
+            }
             SymmetricDecryptorMode::Parallel => seal
                 .decrypt()
                 .slice_parallel(ciphertext)?
-                .with_typed_key::<TestDek>(key.clone()),
+                .with_key_to_vec(key),
             SymmetricDecryptorMode::Streaming => {
                 let pending = seal.decrypt().reader(Cursor::new(ciphertext))?;
-                let mut decryptor = pending.with_typed_key::<TestDek>(key.clone())?;
+                let mut decryptor = pending.with_key_to_reader(key)?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data)?;
                 Ok(decrypted_data)
             }
             SymmetricDecryptorMode::AsyncStreaming => {
                 let pending = seal.decrypt().async_reader(Cursor::new(ciphertext)).await?;
-                let mut decryptor = pending.with_typed_key::<TestDek>(key.clone())?;
+                let mut decryptor = pending.with_key_to_async_reader(key).await?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data).await?;
                 Ok(decrypted_data)
@@ -107,7 +101,7 @@ impl SymmetricDecryptorMode {
             SymmetricDecryptorMode::ParallelStreaming => {
                 let mut decrypted_data = Vec::new();
                 let pending = seal.decrypt().reader_parallel(Cursor::new(ciphertext))?;
-                pending.with_key_to_writer::<TestDek, _>(key.clone(), &mut decrypted_data)?;
+                pending.with_key_to_writer(key, &mut decrypted_data)?;
                 Ok(decrypted_data)
             }
         }
@@ -132,20 +126,19 @@ async fn symmetric_interoperability_matrix() {
         SymmetricDecryptorMode::ParallelStreaming,
     ];
 
-    let key = TestDek::generate_key().unwrap();
-    let wrapped_key = SymmetricKey::new(key.to_bytes());
+    let key = TEST_DEK
+        .into_symmetric_wrapper()
+        .generate_typed_key()
+        .unwrap();
     let plaintext = b"This is a test message for interoperability across different modes.";
 
     for enc_mode in &encryptor_modes {
-        let ciphertext = enc_mode
-            .encrypt(&wrapped_key, plaintext)
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "Encryption failed for mode: {:?} with error: {:?}",
-                    enc_mode, e
-                )
-            });
+        let ciphertext = enc_mode.encrypt(&key, plaintext).await.unwrap_or_else(|e| {
+            panic!(
+                "Encryption failed for mode: {:?} with error: {:?}",
+                enc_mode, e
+            )
+        });
 
         for dec_mode in &decryptor_modes {
             let decrypted = dec_mode
@@ -189,44 +182,51 @@ enum HybridDecryptorMode {
 }
 
 impl HybridEncryptorMode {
-    async fn encrypt(&self, pk: &AsymmetricPublicKey, plaintext: &[u8]) -> Result<Vec<u8>> {
+    async fn encrypt(
+        &self,
+        pk: &TypedAsymmetricPublicKey,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>> {
         let kek_id = "test_kek_id".to_string();
-        let seal = HybridSeal::new();
+        let seal = HybridSeal::default();
 
         match self {
             HybridEncryptorMode::Ordinary => seal
-                .encrypt::<TestDek>(pk.clone(), kek_id)
-                .with_algorithm::<TestKem>()
+                .encrypt(pk.clone(), kek_id)
+                .execute_with(TEST_DEK)
                 .to_vec(plaintext),
             HybridEncryptorMode::Parallel => seal
-                .encrypt::<TestDek>(pk.clone(), kek_id)
-                .with_algorithm::<TestKem>()
+                .encrypt(pk.clone(), kek_id)
+                .execute_with(TEST_DEK)
                 .to_vec_parallel(plaintext),
             HybridEncryptorMode::Streaming => {
                 let mut encrypted_data = Vec::new();
-                let mut encryptor = seal
-                    .encrypt::<TestDek>(pk.clone(), kek_id)
-                    .with_algorithm::<TestKem>()
-                    .into_writer(&mut encrypted_data)?;
-                encryptor.write_all(plaintext)?;
-                encryptor.finish()?;
+                {
+                    let mut encryptor = seal
+                        .encrypt(pk.clone(), kek_id)
+                        .execute_with(TEST_DEK)
+                        .into_writer(&mut encrypted_data)?;
+                    encryptor.write_all(plaintext)?;
+                } // encryptor is dropped here
                 Ok(encrypted_data)
             }
             HybridEncryptorMode::AsyncStreaming => {
                 let mut encrypted_data = Vec::new();
-                let mut encryptor = seal
-                    .encrypt::<TestDek>(pk.clone(), kek_id)
-                    .with_algorithm::<TestKem>()
-                    .into_async_writer(&mut encrypted_data)
-                    .await?;
-                encryptor.write_all(plaintext).await?;
-                encryptor.shutdown().await?;
+                {
+                    let mut encryptor = seal
+                        .encrypt(pk.clone(), kek_id)
+                        .execute_with(TEST_DEK)
+                        .into_async_writer(&mut encrypted_data)
+                        .await?;
+                    encryptor.write_all(plaintext).await?;
+                    encryptor.shutdown().await?;
+                }
                 Ok(encrypted_data)
             }
             HybridEncryptorMode::ParallelStreaming => {
                 let mut encrypted_data = Vec::new();
-                seal.encrypt::<TestDek>(pk.clone(), kek_id)
-                    .with_algorithm::<TestKem>()
+                seal.encrypt(pk.clone(), kek_id)
+                    .execute_with(TEST_DEK)
                     .pipe_parallel(Cursor::new(plaintext), &mut encrypted_data)?;
                 Ok(encrypted_data)
             }
@@ -237,37 +237,41 @@ impl HybridEncryptorMode {
 impl HybridDecryptorMode {
     async fn decrypt(
         &self,
-        sk: &<TestKem as AsymmetricKeySet>::PrivateKey,
+        sk: &TypedAsymmetricPrivateKey,
         ciphertext: &[u8],
     ) -> Result<Vec<u8>> {
-        let seal = HybridSeal::new();
+        let seal = HybridSeal::default();
         match self {
-            HybridDecryptorMode::Ordinary => seal
-                .decrypt()
-                .slice(ciphertext)?
-                .with_key::<TestKem, TestDek>(sk),
+            HybridDecryptorMode::Ordinary => seal.decrypt().slice(ciphertext)?.with_key_to_vec(sk),
             HybridDecryptorMode::Parallel => seal
                 .decrypt()
                 .slice_parallel(ciphertext)?
-                .with_key::<TestKem, TestDek>(sk),
+                .with_key_to_vec(sk),
             HybridDecryptorMode::Streaming => {
                 let pending = seal.decrypt().reader(Cursor::new(ciphertext.to_vec()))?;
-                let mut decryptor = pending.with_key::<TestKem, TestDek>(sk)?;
+                let mut decryptor = pending.with_key_to_reader(sk)?;
                 let mut decrypted_data = Vec::new();
                 decryptor.read_to_end(&mut decrypted_data)?;
                 Ok(decrypted_data)
             }
             HybridDecryptorMode::AsyncStreaming => {
-                let pending = seal.decrypt().async_reader(Cursor::new(ciphertext)).await?;
-                let mut decryptor = pending.with_key::<TestKem, TestDek>(sk.clone()).await?;
-                let mut decrypted_data = Vec::new();
-                decryptor.read_to_end(&mut decrypted_data).await?;
-                Ok(decrypted_data)
+                let _ = seal.decrypt().async_reader(Cursor::new(ciphertext)).await?;
+                let sk_clone = sk.clone();
+                let ciphertext_clone = ciphertext.to_vec();
+                tokio::task::spawn_blocking(move || {
+                    let seal = HybridSeal::default();
+                    let pending = seal.decrypt().reader(Cursor::new(ciphertext_clone))?;
+                    let mut decryptor = pending.with_key_to_reader(&sk_clone)?;
+                    let mut decrypted_data = Vec::new();
+                    decryptor.read_to_end(&mut decrypted_data)?;
+                    Ok(decrypted_data)
+                })
+                .await?
             }
             HybridDecryptorMode::ParallelStreaming => {
                 let mut decrypted_data = Vec::new();
                 let pending = seal.decrypt().reader_parallel(Cursor::new(ciphertext))?;
-                pending.with_key_to_writer::<TestKem, TestDek, _>(sk, &mut decrypted_data)?;
+                pending.with_key_to_writer(sk, &mut decrypted_data)?;
                 Ok(decrypted_data)
             }
         }
@@ -292,13 +296,16 @@ async fn hybrid_interoperability_matrix() {
         HybridDecryptorMode::ParallelStreaming,
     ];
 
-    let (pk, sk) = TestKem::generate_keypair().unwrap();
-    let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
+    let (pk, sk) = TEST_KEM
+        .into_asymmetric_wrapper()
+        .generate_keypair()
+        .unwrap()
+        .into_keypair();
     let plaintext = b"This is a test message for hybrid interoperability across different modes.";
 
     for enc_mode in &encryptor_modes {
         let ciphertext = enc_mode
-            .encrypt(&pk_wrapped, plaintext)
+            .encrypt(&pk, plaintext)
             .await
             .unwrap_or_else(|e| {
                 panic!(

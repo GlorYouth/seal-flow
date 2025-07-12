@@ -3,24 +3,22 @@
 //! These tests simulate a real-world scenario where a key store is used
 //! to look up keys based on the ID peeked from the ciphertext header.
 
-use seal_flow::algorithms::asymmetric::Rsa2048;
-use seal_flow::algorithms::hash::Sha256;
-use seal_flow::algorithms::symmetric::Aes256Gcm as TestDek;
 use seal_flow::{
+    base::keys::{TypedAsymmetricPrivateKey, TypedSymmetricKey},
     prelude::*,
-    seal::{hybrid::HybridSeal, symmetric::SymmetricSeal},
 };
 use std::collections::HashMap;
 use std::io::Cursor;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt};
 
-type TestKem = Rsa2048<Sha256>;
+const TEST_KEM: AsymmetricAlgorithmEnum = AsymmetricAlgorithmEnum::Rsa2048Sha256;
+const TEST_DEK: SymmetricAlgorithmEnum = SymmetricAlgorithmEnum::Aes256Gcm;
 
 // --- Mock Key Stores ---
 
 /// A simple in-memory mock for a symmetric key store.
 struct SymmetricKeyStore {
-    keys: HashMap<String, <TestDek as SymmetricKeySet>::Key>,
+    keys: HashMap<String, TypedSymmetricKey>,
 }
 
 impl SymmetricKeyStore {
@@ -29,17 +27,17 @@ impl SymmetricKeyStore {
             keys: HashMap::new(),
         }
     }
-    fn add_key(&mut self, id: String, key: <TestDek as SymmetricKeySet>::Key) {
+    fn add_key(&mut self, id: String, key: TypedSymmetricKey) {
         self.keys.insert(id, key);
     }
-    fn get_key(&self, id: &str) -> Option<&<TestDek as SymmetricKeySet>::Key> {
+    fn get_key(&self, id: &str) -> Option<&TypedSymmetricKey> {
         self.keys.get(id)
     }
 }
 
 /// A simple in-memory mock for an asymmetric key store.
 struct AsymmetricKeyStore {
-    keys: HashMap<String, <TestKem as AsymmetricKeySet>::PrivateKey>,
+    keys: HashMap<String, TypedAsymmetricPrivateKey>,
 }
 
 impl AsymmetricKeyStore {
@@ -48,10 +46,10 @@ impl AsymmetricKeyStore {
             keys: HashMap::new(),
         }
     }
-    fn add_key(&mut self, id: String, key: <TestKem as AsymmetricKeySet>::PrivateKey) {
+    fn add_key(&mut self, id: String, key: TypedAsymmetricPrivateKey) {
         self.keys.insert(id, key);
     }
-    fn get_key(&self, id: &str) -> Option<&<TestKem as AsymmetricKeySet>::PrivateKey> {
+    fn get_key(&self, id: &str) -> Option<&TypedAsymmetricPrivateKey> {
         self.keys.get(id)
     }
 }
@@ -63,17 +61,19 @@ fn test_symmetric_workflow() {
     // --- Setup ---
     let mut store = SymmetricKeyStore::new();
     let key_id = "symmetric-key-01".to_string();
-    let key = TestDek::generate_key().unwrap();
+    let key = TEST_DEK
+        .into_symmetric_wrapper()
+        .generate_typed_key()
+        .unwrap();
     store.add_key(key_id.clone(), key.clone());
 
     let plaintext = b"This is the symmetric workflow test.";
-    let seal = SymmetricSeal::new();
+    let seal = SymmetricSeal::default();
 
     // --- Encryption Side ---
-    let key_wrapped = SymmetricKey::new(key.to_bytes());
     let encrypted = seal
-        .encrypt(key_wrapped, key_id.clone())
-        .to_vec::<TestDek>(plaintext)
+        .encrypt(key, key_id.clone())
+        .to_vec(plaintext)
         .unwrap();
 
     // --- Decryption Side (simulated) ---
@@ -87,7 +87,7 @@ fn test_symmetric_workflow() {
 
     // 3. Decrypt using the retrieved key.
     let decrypted = pending_decryptor
-        .with_typed_key::<TestDek>(decryption_key.clone())
+        .with_key_to_vec(decryption_key)
         .unwrap();
 
     // --- Verification ---
@@ -99,17 +99,20 @@ fn test_hybrid_workflow() {
     // --- Setup ---
     let mut store = AsymmetricKeyStore::new();
     let kek_id = "hybrid-key-01".to_string();
-    let (pk, sk) = TestKem::generate_keypair().unwrap();
+    let (pk, sk) = TEST_KEM
+        .into_asymmetric_wrapper()
+        .generate_keypair()
+        .unwrap()
+        .into_keypair();
     store.add_key(kek_id.clone(), sk);
 
     let plaintext = b"This is the hybrid workflow test.";
-    let seal = HybridSeal::new();
+    let seal = HybridSeal::default();
 
     // --- Encryption Side ---
-    let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
     let encrypted = seal
-        .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
-        .with_algorithm::<TestKem>()
+        .encrypt(pk, kek_id.clone())
+        .execute_with(TEST_DEK)
         .to_vec(plaintext)
         .unwrap();
 
@@ -124,7 +127,7 @@ fn test_hybrid_workflow() {
 
     // 3. Decrypt using the retrieved private key.
     let decrypted = pending_decryptor
-        .with_key::<TestKem, TestDek>(decryption_key)
+        .with_key_to_vec(decryption_key)
         .unwrap();
 
     // --- Verification ---
@@ -141,23 +144,26 @@ mod async_workflow_tests {
         // --- Setup ---
         let mut store = SymmetricKeyStore::new();
         let key_id = "async-symmetric-key-01".to_string();
-        let key = TestDek::generate_key().unwrap();
+        let key = TEST_DEK
+            .into_symmetric_wrapper()
+            .generate_typed_key()
+            .unwrap();
         store.add_key(key_id.clone(), key.clone());
 
         let plaintext = b"This is the async symmetric workflow test.";
-        let seal = SymmetricSeal::new();
+        let seal = SymmetricSeal::default();
 
         // --- Encryption Side ---
         let mut encrypted_data = Vec::new();
-        let key_wrapped = SymmetricKey::new(key.to_bytes());
-        let mut encryptor = seal
-            .encrypt(key_wrapped, key_id.clone())
-            .with_algorithm::<TestDek>()
-            .into_async_writer(&mut encrypted_data)
-            .await
-            .unwrap();
-        encryptor.write_all(plaintext).await.unwrap();
-        encryptor.shutdown().await.unwrap();
+        {
+            let mut encryptor = seal
+                .encrypt(key, key_id.clone())
+                .into_async_writer(&mut encrypted_data)
+                .await
+                .unwrap();
+            encryptor.write_all(plaintext).await.unwrap();
+            encryptor.shutdown().await.unwrap();
+        }
 
         // --- Decryption Side (simulated) ---
         // 1. Peek the key ID asynchronously.
@@ -175,7 +181,8 @@ mod async_workflow_tests {
         // 3. Decrypt asynchronously.
         let mut decrypted_data = Vec::new();
         let mut decryptor = pending_decryptor
-            .with_typed_key::<TestDek>(decryption_key.clone())
+            .with_key_to_async_reader(decryption_key)
+            .await
             .unwrap();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();
 
@@ -188,23 +195,28 @@ mod async_workflow_tests {
         // --- Setup ---
         let mut store = AsymmetricKeyStore::new();
         let kek_id = "async-hybrid-key-01".to_string();
-        let (pk, sk) = TestKem::generate_keypair().unwrap();
+        let (pk, sk) = TEST_KEM
+            .into_asymmetric_wrapper()
+            .generate_keypair()
+            .unwrap()
+            .into_keypair();
         store.add_key(kek_id.clone(), sk.clone());
 
         let plaintext = b"This is the async hybrid workflow test.";
-        let seal = HybridSeal::new();
+        let seal = HybridSeal::default();
 
         // --- Encryption Side ---
         let mut encrypted_data = Vec::new();
-        let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
-        let mut encryptor = seal
-            .encrypt::<TestDek>(pk_wrapped, kek_id.clone())
-            .with_algorithm::<TestKem>()
-            .into_async_writer(&mut encrypted_data)
-            .await
-            .unwrap();
-        encryptor.write_all(plaintext).await.unwrap();
-        encryptor.shutdown().await.unwrap();
+        {
+            let mut encryptor = seal
+                .encrypt(pk, kek_id.clone())
+                .execute_with(TEST_DEK)
+                .into_async_writer(&mut encrypted_data)
+                .await
+                .unwrap();
+            encryptor.write_all(plaintext).await.unwrap();
+            encryptor.shutdown().await.unwrap();
+        }
 
         // --- Decryption Side (simulated) ---
         // 1. Peek the KEK ID asynchronously.
@@ -222,7 +234,7 @@ mod async_workflow_tests {
         // 3. Decrypt asynchronously.
         let mut decrypted_data = Vec::new();
         let mut decryptor = pending_decryptor
-            .with_key::<TestKem, TestDek>(decryption_key.clone())
+            .with_key_to_reader(decryption_key)
             .await
             .unwrap();
         decryptor.read_to_end(&mut decrypted_data).await.unwrap();
