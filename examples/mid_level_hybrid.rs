@@ -14,9 +14,13 @@ use seal_flow::base::keys::TypedSymmetricKey;
 use seal_flow::error::Result;
 use seal_flow::mid_level::hybrid::config::HybridConfig;
 use seal_flow::mid_level::hybrid::{
-    asynchronous, ordinary, parallel, parallel_streaming, streaming,
+    asynchronous::Asynchronous, ordinary::Ordinary, parallel::Parallel,
+    parallel_streaming::ParallelStreaming, streaming::Streaming,
+    traits::{
+        HybridAsynchronousProcessor, HybridOrdinaryProcessor, HybridParallelProcessor,
+        HybridParallelStreamingProcessor, HybridStreamingProcessor,
+    },
 };
-use seal_flow::mid_level::hybrid::traits::*;
 use seal_flow::prelude::*;
 
 const KEK_ID: &str = "mid-level-hybrid-key";
@@ -40,7 +44,7 @@ async fn main() -> Result<()> {
 
     // --- Mode 1: In-Memory (Ordinary) ---
     println!("--- Testing Mode: In-Memory (Ordinary) ---");
-    let processor1 = ordinary::Ordinary::new();
+    let processor1 = Ordinary::new();
     let config1 = HybridConfig {
         algorithm: Cow::Borrowed(&algorithm),
         public_key: Cow::Borrowed(&pk),
@@ -64,7 +68,7 @@ async fn main() -> Result<()> {
 
     // --- Mode 2: In-Memory Parallel ---
     println!("\n--- Testing Mode: In-Memory Parallel ---");
-    let processor2 = parallel::Parallel::new();
+    let processor2 = Parallel::new();
     let config2 = HybridConfig {
         algorithm: Cow::Borrowed(&algorithm),
         public_key: Cow::Borrowed(&pk),
@@ -88,7 +92,7 @@ async fn main() -> Result<()> {
 
     // --- Mode 3: Synchronous Streaming ---
     println!("\n--- Testing Mode: Synchronous Streaming ---");
-    let processor3 = streaming::Streaming::new();
+    let processor3 = Streaming::new();
     let mut ciphertext3 = Vec::new();
     let config3 = HybridConfig {
         algorithm: Cow::Borrowed(&algorithm),
@@ -117,7 +121,7 @@ async fn main() -> Result<()> {
 
     // --- Mode 4: Asynchronous Streaming ---
     println!("\n--- Testing Mode: Asynchronous Streaming ---");
-    let processor4 = asynchronous::Asynchronous::new();
+    let processor4 = Asynchronous::new();
     let mut ciphertext4 = Vec::new();
     {
         let config4 = HybridConfig {
@@ -153,7 +157,7 @@ async fn main() -> Result<()> {
 
     // --- Mode 5: Parallel Streaming ---
     println!("\n--- Testing Mode: Parallel Streaming ---");
-    let processor5 = parallel_streaming::ParallelStreaming::new();
+    let processor5 = ParallelStreaming::new();
     let mut ciphertext5 = Vec::new();
     let config5 = HybridConfig {
         algorithm: Cow::Borrowed(&algorithm),
@@ -188,7 +192,7 @@ async fn main() -> Result<()> {
     // --- Mode 6: In-Memory with AAD ---
     println!("\n--- Testing Mode: In-Memory with AAD ---");
     let aad = b"this is authenticated data for the mid-level hybrid api";
-    let processor6 = ordinary::Ordinary::new();
+    let processor6 = Ordinary::new();
     let config6 = HybridConfig {
         algorithm: Cow::Borrowed(&algorithm),
         public_key: Cow::Borrowed(&pk),
@@ -243,7 +247,7 @@ async fn main() -> Result<()> {
 
     // 通过指定密钥参数进行加密（这里我们直接使用派生的 DEK）
     // 注意：这仅用于演示目的，真实场景下混合加密应使用随机生成的 DEK
-    let processor7 = ordinary::Ordinary::new();
+    let processor7 = Ordinary::new();
     let config7 = HybridConfig {
         algorithm: Cow::Borrowed(&algorithm),
         public_key: Cow::Borrowed(&pk),
