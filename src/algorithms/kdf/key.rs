@@ -1,9 +1,9 @@
 use crate::algorithms::traits::KdfKeyAlgorithm;
 use crate::error::Error;
-use crate::keys::TypedSymmetricKey;
 use crate::prelude::KdfKeyAlgorithmEnum;
 use seal_crypto::prelude::KeyBasedDerivation;
 use seal_crypto::schemes::kdf::hkdf::{HkdfSha256, HkdfSha384, HkdfSha512};
+use seal_crypto::zeroize::Zeroizing;
 
 #[derive(Clone, Default)]
 pub struct HkdfSha256Wrapper {
@@ -13,19 +13,20 @@ pub struct HkdfSha256Wrapper {
 impl KdfKeyAlgorithm for HkdfSha256Wrapper {
     fn derive(
         &self,
-        ikm: &TypedSymmetricKey,
+        ikm: &[u8],
         salt: Option<&[u8]>,
         info: Option<&[u8]>,
-    ) -> crate::Result<TypedSymmetricKey> {
+        output_len: usize,
+    ) -> crate::Result<Zeroizing<Vec<u8>>> {
         self.algorithm
             .derive(
-                ikm.as_ref(),
+                ikm,
                 salt,
                 info,
-                ikm.algorithm().into_symmetric_wrapper().key_size(),
+                output_len,
             )
+            .map(|dk| dk.0)
             .map_err(Error::from)
-            .and_then(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm()))
     }
 
     fn algorithm(&self) -> KdfKeyAlgorithmEnum {
@@ -45,19 +46,20 @@ pub struct HkdfSha384Wrapper {
 impl KdfKeyAlgorithm for HkdfSha384Wrapper {
     fn derive(
         &self,
-        ikm: &TypedSymmetricKey,
+        ikm: &[u8],
         salt: Option<&[u8]>,
         info: Option<&[u8]>,
-    ) -> crate::Result<TypedSymmetricKey> {
+        output_len: usize,
+    ) -> crate::Result<Zeroizing<Vec<u8>>> {
         self.algorithm
             .derive(
-                ikm.as_ref(),
+                ikm,
                 salt,
                 info,
-                ikm.algorithm().into_symmetric_wrapper().key_size(),
+                output_len,
             )
+            .map(|dk| dk.0)
             .map_err(Error::from)
-            .and_then(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm()))
     }
 
     fn algorithm(&self) -> KdfKeyAlgorithmEnum {
@@ -77,19 +79,15 @@ pub struct HkdfSha512Wrapper {
 impl KdfKeyAlgorithm for HkdfSha512Wrapper {
     fn derive(
         &self,
-        ikm: &TypedSymmetricKey,
+        ikm: &[u8],
         salt: Option<&[u8]>,
         info: Option<&[u8]>,
-    ) -> crate::Result<TypedSymmetricKey> {
+        output_len: usize,
+    ) -> crate::Result<Zeroizing<Vec<u8>>> {
         self.algorithm
-            .derive(
-                ikm.as_ref(),
-                salt,
-                info,
-                ikm.algorithm().into_symmetric_wrapper().key_size(),
-            )
+            .derive(ikm, salt, info, output_len)
+            .map(|dk| dk.0)
             .map_err(Error::from)
-            .and_then(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm()))
     }
 
     fn algorithm(&self) -> KdfKeyAlgorithmEnum {
@@ -109,11 +107,12 @@ pub struct KdfKeyWrapper {
 impl KdfKeyAlgorithm for KdfKeyWrapper {
     fn derive(
         &self,
-        ikm: &TypedSymmetricKey,
+        ikm: &[u8],
         salt: Option<&[u8]>,
         info: Option<&[u8]>,
-    ) -> crate::Result<TypedSymmetricKey> {
-        self.algorithm.derive(ikm, salt, info)
+        output_len: usize,
+    ) -> crate::Result<Zeroizing<Vec<u8>>> {
+        self.algorithm.derive(ikm, salt, info, output_len)
     }
 
     fn algorithm(&self) -> KdfKeyAlgorithmEnum {

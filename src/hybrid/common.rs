@@ -9,7 +9,6 @@ use crate::common::header::{
 use crate::common::SignerSet;
 use crate::error::Result;
 use crate::keys::TypedAsymmetricPublicKey;
-use crate::keys::TypedSymmetricKey;
 use rand::{rngs::OsRng, TryRngCore};
 use seal_crypto::prelude::Key;
 
@@ -17,6 +16,7 @@ use crate::body::config::BodyDecryptConfig;
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use crate::error::{Error, FormatError};
 use crate::keys::TypedAsymmetricPrivateKey;
+use crate::keys::TypedSymmetricKey;
 use seal_crypto::zeroize::Zeroizing;
 use std::borrow::Cow;
 
@@ -29,10 +29,9 @@ pub fn create_header<H: HybridAlgorithm + ?Sized>(
     public_key: &TypedAsymmetricPublicKey,
     kek_id: String,
     signer: Option<SignerSet>,
-    aad: Option<&[u8]>,
     derivation_info: Option<DerivationInfo>,
     chunk_size: u32,
-) -> Result<(Header, [u8; 12], TypedSymmetricKey)> {
+) -> Result<(Header, [u8; 12], Zeroizing<Vec<u8>>)> {
     // 1. KEM Encapsulate
     // 1. KEM 封装
     let (shared_secret, encapsulated_key) = algorithm.encapsulate_key(public_key)?;
@@ -88,9 +87,6 @@ pub fn create_header<H: HybridAlgorithm + ?Sized>(
         payload,
     };
 
-    let shared_secret =
-        TypedSymmetricKey::from_bytes(&shared_secret, algorithm.symmetric_algorithm().algorithm())?;
-
     Ok((header, base_nonce, shared_secret))
 }
 
@@ -135,33 +131,29 @@ pub(super) fn prepare_body_decrypt_config(
         .asymmetric_algorithm()
         .decapsulate_key(private_key, &encapsulated_key)?;
 
-    let shared_secret = TypedSymmetricKey::from_bytes(
-        shared_secret.as_ref(),
-        algorithm.symmetric_algorithm().algorithm(),
-    )?;
-
     let dek = if let Some(info) = derivation_info {
         use crate::algorithms::traits::KdfKeyAlgorithm;
         use crate::algorithms::traits::XofAlgorithm;
         use crate::common::header::DerivationInfo::{Kdf, Xof};
         match info {
             Kdf(kdf_info) => kdf_info.kdf_algorithm.into_kdf_key_wrapper().derive(
-                &shared_secret,
+                shared_secret.as_ref(),
                 kdf_info.salt.as_deref(),
                 kdf_info.info.as_deref(),
+                algorithm.symmetric_algorithm().key_size(),
             )?,
             Xof(xof_info) => xof_info.xof_algorithm.into_xof_wrapper().derive(
-                &shared_secret,
+                shared_secret.as_ref(),
                 xof_info.salt.as_deref(),
                 xof_info.info.as_deref(),
+                algorithm.symmetric_algorithm().key_size(),
             )?,
         }
     } else {
         shared_secret
     };
 
-    let dek =
-        TypedSymmetricKey::from_bytes(dek.as_ref(), algorithm.symmetric_algorithm().algorithm())?;
+    let dek = TypedSymmetricKey::from_bytes(dek.as_ref(), algorithm.symmetric_algorithm().algorithm())?;
 
     let body_config = BodyDecryptConfig {
         key: Cow::Owned(dek),

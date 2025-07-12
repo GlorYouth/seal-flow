@@ -8,7 +8,7 @@ use crate::keys::{
     TypedSignatureKeyPair, TypedSignaturePrivateKey, TypedSignaturePublicKey, TypedSymmetricKey,
 };
 use crate::prelude::{
-    KdfKeyAlgorithmEnum, KdfPasswordAlgorithmEnum, SymmetricAlgorithmEnum, XofAlgorithmEnum,
+    KdfKeyAlgorithmEnum, KdfPasswordAlgorithmEnum, XofAlgorithmEnum,
 };
 use crate::{common, keys::TypedAsymmetricKeyPair};
 use seal_crypto::secrecy::SecretBox;
@@ -378,10 +378,11 @@ impl Clone for Box<dyn HybridAlgorithm> {
 pub trait KdfKeyAlgorithm: Send + Sync + 'static {
     fn derive(
         &self,
-        ikm: &TypedSymmetricKey,
+        ikm: &[u8],
         salt: Option<&[u8]>,
         info: Option<&[u8]>,
-    ) -> Result<TypedSymmetricKey>;
+        output_len: usize,
+    ) -> Result<Zeroizing<Vec<u8>>>;
 
     fn algorithm(&self) -> KdfKeyAlgorithmEnum;
 
@@ -390,7 +391,7 @@ pub trait KdfKeyAlgorithm: Send + Sync + 'static {
 
 impl_trait_for_box!(KdfKeyAlgorithm {
     ref fn clone_box(&self,) -> Box<dyn KdfKeyAlgorithm>;
-    ref fn derive(&self, ikm: &TypedSymmetricKey, salt: Option<&[u8]>, info: Option<&[u8]>) -> Result<TypedSymmetricKey>;
+    ref fn derive(&self, ikm: &[u8], salt: Option<&[u8]>, info: Option<&[u8]>, output_len: usize) -> Result<Zeroizing<Vec<u8>>>;
     ref fn algorithm(&self,) -> KdfKeyAlgorithmEnum;
 }, clone_box);
 
@@ -399,8 +400,8 @@ pub trait KdfPasswordAlgorithm {
         &self,
         password: &SecretBox<[u8]>,
         salt: &[u8],
-        algorithm: SymmetricAlgorithmEnum,
-    ) -> Result<TypedSymmetricKey>;
+        output_len: usize,
+    ) -> Result<Zeroizing<Vec<u8>>>;
 
     fn algorithm(&self) -> KdfPasswordAlgorithmEnum;
 
@@ -409,23 +410,24 @@ pub trait KdfPasswordAlgorithm {
 
 impl_trait_for_box!(KdfPasswordAlgorithm {
     ref fn clone_box(&self,) -> Box<dyn KdfPasswordAlgorithm>;
-    ref fn derive(&self, password: &SecretBox<[u8]>, salt: &[u8], algorithm: SymmetricAlgorithmEnum) -> Result<TypedSymmetricKey>;
+    ref fn derive(&self, password: &SecretBox<[u8]>, salt: &[u8], output_len: usize) -> Result<Zeroizing<Vec<u8>>>;
     ref fn algorithm(&self,) -> KdfPasswordAlgorithmEnum;
 }, clone_box);
 
 pub trait XofAlgorithm: Send + Sync + 'static {
     fn derive(
         &self,
-        ikm: &TypedSymmetricKey,
+        ikm: &[u8],
         salt: Option<&[u8]>,
         info: Option<&[u8]>,
-    ) -> Result<TypedSymmetricKey>;
+        output_len: usize,
+    ) -> Result<Zeroizing<Vec<u8>>>;
     fn clone_box(&self) -> Box<dyn XofAlgorithm>;
     fn algorithm(&self) -> XofAlgorithmEnum;
 }
 
 impl_trait_for_box!(XofAlgorithm {
-    ref fn derive(&self, ikm: &TypedSymmetricKey, salt: Option<&[u8]>, info: Option<&[u8]>) -> Result<TypedSymmetricKey>;
+    ref fn derive(&self, ikm: &[u8], salt: Option<&[u8]>, info: Option<&[u8]>, output_len: usize) -> Result<Zeroizing<Vec<u8>>>;
     ref fn algorithm(&self,) -> XofAlgorithmEnum;
     ref fn clone_box(&self,) -> Box<dyn XofAlgorithm>;
 }, clone_box);

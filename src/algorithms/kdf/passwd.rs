@@ -1,10 +1,10 @@
 use crate::error::Error;
-use crate::keys::TypedSymmetricKey;
 use crate::{
     algorithms::traits::KdfPasswordAlgorithm,
-    prelude::{KdfPasswordAlgorithmEnum, SymmetricAlgorithmEnum},
+    prelude::KdfPasswordAlgorithmEnum,
 };
 use seal_crypto::prelude::PasswordBasedDerivation;
+use seal_crypto::zeroize::Zeroizing;
 use seal_crypto::schemes::kdf::{
     argon2::Argon2,
     pbkdf2::{Pbkdf2Sha256, Pbkdf2Sha384, Pbkdf2Sha512},
@@ -29,16 +29,16 @@ impl KdfPasswordAlgorithm for Argon2Wrapper {
         &self,
         password: &SecretBox<[u8]>,
         salt: &[u8],
-        algorithm: SymmetricAlgorithmEnum,
-    ) -> crate::Result<TypedSymmetricKey> {
+        output_len: usize,
+    ) -> crate::Result<Zeroizing<Vec<u8>>> {
         self.algorithm
             .derive(
                 password,
                 salt,
-                algorithm.into_symmetric_wrapper().key_size(),
+                output_len,
             )
+            .map(|dk| dk.0)
             .map_err(Error::from)
-            .and_then(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), algorithm))
     }
 
     fn algorithm(&self) -> KdfPasswordAlgorithmEnum {
@@ -68,16 +68,16 @@ impl KdfPasswordAlgorithm for Pbkdf2Sha256Wrapper {
         &self,
         password: &SecretBox<[u8]>,
         salt: &[u8],
-        algorithm: SymmetricAlgorithmEnum,
-    ) -> crate::Result<TypedSymmetricKey> {
+        output_len: usize,
+    ) -> crate::Result<Zeroizing<Vec<u8>>> {
         self.algorithm
             .derive(
                 password,
                 salt,
-                algorithm.into_symmetric_wrapper().key_size(),
+                output_len,
             )
+            .map(|dk| dk.0)
             .map_err(Error::from)
-            .and_then(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), algorithm))
     }
 
     fn algorithm(&self) -> KdfPasswordAlgorithmEnum {
@@ -107,16 +107,16 @@ impl KdfPasswordAlgorithm for Pbkdf2Sha384Wrapper {
         &self,
         password: &SecretBox<[u8]>,
         salt: &[u8],
-        algorithm: SymmetricAlgorithmEnum,
-    ) -> crate::Result<TypedSymmetricKey> {
+        output_len: usize,
+    ) -> crate::Result<Zeroizing<Vec<u8>>> {
         self.algorithm
             .derive(
                 password,
                 salt,
-                algorithm.into_symmetric_wrapper().key_size(),
+                output_len,
             )
+            .map(|dk| dk.0)
             .map_err(Error::from)
-            .and_then(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), algorithm))
     }
 
     fn algorithm(&self) -> KdfPasswordAlgorithmEnum {
@@ -146,16 +146,16 @@ impl KdfPasswordAlgorithm for Pbkdf2Sha512Wrapper {
         &self,
         password: &SecretBox<[u8]>,
         salt: &[u8],
-        algorithm: SymmetricAlgorithmEnum,
-    ) -> crate::Result<TypedSymmetricKey> {
+        output_len: usize,
+    ) -> crate::Result<Zeroizing<Vec<u8>>> {
         self.algorithm
             .derive(
                 password,
                 salt,
-                algorithm.into_symmetric_wrapper().key_size(),
+                output_len,
             )
+            .map(|dk| dk.0)
             .map_err(Error::from)
-            .and_then(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), algorithm))
     }
 
     fn algorithm(&self) -> KdfPasswordAlgorithmEnum {
@@ -183,9 +183,9 @@ impl KdfPasswordAlgorithm for KdfPasswordWrapper {
         &self,
         password: &SecretBox<[u8]>,
         salt: &[u8],
-        algorithm: SymmetricAlgorithmEnum,
-    ) -> crate::Result<TypedSymmetricKey> {
-        self.algorithm.derive(password, salt, algorithm)
+        output_len: usize,
+    ) -> crate::Result<Zeroizing<Vec<u8>>> {
+        self.algorithm.derive(password, salt, output_len)
     }
 
     fn algorithm(&self) -> KdfPasswordAlgorithmEnum {

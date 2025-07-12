@@ -1,8 +1,9 @@
 use crate::{
     algorithms::signature::SignatureAlgorithmWrapper,
-    keys::{TypedSignaturePrivateKey, TypedSymmetricKey},
+    keys::TypedSignaturePrivateKey,
 };
 use bytes::BytesMut;
+use seal_crypto::zeroize::Zeroizing;
 
 /// This module re-exports common functionalities from the `common` directory.
 ///
@@ -73,15 +74,16 @@ pub(crate) enum DerivationWrapper {
 impl DerivationWrapper {
     pub fn derive(
         &self,
-        ikm: &TypedSymmetricKey,
+        ikm: &[u8],
         salt: Option<&[u8]>,
         info: Option<&[u8]>,
-    ) -> crate::Result<TypedSymmetricKey> {
+        output_len: usize,
+    ) -> crate::Result<Zeroizing<Vec<u8>>> {
         use crate::algorithms::traits::KdfKeyAlgorithm;
         use crate::algorithms::traits::XofAlgorithm;
         match self {
-            DerivationWrapper::Kdf(kdf_wrapper) => kdf_wrapper.derive(ikm, salt, info),
-            DerivationWrapper::Xof(xof_wrapper) => xof_wrapper.derive(ikm, salt, info),
+            DerivationWrapper::Kdf(kdf_wrapper) => kdf_wrapper.derive(ikm, salt, info, output_len),
+            DerivationWrapper::Xof(xof_wrapper) => xof_wrapper.derive(ikm, salt, info, output_len),
         }
     }
 }

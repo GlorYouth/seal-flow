@@ -1,9 +1,9 @@
 use crate::algorithms::traits::XofAlgorithm;
 use crate::error::{Error, Result};
-use crate::keys::TypedSymmetricKey;
 use crate::prelude::XofAlgorithmEnum;
 use seal_crypto::prelude::KeyBasedDerivation;
 use seal_crypto::schemes::xof::shake::{Shake128, Shake256};
+use seal_crypto::zeroize::Zeroizing;
 
 #[derive(Clone, Default)]
 pub struct Shake128Wrapper {
@@ -21,19 +21,12 @@ impl Shake128Wrapper {
 impl XofAlgorithm for Shake128Wrapper {
     fn derive(
         &self,
-        ikm: &TypedSymmetricKey,
+        ikm: &[u8],
         salt: Option<&[u8]>,
         info: Option<&[u8]>,
-    ) -> Result<TypedSymmetricKey> {
-        self.shake
-            .derive(
-                ikm.as_ref(),
-                salt,
-                info,
-                ikm.algorithm().into_symmetric_wrapper().key_size(),
-            )
-            .map_err(Error::from)
-            .and_then(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm()))
+        output_len: usize,
+    ) -> Result<Zeroizing<Vec<u8>>> {
+        self.shake.derive(ikm, salt, info, output_len).map(|dk| dk.0).map_err(Error::from)
     }
 
     fn clone_box(&self) -> Box<dyn XofAlgorithm> {
@@ -61,19 +54,15 @@ impl Shake256Wrapper {
 impl XofAlgorithm for Shake256Wrapper {
     fn derive(
         &self,
-        ikm: &TypedSymmetricKey,
+        ikm: &[u8],
         salt: Option<&[u8]>,
         info: Option<&[u8]>,
-    ) -> Result<TypedSymmetricKey> {
+        output_len: usize,
+    ) -> Result<Zeroizing<Vec<u8>>> {
         self.shake
-            .derive(
-                ikm.as_ref(),
-                salt,
-                info,
-                ikm.algorithm().into_symmetric_wrapper().key_size(),
-            )
+            .derive(ikm, salt, info, output_len)
+            .map(|dk| dk.0)
             .map_err(Error::from)
-            .and_then(|dk| TypedSymmetricKey::from_bytes(dk.as_bytes(), ikm.algorithm()))
     }
 
     fn clone_box(&self) -> Box<dyn XofAlgorithm> {
@@ -98,11 +87,12 @@ impl XofWrapper {
 impl XofAlgorithm for XofWrapper {
     fn derive(
         &self,
-        ikm: &TypedSymmetricKey,
+        ikm: &[u8],
         salt: Option<&[u8]>,
         info: Option<&[u8]>,
-    ) -> Result<TypedSymmetricKey> {
-        self.algorithm.derive(ikm, salt, info)
+        output_len: usize,
+    ) -> Result<Zeroizing<Vec<u8>>> {
+        self.algorithm.derive(ikm, salt, info, output_len)
     }
 
     fn clone_box(&self) -> Box<dyn XofAlgorithm> {

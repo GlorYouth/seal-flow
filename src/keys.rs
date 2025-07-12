@@ -1,11 +1,13 @@
 //! This module defines byte wrappers for cryptographic keys.
 //!
 //! 这个模块为加密密钥定义了字节包装器。
+use crate::algorithms::kdf::passwd::KdfPasswordWrapper;
 use crate::common::algorithms::{
     AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SignatureAlgorithm as SignatureAlgorithmEnum,
     SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
 use crate::error::Error;
+use crate::prelude::KdfKeyAlgorithmEnum;
 use seal_crypto::prelude::{AsymmetricKeySet, KeyGenerator, SymmetricKeySet};
 use seal_crypto::schemes::asymmetric::{
     post_quantum::{
@@ -537,18 +539,17 @@ impl SymmetricKey {
     /// * `salt` - An optional salt. While optional in HKDF, providing a salt is highly recommended.
     /// * `info` - Optional context-specific information.
     /// * `output_len` - The desired length of the derived key in bytes.
-    pub fn derive_key<K>(
+    pub fn derive_key(
         &self,
-        deriver: &K,
+        algorithm: KdfKeyAlgorithmEnum,
         salt: Option<&[u8]>,
         info: Option<&[u8]>,
         output_len: usize,
-    ) -> Result<Self, Error>
-    where
-        K: KeyBasedDerivation,
-    {
-        let derived_key_bytes = deriver.derive(self.as_bytes(), salt, info, output_len)?;
-        Ok(SymmetricKey::new(derived_key_bytes.as_bytes().to_vec()))
+    ) -> Result<Self, Error> {
+        use crate::algorithms::traits::KdfKeyAlgorithm;
+
+        let derived_key_bytes = algorithm.into_kdf_key_wrapper().derive(self.as_bytes(), salt, info, output_len)?;
+        Ok(SymmetricKey::new(derived_key_bytes))
     }
 
     /// Derives a symmetric key from a password using a specified password-based KDF.
@@ -567,17 +568,15 @@ impl SymmetricKey {
     /// * `deriver` - An instance of the password-based KDF scheme (e.g., `Pbkdf2Sha256::new(100_000)`).
     /// * `salt` - A salt. This is **required** for password-based derivation to be secure.
     /// * `output_len` - The desired length of the derived key in bytes.
-    pub fn derive_from_password<P>(
+    pub fn derive_from_password(
         password: &SecretBox<[u8]>,
-        deriver: &P,
+        algorithm: KdfPasswordWrapper,
         salt: &[u8],
         output_len: usize,
-    ) -> Result<Self, Error>
-    where
-        P: PasswordBasedDerivation,
-    {
-        let derived_key_bytes = deriver.derive(password, salt, output_len)?;
-        Ok(SymmetricKey::new(derived_key_bytes.as_bytes().to_vec()))
+    ) -> Result<Self, Error> {
+        use crate::algorithms::traits::KdfPasswordAlgorithm;
+        let derived_key_bytes = algorithm.derive(password, salt, output_len)?;
+        Ok(SymmetricKey::new(derived_key_bytes))
     }
 }
 
@@ -737,7 +736,7 @@ impl SignaturePublicKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use seal_crypto::schemes::kdf::{hkdf::HkdfSha256, pbkdf2::Pbkdf2Sha256};
+    use crate::algorithms::kdf::passwd::Pbkdf2Sha256Wrapper;
 
     #[test]
     fn test_symmetric_key_generate() {
@@ -768,7 +767,6 @@ mod tests {
     fn test_symmetric_key_derive_key() {
         // 使用HKDF-SHA256进行密钥派生
         let master_key = SymmetricKey::new(vec![0u8; 32]);
-        let deriver = HkdfSha256::default();
 
         // 使用不同的上下文信息派生出不同的子密钥
         let salt = b"salt_value";
@@ -776,15 +774,15 @@ mod tests {
         let info2 = b"signing_key";
 
         let derived_key1 = master_key
-            .derive_key(&deriver, Some(salt), Some(info1), 32)
+            .derive_key(KdfKeyAlgorithmEnum::HkdfSha256, Some(salt), Some(info1), 32)
             .unwrap();
         let derived_key2 = master_key
-            .derive_key(&deriver, Some(salt), Some(info2), 32)
+            .derive_key(KdfKeyAlgorithmEnum::HkdfSha256, Some(salt), Some(info2), 32)
             .unwrap();
 
         // 相同的主密钥和参数应该产生相同的派生密钥
         let derived_key1_again = master_key
-            .derive_key(&deriver, Some(salt), Some(info1), 32)
+            .derive_key(KdfKeyAlgorithmEnum::HkdfSha256, Some(salt), Some(info1), 32)
             .unwrap();
 
         // 不同的上下文信息应该产生不同的派生密钥
@@ -801,28 +799,28 @@ mod tests {
         let salt = b"random_salt_value";
 
         // 设置较少的迭代次数以加速测试（实际应用中应使用更多迭代）
-        let deriver = Pbkdf2Sha256::new(1000);
+        let deriver = KdfPasswordWrapper::new(Box::new(Pbkdf2Sha256Wrapper::new(1000)));
 
         let derived_key1 =
-            SymmetricKey::derive_from_password(&password, &deriver, salt, 32).unwrap();
+            SymmetricKey::derive_from_password(&password, deriver.clone(), salt, 32).unwrap();
 
         // 相同的密码、盐和迭代次数应该产生相同的密钥
         let derived_key2 =
-            SymmetricKey::derive_from_password(&password, &deriver, salt, 32).unwrap();
+            SymmetricKey::derive_from_password(&password, deriver.clone(), salt, 32).unwrap();
 
         assert_eq!(derived_key1.as_bytes(), derived_key2.as_bytes());
 
         // 不同的密码应该产生不同的密钥
         let different_password = SecretBox::new(Box::from(b"different_password".as_slice()));
         let derived_key3 =
-            SymmetricKey::derive_from_password(&different_password, &deriver, salt, 32).unwrap();
+            SymmetricKey::derive_from_password(&different_password, deriver.clone(), salt, 32).unwrap();
 
         assert_ne!(derived_key1.as_bytes(), derived_key3.as_bytes());
 
         // 不同的盐应该产生不同的密钥
         let different_salt = b"different_salt_value";
         let derived_key4 =
-            SymmetricKey::derive_from_password(&password, &deriver, different_salt, 32).unwrap();
+            SymmetricKey::derive_from_password(&password, deriver.clone(), different_salt, 32).unwrap();
 
         assert_ne!(derived_key1.as_bytes(), derived_key4.as_bytes());
     }
@@ -830,19 +828,19 @@ mod tests {
     #[test]
     fn test_key_derivation_output_length() {
         let master_key = SymmetricKey::new(vec![0u8; 32]);
-        let deriver = HkdfSha256::default();
+        let deriver = KdfKeyAlgorithmEnum::HkdfSha256;
         let salt = b"salt";
         let info = b"info";
 
         // 测试不同长度的输出
         let key_16 = master_key
-            .derive_key(&deriver, Some(salt), Some(info), 16)
+            .derive_key(deriver.clone(), Some(salt), Some(info), 16)
             .unwrap();
         let key_32 = master_key
-            .derive_key(&deriver, Some(salt), Some(info), 32)
+            .derive_key(deriver.clone(), Some(salt), Some(info), 32)
             .unwrap();
         let key_64 = master_key
-            .derive_key(&deriver, Some(salt), Some(info), 64)
+            .derive_key(deriver.clone(), Some(salt), Some(info), 64)
             .unwrap();
 
         assert_eq!(key_16.as_bytes().len(), 16);

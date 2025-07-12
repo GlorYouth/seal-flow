@@ -1,9 +1,11 @@
 use crate::algorithms::hybrid::HybridAlgorithmWrapper;
+use crate::algorithms::traits::HybridAlgorithm;
 use crate::body::config::BodyEncryptConfig;
 use crate::common::config::ArcConfig;
 use crate::common::{DerivationSet, SignerSet};
 use crate::hybrid::common::create_header;
 use crate::keys::TypedAsymmetricPublicKey;
+use crate::keys::TypedSymmetricKey;
 use std::borrow::Cow;
 
 pub struct HybridConfig<'a> {
@@ -23,7 +25,6 @@ impl<'a> HybridConfig<'a> {
             self.public_key.as_ref(),
             self.kek_id,
             self.signer,
-            self.aad.as_deref(),
             self.derivation_config
                 .as_ref()
                 .map(|d| d.derivation_info.clone()),
@@ -32,15 +33,18 @@ impl<'a> HybridConfig<'a> {
 
         let dek = if let Some(derivation_set) = self.derivation_config {
             derivation_set.wrapper.derive(
-                &shared_secret,
+                shared_secret.as_ref(),
                 derivation_set.salt(),
                 derivation_set.info(),
+                self.algorithm.as_ref().symmetric_algorithm().key_size(),
             )?
         } else {
             shared_secret
         };
 
         let header_bytes = header.encode_to_vec()?;
+
+        let dek = TypedSymmetricKey::from_bytes(dek.as_ref(), self.algorithm.as_ref().symmetric_algorithm().algorithm())?;
 
         let body_config = BodyEncryptConfig {
             key: Cow::Owned(dek),
