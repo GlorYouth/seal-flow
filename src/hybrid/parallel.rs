@@ -5,16 +5,13 @@
 use super::traits::{HybridParallelPendingDecryptor, HybridParallelProcessor};
 use crate::algorithms::definitions::hybrid::HybridAlgorithmWrapper;
 use crate::algorithms::traits::HybridAlgorithm;
-use crate::body::config::BodyDecryptConfig;
 use crate::body::traits::ParallelBodyProcessor;
-use crate::common::config::{ArcConfig, DecryptorConfig};
-use crate::common::header::{Header, HeaderPayload, SpecificHeaderPayload};
-use crate::error::{Error, FormatError, Result};
+use crate::common::config::ArcConfig;
+use crate::common::header::Header;
+use crate::error::{FormatError, Result};
 use crate::hybrid::config::HybridConfig;
 use crate::hybrid::pending::PendingDecryptor;
-use crate::keys::{TypedAsymmetricPrivateKey, TypedSymmetricKey};
-use seal_crypto::zeroize::Zeroizing;
-use std::borrow::Cow;
+use crate::keys::TypedAsymmetricPrivateKey;
 
 pub struct Parallel;
 
@@ -47,7 +44,7 @@ impl HybridParallelProcessor for Parallel {
         ciphertext: &'a [u8],
         config: ArcConfig,
     ) -> Result<Box<dyn HybridParallelPendingDecryptor + 'a>> {
-        let (header, _) = Header::decode_from_prefixed_slice(ciphertext)?;
+        let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
         let asym_algo = header
             .payload
             .asymmetric_algorithm()
@@ -60,7 +57,7 @@ impl HybridParallelProcessor for Parallel {
         let algorithm = HybridAlgorithmWrapper::new(asym_algo, sym_algo);
 
         let pending = PendingDecryptor {
-            source: ciphertext,
+            source: ciphertext_body,
             header,
             algorithm,
             config,
@@ -75,55 +72,14 @@ impl<'a> HybridParallelPendingDecryptor for PendingDecryptor<&'a [u8]> {
         private_key: &TypedAsymmetricPrivateKey,
         aad: Option<Vec<u8>>,
     ) -> Result<Vec<u8>> {
-        let (header, ciphertext_body) = Header::decode_from_prefixed_slice(self.source)?;
-        let (encapsulated_key, base_nonce, derivation_info, chunk_size) =
-            if let HeaderPayload {
-                base_nonce,
-                chunk_size,
-                specific_payload: SpecificHeaderPayload::Hybrid {
-                    encrypted_dek,
-                    derivation_info,
-                    ..
-                },
-                ..
-            } = header.payload
-            {
-                (
-                    Zeroizing::new(encrypted_dek.clone()),
-                    base_nonce,
-                    derivation_info.clone(),
-                    chunk_size,
-                )
-            } else {
-                return Err(Error::Format(FormatError::InvalidHeader));
-            };
-
-        let shared_secret = self
-            .algorithm
-            .asymmetric_algorithm()
-            .decapsulate_key(private_key, &encapsulated_key)?;
-
-        // 3. Derive key if derivation info is present.
-        let dek = if let Some(info) = derivation_info {
-            info.derive_key(&shared_secret)?
-        } else {
-            shared_secret
-        };
-
-        let dek = TypedSymmetricKey::from_bytes(
-            dek.as_ref(),
-            self.algorithm.symmetric_algorithm().algorithm(),
-        )?;
-
-        let body_config = BodyDecryptConfig {
-            key: Cow::Owned(dek),
-            nonce: base_nonce,
+        let ciphertext_body = self.source;
+        let body_config = super::common::prepare_body_decrypt_config(
+            self.header,
+            &self.algorithm,
+            private_key,
             aad,
-            config: DecryptorConfig {
-                chunk_size,
-                arc_config: self.config,
-            },
-        };
+            self.config,
+        )?;
 
         self.algorithm
             .symmetric_algorithm()
@@ -146,8 +102,10 @@ mod tests {
     use crate::common::DerivationSet;
     use crate::common::DEFAULT_CHUNK_SIZE;
     use crate::keys::TypedAsymmetricPublicKey;
+    use crate::keys::TypedSymmetricKey;
     use seal_crypto::prelude::KeyBasedDerivation;
     use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
+    use std::borrow::Cow;
 
     fn get_test_algorithm() -> HybridAlgorithmWrapper {
         HybridAlgorithmWrapper::new(Rsa2048Sha256Wrapper::new(), Aes256GcmWrapper::new())

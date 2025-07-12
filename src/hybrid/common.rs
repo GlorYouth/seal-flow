@@ -13,6 +13,13 @@ use crate::keys::TypedSymmetricKey;
 use rand::{rngs::OsRng, TryRngCore};
 use seal_crypto::prelude::Key;
 
+use crate::body::config::{BodyDecryptConfig};
+use crate::common::config::{ArcConfig, DecryptorConfig};
+use crate::error::{Error, FormatError};
+use crate::keys::TypedAsymmetricPrivateKey;
+use seal_crypto::zeroize::Zeroizing;
+use std::borrow::Cow;
+
 /// Creates a complete header, a new base_nonce, and the shared secret (DEK)
 /// for a hybrid encryption stream.
 ///
@@ -85,4 +92,61 @@ pub fn create_header<H: HybridAlgorithm + ?Sized>(
         TypedSymmetricKey::from_bytes(&shared_secret, algorithm.symmetric_algorithm().algorithm())?;
 
     Ok((header, base_nonce, shared_secret))
+}
+
+pub(super) fn prepare_body_decrypt_config(
+    header: Header,
+    algorithm: &impl HybridAlgorithm,
+    private_key: &TypedAsymmetricPrivateKey,
+    aad: Option<Vec<u8>>,
+    arc_config: ArcConfig,
+) -> Result<BodyDecryptConfig<'static>> {
+    let (encapsulated_key, base_nonce, derivation_info, chunk_size) =
+        if let HeaderPayload {
+            base_nonce,
+            chunk_size,
+            specific_payload: SpecificHeaderPayload::Hybrid {
+                encrypted_dek,
+                derivation_info,
+                ..
+            },
+            ..
+        } = header.payload
+        {
+            (
+                Zeroizing::new(encrypted_dek.clone()),
+                base_nonce,
+                derivation_info.clone(),
+                chunk_size,
+            )
+        } else {
+            return Err(Error::Format(FormatError::InvalidHeader));
+        };
+
+    let shared_secret = algorithm
+        .asymmetric_algorithm()
+        .decapsulate_key(private_key, &encapsulated_key)?;
+
+    let dek = if let Some(info) = derivation_info {
+        info.derive_key(&shared_secret)?
+    } else {
+        shared_secret
+    };
+
+    let dek = TypedSymmetricKey::from_bytes(
+        dek.as_ref(),
+        algorithm.symmetric_algorithm().algorithm(),
+    )?;
+
+    let body_config = BodyDecryptConfig {
+        key: Cow::Owned(dek),
+        nonce: base_nonce,
+        aad,
+        config: DecryptorConfig {
+            chunk_size,
+            arc_config,
+        },
+    };
+
+    Ok(body_config)
 }
