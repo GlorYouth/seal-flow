@@ -6,7 +6,10 @@ use crate::common::{config::ArcConfig, header::Header};
 use crate::error::KeyManagementError;
 use crate::keys::provider::KeyProvider;
 use crate::keys::{SymmetricKey, TypedSymmetricKey};
-use crate::seal::traits::WithAad;
+use crate::seal::traits::{
+    AsyncStreamingDecryptor, InMemoryDecryptor, ParallelStreamingDecryptor, StreamingDecryptor,
+    WithAad,
+};
 use crate::symmetric::traits::{
     SymmetricAsynchronousPendingDecryptor, SymmetricAsynchronousProcessor,
     SymmetricOrdinaryPendingDecryptor, SymmetricOrdinaryProcessor,
@@ -200,6 +203,15 @@ where
         }
     }
 
+    fn resolve_symmetric_key(&self) -> crate::Result<TypedSymmetricKey> {
+        let provider = self
+            .key_provider
+            .as_ref()
+            .ok_or(KeyManagementError::ProviderMissing)?;
+        let key_id = self.key_id().ok_or(KeyManagementError::KeyIdMissing)?;
+        provider.get_symmetric_key(key_id).map_err(Into::into)
+    }
+
     /// Returns the key ID from the header.
     ///
     /// 从标头返回密钥 ID。
@@ -228,12 +240,7 @@ impl<'a> PendingOrdinaryDecryptor<'a> {
     ///
     /// 使用自动解析的密钥解密内存中的数据。
     pub fn resolve_and_decrypt_to_vec(self) -> crate::Result<Vec<u8>> {
-        let provider = self
-            .key_provider
-            .as_ref()
-            .ok_or(KeyManagementError::ProviderMissing)?;
-        let key_id = self.key_id().ok_or(KeyManagementError::KeyIdMissing)?;
-        let key = provider.get_symmetric_key(key_id)?;
+        let key = self.resolve_symmetric_key()?;
         self.with_key_to_vec(&key)
     }
 
@@ -247,9 +254,28 @@ impl<'a> PendingOrdinaryDecryptor<'a> {
     /// Decrypts in-memory data using the provided key.
     ///
     /// 使用提供的密钥解密内存中的数据。
-    pub fn with_untyped_key_to_vec(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
-        let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
+    pub fn with_untyped_key_to_vec(self, key: &SymmetricKey) -> crate::Result<Vec<u8>> {
+        let key = key
+            .clone()
+            .into_typed(self.header().payload.symmetric_algorithm())?;
         self.with_key_to_vec(&key)
+    }
+}
+
+impl<'a> InMemoryDecryptor for PendingOrdinaryDecryptor<'a> {
+    type TypedKey = TypedSymmetricKey;
+    type UntypedKey = SymmetricKey;
+
+    fn resolve_and_decrypt_to_vec(self) -> crate::Result<Vec<u8>> {
+        PendingOrdinaryDecryptor::resolve_and_decrypt_to_vec(self)
+    }
+
+    fn with_key_to_vec(self, key: &Self::TypedKey) -> crate::Result<Vec<u8>> {
+        PendingOrdinaryDecryptor::with_key_to_vec(self, key)
+    }
+
+    fn with_untyped_key_to_vec(self, key: &Self::UntypedKey) -> crate::Result<Vec<u8>> {
+        PendingOrdinaryDecryptor::with_untyped_key_to_vec(self, key)
     }
 }
 
@@ -262,12 +288,7 @@ impl<'a> PendingParallelDecryptor<'a> {
     ///
     /// 使用自动解析的密钥解密内存中的数据。
     pub fn resolve_and_decrypt_to_vec(self) -> crate::Result<Vec<u8>> {
-        let provider = self
-            .key_provider
-            .as_ref()
-            .ok_or(KeyManagementError::ProviderMissing)?;
-        let key_id = self.key_id().ok_or(KeyManagementError::KeyIdMissing)?;
-        let key = provider.get_symmetric_key(key_id)?;
+        let key = self.resolve_symmetric_key()?;
         self.with_key_to_vec(&key)
     }
 
@@ -281,9 +302,28 @@ impl<'a> PendingParallelDecryptor<'a> {
     /// Decrypts in-memory data using the provided key.
     ///
     /// 使用提供的密钥解密内存中的数据。
-    pub fn with_untyped_key_to_vec(self, key: SymmetricKey) -> crate::Result<Vec<u8>> {
-        let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
+    pub fn with_untyped_key_to_vec(self, key: &SymmetricKey) -> crate::Result<Vec<u8>> {
+        let key = key
+            .clone()
+            .into_typed(self.header().payload.symmetric_algorithm())?;
         self.with_key_to_vec(&key)
+    }
+}
+
+impl<'a> InMemoryDecryptor for PendingParallelDecryptor<'a> {
+    type TypedKey = TypedSymmetricKey;
+    type UntypedKey = SymmetricKey;
+
+    fn resolve_and_decrypt_to_vec(self) -> crate::Result<Vec<u8>> {
+        PendingParallelDecryptor::resolve_and_decrypt_to_vec(self)
+    }
+
+    fn with_key_to_vec(self, key: &Self::TypedKey) -> crate::Result<Vec<u8>> {
+        PendingParallelDecryptor::with_key_to_vec(self, key)
+    }
+
+    fn with_untyped_key_to_vec(self, key: &Self::UntypedKey) -> crate::Result<Vec<u8>> {
+        PendingParallelDecryptor::with_untyped_key_to_vec(self, key)
     }
 }
 
@@ -299,12 +339,7 @@ impl<'a> PendingStreamingDecryptor<'a> {
     where
         Self: 's,
     {
-        let provider = self
-            .key_provider
-            .as_ref()
-            .ok_or(KeyManagementError::ProviderMissing)?;
-        let key_id = self.key_id().ok_or(KeyManagementError::KeyIdMissing)?;
-        let key = provider.get_symmetric_key(key_id)?;
+        let key = self.resolve_symmetric_key()?;
         self.with_key_to_reader(&key)
     }
 
@@ -326,13 +361,47 @@ impl<'a> PendingStreamingDecryptor<'a> {
     /// 使用提供的密钥返回解密读取器。
     pub fn with_untyped_key_to_reader<'s>(
         self,
-        key: SymmetricKey,
+        key: &SymmetricKey,
     ) -> crate::Result<Box<dyn Read + 's>>
     where
         Self: 's,
     {
-        let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
+        let key = key
+            .clone()
+            .into_typed(self.header().payload.symmetric_algorithm())?;
         self.with_key_to_reader(&key)
+    }
+}
+
+impl<'a> StreamingDecryptor for PendingStreamingDecryptor<'a> {
+    type TypedKey = TypedSymmetricKey;
+    type UntypedKey = SymmetricKey;
+
+    fn resolve_and_decrypt_to_reader<'s>(self) -> crate::Result<Box<dyn Read + 's>>
+    where
+        Self: 's,
+    {
+        PendingStreamingDecryptor::resolve_and_decrypt_to_reader(self)
+    }
+
+    fn with_key_to_reader<'s>(
+        self,
+        key: &Self::TypedKey,
+    ) -> crate::Result<Box<dyn Read + 's>>
+    where
+        Self: 's,
+    {
+        PendingStreamingDecryptor::with_key_to_reader(self, key)
+    }
+
+    fn with_untyped_key_to_reader<'s>(
+        self,
+        key: &Self::UntypedKey,
+    ) -> crate::Result<Box<dyn Read + 's>>
+    where
+        Self: 's,
+    {
+        PendingStreamingDecryptor::with_untyped_key_to_reader(self, key)
     }
 }
 
@@ -348,12 +417,7 @@ impl<'a> PendingParallelStreamingDecryptor<'a> {
         self,
         writer: W,
     ) -> crate::Result<()> {
-        let provider = self
-            .key_provider
-            .as_ref()
-            .ok_or(KeyManagementError::ProviderMissing)?;
-        let key_id = self.key_id().ok_or(KeyManagementError::KeyIdMissing)?;
-        let key = provider.get_symmetric_key(key_id)?;
+        let key = self.resolve_symmetric_key()?;
         self.with_key_to_writer(&key, writer)
     }
 
@@ -374,11 +438,41 @@ impl<'a> PendingParallelStreamingDecryptor<'a> {
     /// 使用提供的密钥解密到写入器。
     pub fn with_untyped_key_to_writer<W: Write + Send + 'a>(
         self,
-        key: SymmetricKey,
+        key: &SymmetricKey,
         writer: W,
     ) -> crate::Result<()> {
-        let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
+        let key = key
+            .clone()
+            .into_typed(self.header().payload.symmetric_algorithm())?;
         self.with_key_to_writer(&key, writer)
+    }
+}
+
+impl<'a> ParallelStreamingDecryptor for PendingParallelStreamingDecryptor<'a> {
+    type TypedKey = TypedSymmetricKey;
+    type UntypedKey = SymmetricKey;
+
+    fn resolve_and_decrypt_to_writer<W: Write + Send + 'static>(
+        self,
+        writer: W,
+    ) -> crate::Result<()> {
+        PendingParallelStreamingDecryptor::resolve_and_decrypt_to_writer(self, writer)
+    }
+
+    fn with_key_to_writer<W: Write + Send + 'static>(
+        self,
+        key: &Self::TypedKey,
+        writer: W,
+    ) -> crate::Result<()> {
+        PendingParallelStreamingDecryptor::with_key_to_writer(self, key, writer)
+    }
+
+    fn with_untyped_key_to_writer<W: Write + Send + 'static>(
+        self,
+        key: &Self::UntypedKey,
+        writer: W,
+    ) -> crate::Result<()> {
+        PendingParallelStreamingDecryptor::with_untyped_key_to_writer(self, key, writer)
     }
 }
 
@@ -398,12 +492,7 @@ impl<'a> PendingAsyncStreamingDecryptor<'a> {
     where
         Self: 's,
     {
-        let provider = self
-            .key_provider
-            .as_ref()
-            .ok_or(KeyManagementError::ProviderMissing)?;
-        let key_id = self.key_id().ok_or(KeyManagementError::KeyIdMissing)?;
-        let key = provider.get_symmetric_key(key_id)?;
+        let key = self.resolve_symmetric_key()?;
         self.with_key_to_async_reader(&key).await
     }
 
@@ -423,12 +512,50 @@ impl<'a> PendingAsyncStreamingDecryptor<'a> {
     /// [异步] 使用提供的密钥返回解密读取器。
     pub async fn with_untyped_key_to_async_reader<'s>(
         self,
-        key: SymmetricKey,
+        key: &SymmetricKey,
     ) -> crate::Result<Box<dyn tokio::io::AsyncRead + Unpin + Send + 's>>
     where
         Self: 's,
     {
-        let key = key.into_typed(self.header().payload.symmetric_algorithm())?;
+        let key = key
+            .clone()
+            .into_typed(self.header().payload.symmetric_algorithm())?;
         self.with_key_to_async_reader(&key).await
+    }
+}
+
+#[cfg(feature = "async")]
+#[async_trait::async_trait]
+impl<'a> AsyncStreamingDecryptor for PendingAsyncStreamingDecryptor<'a> {
+    type TypedKey = TypedSymmetricKey;
+    type UntypedKey = SymmetricKey;
+
+    async fn resolve_and_decrypt_to_reader<'s>(
+        self,
+    ) -> crate::Result<Box<dyn tokio::io::AsyncRead + Unpin + Send + 's>>
+    where
+        Self: 's,
+    {
+        self.resolve_and_decrypt_to_async_reader().await
+    }
+
+    async fn with_key_to_reader<'s>(
+        self,
+        key: &Self::TypedKey,
+    ) -> crate::Result<Box<dyn tokio::io::AsyncRead + Unpin + Send + 's>>
+    where
+        Self: 's,
+    {
+        self.with_key_to_async_reader(key).await
+    }
+
+    async fn with_untyped_key_to_reader<'s>(
+        self,
+        key: &Self::UntypedKey,
+    ) -> crate::Result<Box<dyn tokio::io::AsyncRead + Unpin + Send + 's>>
+    where
+        Self: 's,
+    {
+        self.with_untyped_key_to_async_reader(key).await
     }
 }

@@ -517,7 +517,7 @@ mod tests {
 
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
-        let decrypted = pending.with_key(&sk)?;
+        let decrypted = pending.with_key_to_vec(&sk)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -537,7 +537,7 @@ mod tests {
 
         let pending = seal.decrypt().slice_parallel(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
-        let decrypted = pending.with_key(&sk)?;
+        let decrypted = pending.with_key_to_vec(&sk)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -566,7 +566,7 @@ mod tests {
         let pending = seal.decrypt().reader(Cursor::new(encrypted_data)).unwrap();
         let kek_id = pending.kek_id().unwrap();
         let decryption_key = key_store.get(kek_id).unwrap();
-        let mut decryptor = pending.with_key(decryption_key).unwrap();
+        let mut decryptor = pending.with_key_to_reader(decryption_key).unwrap();
 
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
@@ -614,17 +614,17 @@ mod tests {
         // Decrypt with correct AAD
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
-        let decrypted = pending.with_aad(aad).with_key(&sk)?;
+        let decrypted = pending.with_aad(aad).with_key_to_vec(&sk)?;
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
         let pending_fail = seal.decrypt().slice(&encrypted)?;
-        let result = pending_fail.with_aad(b"wrong-aad").with_key(&sk);
+        let result = pending_fail.with_aad(b"wrong-aad").with_key_to_vec(&sk);
         assert!(result.is_err());
 
         // Decrypt with no AAD fails
         let pending_fail2 = seal.decrypt().slice(&encrypted)?;
-        let result2 = pending_fail2.with_key(&sk);
+        let result2 = pending_fail2.with_key_to_vec(&sk);
         assert!(result2.is_err());
 
         Ok(())
@@ -663,7 +663,7 @@ mod tests {
             .slice(&encrypted)?
             .with_aad(aad)
             .with_verification_key(verification_key.clone())
-            .with_key(&enc_sk)?;
+            .with_key_to_vec(&enc_sk)?;
         assert_eq!(decrypted.as_slice(), plaintext);
 
         // 5. Fails with wrong AAD
@@ -672,7 +672,7 @@ mod tests {
             .slice(&encrypted)?
             .with_aad(b"wrong aad")
             .with_verification_key(verification_key.clone())
-            .with_key(&enc_sk);
+            .with_key_to_vec(&enc_sk);
         assert!(res.is_err(), "Decryption should fail with wrong AAD");
         assert!(matches!(res.err(), Some(Error::Crypto(_))));
 
@@ -681,7 +681,7 @@ mod tests {
             .decrypt()
             .slice(&encrypted)?
             .with_verification_key(verification_key)
-            .with_key(&enc_sk);
+            .with_key_to_vec(&enc_sk);
         assert!(res2.is_err(), "Decryption should fail with no AAD");
 
         Ok(())
@@ -717,7 +717,7 @@ mod tests {
             .decrypt()
             .slice(&encrypted)?
             .with_aad(aad)
-            .with_key(&sk)?;
+            .with_key_to_vec(&sk)?;
         assert_eq!(
             plaintext,
             decrypted1.as_slice(),
@@ -729,7 +729,7 @@ mod tests {
             .decrypt()
             .slice_parallel(&encrypted)?
             .with_aad(aad)
-            .with_key(&sk)?;
+            .with_key_to_vec(&sk)?;
         assert_eq!(
             plaintext,
             decrypted2.as_slice(),
@@ -738,7 +738,7 @@ mod tests {
 
         // Mode 3: Streaming (`reader`)
         let pending3 = seal.decrypt().reader(Cursor::new(encrypted.clone()))?;
-        let mut decryptor3 = pending3.with_aad(aad).with_key(&sk)?;
+        let mut decryptor3 = pending3.with_aad(aad).with_key_to_reader(&sk)?;
         let mut decrypted3 = Vec::new();
         decryptor3.read_to_end(&mut decrypted3)?;
         assert_eq!(
@@ -792,7 +792,7 @@ mod tests {
             .decrypt()
             .slice(&encrypted)?
             .with_aad(aad)
-            .with_key(&sk)?;
+            .with_key_to_vec(&sk)?;
         assert_eq!(
             plaintext,
             decrypted1.as_slice(),
@@ -804,7 +804,7 @@ mod tests {
             .decrypt()
             .slice_parallel(&encrypted)?
             .with_aad(aad)
-            .with_key(&sk)?;
+            .with_key_to_vec(&sk)?;
         assert_eq!(
             plaintext,
             decrypted2.as_slice(),
@@ -813,7 +813,7 @@ mod tests {
 
         // Mode 3: Streaming (`reader`)
         let pending3 = seal.decrypt().reader(Cursor::new(encrypted.clone()))?;
-        let mut decryptor3 = pending3.with_aad(aad).with_key(&sk)?;
+        let mut decryptor3 = pending3.with_aad(aad).with_key_to_reader(&sk)?;
         let mut decrypted3 = Vec::new();
         decryptor3.read_to_end(&mut decrypted3)?;
         assert_eq!(
@@ -872,7 +872,7 @@ mod tests {
                 .unwrap();
             let kek_id = pending.kek_id().unwrap();
             let decryption_key = key_store.get(kek_id).unwrap();
-            let mut decryptor = pending.with_key(decryption_key).await.unwrap();
+            let mut decryptor = pending.with_key_to_reader(decryption_key).await.unwrap();
 
             let mut decrypted_data = Vec::new();
             decryptor.read_to_end(&mut decrypted_data).await.unwrap();
@@ -910,7 +910,7 @@ mod tests {
                 .async_reader(Cursor::new(&encrypted))
                 .await?
                 .with_aad(aad)
-                .with_key(&sk)
+                .with_key_to_reader(&sk)
                 .await?;
 
             let mut decrypted = Vec::new();
@@ -953,7 +953,7 @@ mod tests {
                 .async_reader(Cursor::new(&encrypted))
                 .await?
                 .with_aad(aad)
-                .with_key(&sk)
+                .with_key_to_reader(&sk)
                 .await?;
 
             let mut decrypted = Vec::new();
@@ -1004,7 +1004,7 @@ mod tests {
                 .await?
                 .with_aad(aad)
                 .with_verification_key(verification_key.clone())
-                .with_key(&enc_sk)
+                .with_key_to_reader(&enc_sk)
                 .await?;
             let mut decrypted_ok = Vec::new();
             decryptor.read_to_end(&mut decrypted_ok).await?;
@@ -1017,7 +1017,7 @@ mod tests {
                 .await?
                 .with_aad(b"wrong-aad")
                 .with_verification_key(verification_key)
-                .with_key(&enc_sk)
+                .with_key_to_reader(&enc_sk)
                 .await;
             assert!(res.is_err());
 

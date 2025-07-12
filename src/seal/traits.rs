@@ -49,21 +49,24 @@ pub trait WithVerificationKey {
 /// A trait for in-memory decryption operations.
 ///
 /// 用于内存中解密操作的 trait。
-pub trait InMemoryDecryptor {
+pub trait InMemoryDecryptor: Sized {
     /// The specific key type required for decryption (e.g., `SymmetricKey` or `AsymmetricPrivateKey`).
     ///
     /// 解密所需的特定密钥类型（例如 `SymmetricKey` 或 `AsymmetricPrivateKey`）。
-    type Key;
+    type TypedKey;
+    type UntypedKey;
 
     /// Automatically resolves the key using a `KeyProvider` and completes decryption.
     ///
     /// 使用 `KeyProvider` 自动解析密钥并完成解密。
-    fn resolve_and_decrypt(self) -> Result<Vec<u8>>;
+    fn resolve_and_decrypt_to_vec(self) -> Result<Vec<u8>>;
 
     /// Supplies a key directly to complete decryption.
     ///
     /// 直接提供密钥以完成解密。
-    fn with_key(self, key: Self::Key) -> Result<Vec<u8>>;
+    fn with_key_to_vec(self, key: &Self::TypedKey) -> Result<Vec<u8>>;
+
+    fn with_untyped_key_to_vec(self, key: &Self::UntypedKey) -> Result<Vec<u8>>;
 }
 
 /// A trait for synchronous streaming decryption operations.
@@ -73,19 +76,24 @@ pub trait StreamingDecryptor: Sized {
     /// The specific key type required for decryption.
     ///
     /// 解密所需的特定密钥类型。
-    type Key;
+    type TypedKey;
+    type UntypedKey;
 
     /// Automatically resolves the key and returns a decrypting reader.
     ///
     /// 自动解析密钥并返回一个解密读取器。
-    fn resolve_and_decrypt<'s>(self) -> Result<Box<dyn Read + 's>>
+    fn resolve_and_decrypt_to_reader<'s>(self) -> Result<Box<dyn Read + 's>>
     where
         Self: 's;
 
     /// Supplies a key and returns a decrypting reader.
     ///
     /// 提供密钥并返回一个解密读取器。
-    fn with_key<'s>(self, key: Self::Key) -> Result<Box<dyn Read + 's>>
+    fn with_key_to_reader<'s>(self, key: &Self::TypedKey) -> Result<Box<dyn Read + 's>>
+    where
+        Self: 's;
+
+    fn with_untyped_key_to_reader<'s>(self, key: &Self::UntypedKey) -> Result<Box<dyn Read + 's>>
     where
         Self: 's;
 }
@@ -93,43 +101,69 @@ pub trait StreamingDecryptor: Sized {
 /// A trait for parallel streaming decryption operations.
 ///
 /// 用于并行流式解密操作的 trait。
-pub trait ParallelStreamingDecryptor {
+pub trait ParallelStreamingDecryptor: Sized {
     /// The specific key type required for decryption.
     ///
     /// 解密所需的特定密钥类型。
-    type Key;
+    type TypedKey;
+    type UntypedKey;
 
     /// Automatically resolves the key and decrypts the stream to the provided writer.
     ///
     /// 自动解析密钥并将流解密到提供的写入器。
-    fn resolve_and_decrypt_to_writer<W: Write + Send>(self, writer: W) -> Result<()>;
+    fn resolve_and_decrypt_to_writer<W: Write + Send + 'static>(self, writer: W) -> Result<()>;
 
     /// Supplies a key and decrypts the stream to the provided writer.
     ///
     /// 提供密钥并将流解密到提供的写入器。
-    fn with_key_to_writer<W: Write + Send>(self, key: Self::Key, writer: W) -> Result<()>;
+    fn with_key_to_writer<W: Write + Send + 'static>(
+        self,
+        key: &Self::TypedKey,
+        writer: W,
+    ) -> Result<()>;
+
+    fn with_untyped_key_to_writer<W: Write + Send + 'static>(
+        self,
+        key: &Self::UntypedKey,
+        writer: W,
+    ) -> Result<()>;
 }
 
 /// A trait for asynchronous streaming decryption operations.
 ///
 /// 用于异步流式解密操作的 trait。
-pub trait AsyncStreamingDecryptor: Sized {
+#[cfg(feature = "async")]
+#[async_trait]
+pub trait AsyncStreamingDecryptor: Sized + Send {
     /// The specific key type required for decryption.
     ///
     /// 解密所需的特定密钥类型。
-    type Key;
+    type TypedKey: Send + Sync;
+    type UntypedKey: Send + Sync;
 
     /// Automatically resolves the key and returns a decrypting async reader.
     ///
     /// 自动解析密钥并返回一个解密的异步读取器。
-    fn resolve_and_decrypt<'s>(self) -> Result<Box<dyn AsyncRead + Unpin + Send + 's>>
+    async fn resolve_and_decrypt_to_reader<'s>(
+        self,
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send + 's>>
     where
         Self: 's;
 
     /// Supplies a key and returns a decrypting async reader.
     ///
     /// 提供密钥并返回一个解密的异步读取器。
-    fn with_key<'s>(self, key: Self::Key) -> Result<Box<dyn AsyncRead + Unpin + Send + 's>>
+    async fn with_key_to_reader<'s>(
+        self,
+        key: &Self::TypedKey,
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send + 's>>
+    where
+        Self: 's;
+
+    async fn with_untyped_key_to_reader<'s>(
+        self,
+        key: &Self::UntypedKey,
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send + 's>>
     where
         Self: 's;
 }
