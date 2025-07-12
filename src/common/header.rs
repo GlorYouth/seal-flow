@@ -6,7 +6,7 @@ use crate::common::algorithms::{
     AsymmetricAlgorithm, KdfKeyAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm,
 };
 use crate::error::{CryptoError, Error, FormatError, Result};
-use crate::keys::SignaturePublicKey;
+use crate::keys::TypedSignaturePublicKey;
 use std::io::Read;
 
 #[cfg(feature = "async")]
@@ -359,7 +359,7 @@ impl Header {
     /// 如果提供了验证密钥，则验证标头签名。
     pub fn verify(
         &self,
-        verification_key: Option<&SignaturePublicKey>,
+        verification_key: Option<&TypedSignaturePublicKey>,
         aad: Option<&[u8]>,
     ) -> Result<()> {
         // If no verification key is provided, skip verification.
@@ -382,46 +382,15 @@ impl Header {
                 payload_bytes.extend_from_slice(aad_data);
             }
 
-            use seal_crypto::prelude::*;
-            use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
-                Dilithium2, Dilithium3, Dilithium5,
-            };
-            use seal_crypto::schemes::asymmetric::traditional::ecc::{EcdsaP256, Ed25519};
+            let key_algo = verification_key.algorithm();
+            if algo == key_algo {
+                use crate::algorithms::traits::SignatureAlgorithm;
 
-            // Select the correct verification method based on the signature algorithm and recover the key directly from raw bytes.
-            // 根据签名算法选择正确的验证方法并直接从原始字节恢复密钥。
-            match algo {
-                SignatureAlgorithm::Dilithium2 => {
-                    let pk = <Dilithium2 as AsymmetricKeySet>::PublicKey::from_bytes(
-                        verification_key.as_bytes(),
-                    )?;
-                    Dilithium2::verify(&pk, &payload_bytes, &Signature(signature))?;
-                }
-                SignatureAlgorithm::Dilithium3 => {
-                    let pk = <Dilithium3 as AsymmetricKeySet>::PublicKey::from_bytes(
-                        verification_key.as_bytes(),
-                    )?;
-                    Dilithium3::verify(&pk, &payload_bytes, &Signature(signature))?;
-                }
-                SignatureAlgorithm::Dilithium5 => {
-                    let pk = <Dilithium5 as AsymmetricKeySet>::PublicKey::from_bytes(
-                        verification_key.as_bytes(),
-                    )?;
-                    Dilithium5::verify(&pk, &payload_bytes, &Signature(signature))?;
-                }
-                SignatureAlgorithm::Ed25519 => {
-                    let pk = <Ed25519 as AsymmetricKeySet>::PublicKey::from_bytes(
-                        verification_key.as_bytes(),
-                    )?;
-                    Ed25519::verify(&pk, &payload_bytes, &Signature(signature))?;
-                }
-                SignatureAlgorithm::EcdsaP256 => {
-                    let pk = <EcdsaP256 as AsymmetricKeySet>::PublicKey::from_bytes(
-                        verification_key.as_bytes(),
-                    )?;
-                    EcdsaP256::verify(&pk, &payload_bytes, &Signature(signature))?;
-                }
+                key_algo.into_signature_wrapper().verify(&payload_bytes, verification_key, signature)?;
+            } else {
+                return Err(Error::Format(FormatError::InvalidKeyType));
             }
+            
             Ok(())
         } else {
             // No signature, but a verification key was provided.

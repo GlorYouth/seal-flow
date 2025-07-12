@@ -2,6 +2,7 @@
 //!
 //! 这个模块为加密密钥定义了字节包装器。
 use crate::algorithms::kdf::passwd::KdfPasswordWrapper;
+
 use crate::common::algorithms::{
     AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SignatureAlgorithm as SignatureAlgorithmEnum,
     SymmetricAlgorithm as SymmetricAlgorithmEnum,
@@ -342,6 +343,7 @@ pub enum TypedSignaturePublicKey {
 }
 
 impl TypedSignaturePublicKey {
+
     pub fn to_bytes(&self) -> Vec<u8> {
         match self {
             Self::Dilithium2(pk) => pk.to_bytes(),
@@ -349,6 +351,16 @@ impl TypedSignaturePublicKey {
             Self::Dilithium5(pk) => pk.to_bytes(),
             Self::Ed25519(pk) => pk.to_bytes(),
             Self::EcdsaP256(pk) => pk.to_bytes(),
+        }
+    }
+
+    pub fn algorithm(&self) -> SignatureAlgorithmEnum {
+        match self {
+            Self::Dilithium2(_) => SignatureAlgorithmEnum::Dilithium2,
+            Self::Dilithium3(_) => SignatureAlgorithmEnum::Dilithium3,
+            Self::Dilithium5(_) => SignatureAlgorithmEnum::Dilithium5,
+            Self::Ed25519(_) => SignatureAlgorithmEnum::Ed25519,
+            Self::EcdsaP256(_) => SignatureAlgorithmEnum::EcdsaP256,
         }
     }
 }

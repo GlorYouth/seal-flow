@@ -1,6 +1,6 @@
 use crate::keys::{
-    SignaturePublicKey, TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey,
-    TypedSignaturePrivateKey, TypedSymmetricKey,
+    TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSignaturePrivateKey,
+    TypedSignaturePublicKey, TypedSymmetricKey,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -49,7 +49,7 @@ pub trait KeyProvider: Send + Sync {
     fn get_signature_public_key(
         &self,
         key_id: &str,
-    ) -> Result<SignaturePublicKey, KeyProviderError>;
+    ) -> Result<TypedSignaturePublicKey, KeyProviderError>;
 }
 
 /// A trait for dynamically looking up cryptographic keys by their ID for encryption.

@@ -1,4 +1,4 @@
-use seal_flow::base::keys::{SignaturePublicKey, SymmetricKey, TypedAsymmetricPrivateKey};
+use seal_flow::base::keys::{SymmetricKey, TypedAsymmetricPrivateKey, TypedSignaturePublicKey};
 use seal_flow::prelude::*;
 use seal_crypto::secrecy::SecretBox;
 use std::collections::HashMap;
@@ -15,7 +15,7 @@ const SIGNER_KEY_ID: &str = "high-level-signer-key";
 // 使用HashMap存储密钥，以便通过key_id查找
 struct KeyStore {
     private_keys: HashMap<String, TypedAsymmetricPrivateKey>,
-    public_keys: HashMap<String, SignaturePublicKey>,
+    public_keys: HashMap<String, TypedSignaturePublicKey>,
 }
 
 impl KeyStore {
@@ -30,7 +30,7 @@ impl KeyStore {
         self.private_keys.insert(key_id, key);
     }
 
-    fn add_public_key(&mut self, key_id: String, key: SignaturePublicKey) {
+    fn add_public_key(&mut self, key_id: String, key: TypedSignaturePublicKey) {
         self.public_keys.insert(key_id, key);
     }
 
@@ -38,7 +38,7 @@ impl KeyStore {
         self.private_keys.get(key_id).cloned()
     }
 
-    fn get_public_key(&self, key_id: &str) -> Option<SignaturePublicKey> {
+    fn get_public_key(&self, key_id: &str) -> Option<TypedSignaturePublicKey> {
         self.public_keys.get(key_id).cloned()
     }
 }
@@ -59,11 +59,10 @@ async fn main() -> seal_flow::error::Result<()> {
         .into_signature_wrapper()
         .generate_keypair()?
         .into_keypair();
-    let verification_key = SignaturePublicKey::new(sig_pk.to_bytes());
 
     let mut key_store = KeyStore::new();
     key_store.add_private_key(KEK_ID.to_string(), sk);
-    key_store.add_public_key(SIGNER_KEY_ID.to_string(), verification_key.clone());
+    key_store.add_public_key(SIGNER_KEY_ID.to_string(), sig_pk);
 
     let plaintext = b"This is a test message for hybrid interoperability.";
     let pk_typed = pk;

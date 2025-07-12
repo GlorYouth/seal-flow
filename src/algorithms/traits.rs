@@ -439,7 +439,7 @@ pub trait SignatureAlgorithm: Send + Sync + 'static {
         message: &[u8],
         key: &TypedSignaturePublicKey,
         signature: Vec<u8>,
-    ) -> Result<bool>;
+    ) -> Result<()>;
     fn generate_keypair(&self) -> Result<TypedSignatureKeyPair>;
     fn clone_box(&self) -> Box<dyn SignatureAlgorithm>;
     fn algorithm(&self) -> common::algorithms::SignatureAlgorithm;
@@ -447,7 +447,7 @@ pub trait SignatureAlgorithm: Send + Sync + 'static {
 
 impl_trait_for_box!(SignatureAlgorithm {
     ref fn sign(&self, message: &[u8], key: &TypedSignaturePrivateKey) -> Result<Vec<u8>>;
-    ref fn verify(&self, message: &[u8], key: &TypedSignaturePublicKey, signature: Vec<u8>) -> Result<bool>;
+    ref fn verify(&self, message: &[u8], key: &TypedSignaturePublicKey, signature: Vec<u8>) -> Result<()>;
     ref fn generate_keypair(&self,) -> Result<TypedSignatureKeyPair>;
     ref fn clone_box(&self,) -> Box<dyn SignatureAlgorithm>;
     ref fn algorithm(&self,) -> common::algorithms::SignatureAlgorithm;

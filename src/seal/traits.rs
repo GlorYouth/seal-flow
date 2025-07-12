@@ -7,7 +7,7 @@
 use crate::body::traits::FinishingWrite;
 use crate::common::header::Header;
 use crate::error::Result;
-use crate::keys::SignaturePublicKey;
+use crate::keys::TypedSignaturePublicKey;
 #[cfg(feature = "async")]
 use async_trait::async_trait;
 use std::io::{Read, Write};
@@ -43,7 +43,7 @@ pub trait WithVerificationKey {
     /// Supplies a verification key.
     ///
     /// 提供验证密钥。
-    fn with_verification_key(self, verification_key: SignaturePublicKey) -> Self;
+    fn with_verification_key(self, verification_key: TypedSignaturePublicKey) -> Self;
 }
 
 /// A trait for in-memory decryption operations.

@@ -30,7 +30,7 @@ impl SignatureAlgorithm for SignatureAlgorithmWrapper {
         message: &[u8],
         key: &TypedSignaturePublicKey,
         signature: Vec<u8>,
-    ) -> crate::Result<bool> {
+    ) -> crate::Result<()> {
         self.algorithm.verify(message, key, signature)
     }
 
@@ -72,11 +72,10 @@ impl SignatureAlgorithm for Dilithium2Wrapper {
         message: &[u8],
         key: &TypedSignaturePublicKey,
         signature: Vec<u8>,
-    ) -> crate::Result<bool> {
+    ) -> crate::Result<()> {
         match key {
             TypedSignaturePublicKey::Dilithium2(pk) => {
-                let _ = Dilithium2::verify(&pk, message, &Signature(signature))?;
-                Ok(true)
+                Ok(Dilithium2::verify(&pk, message, &Signature(signature))?)
             }
             _ => Err(crate::Error::Format(FormatError::InvalidKeyType)),
         }
@@ -121,11 +120,10 @@ impl SignatureAlgorithm for Dilithium3Wrapper {
         message: &[u8],
         key: &TypedSignaturePublicKey,
         signature: Vec<u8>,
-    ) -> crate::Result<bool> {
+    ) -> crate::Result<()> {
         match key {
             TypedSignaturePublicKey::Dilithium2(pk) => {
-                let _ = Dilithium2::verify(&pk, message, &Signature(signature))?;
-                Ok(true)
+                Ok(Dilithium2::verify(&pk, message, &Signature(signature))?)
             }
             _ => Err(crate::Error::Format(FormatError::InvalidKeyType)),
         }
@@ -170,11 +168,10 @@ impl SignatureAlgorithm for Dilithium5Wrapper {
         message: &[u8],
         key: &TypedSignaturePublicKey,
         signature: Vec<u8>,
-    ) -> crate::Result<bool> {
+    ) -> crate::Result<()> {
         match key {
             TypedSignaturePublicKey::Dilithium5(pk) => {
-                let _ = Dilithium5::verify(&pk, message, &Signature(signature))?;
-                Ok(true)
+                Ok(Dilithium5::verify(&pk, message, &Signature(signature))?)
             }
             _ => Err(crate::Error::Format(FormatError::InvalidKeyType)),
         }
@@ -219,11 +216,10 @@ impl SignatureAlgorithm for Ed25519Wrapper {
         message: &[u8],
         key: &TypedSignaturePublicKey,
         signature: Vec<u8>,
-    ) -> crate::Result<bool> {
+    ) -> crate::Result<()> {
         match key {
             TypedSignaturePublicKey::Ed25519(pk) => {
-                let _ = Ed25519::verify(&pk, message, &Signature(signature))?;
-                Ok(true)
+                Ok(Ed25519::verify(&pk, message, &Signature(signature))?)
             }
             _ => Err(crate::Error::Format(FormatError::InvalidKeyType)),
         }
@@ -268,11 +264,10 @@ impl SignatureAlgorithm for EcdsaP256Wrapper {
         message: &[u8],
         key: &TypedSignaturePublicKey,
         signature: Vec<u8>,
-    ) -> crate::Result<bool> {
+    ) -> crate::Result<()> {
         match key {
             TypedSignaturePublicKey::EcdsaP256(pk) => {
-                let _ = EcdsaP256::verify(&pk, message, &Signature(signature))?;
-                Ok(true)
+                Ok(EcdsaP256::verify(&pk, message, &Signature(signature))?)
             }
             _ => Err(crate::Error::Format(FormatError::InvalidKeyType)),
         }

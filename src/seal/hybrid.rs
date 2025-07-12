@@ -483,7 +483,6 @@ mod tests {
     use crate::common::algorithms::AsymmetricAlgorithm as AsymmetricAlgorithmEnum;
     use crate::common::algorithms::SignatureAlgorithm as SignatureAlgorithmEnum;
     use crate::common::algorithms::SymmetricAlgorithm as SymmetricAlgorithmEnum;
-    use crate::keys::SignaturePublicKey;
     use crate::seal::traits::*;
     use crate::Error;
     use std::collections::HashMap;
@@ -638,11 +637,9 @@ mod tests {
             .into_signature_wrapper()
             .generate_keypair()?
             .into_keypair();
-        let sig_pk_bytes = sig_pk.to_bytes();
 
         // 2. Setup verification key
         let signer_key_id = "test-signer-key-mem".to_string();
-        let verification_key = SignaturePublicKey::new(sig_pk_bytes);
 
         let plaintext = get_test_data();
         let aad = b"test-signed-aad-memory";
@@ -662,7 +659,7 @@ mod tests {
             .decrypt()
             .slice(&encrypted)?
             .with_aad(aad)
-            .with_verification_key(verification_key.clone())
+            .with_verification_key(sig_pk.clone())
             .with_key_to_vec(&enc_sk)?;
         assert_eq!(decrypted.as_slice(), plaintext);
 
@@ -671,7 +668,7 @@ mod tests {
             .decrypt()
             .slice(&encrypted)?
             .with_aad(b"wrong aad")
-            .with_verification_key(verification_key.clone())
+            .with_verification_key(sig_pk.clone())
             .with_key_to_vec(&enc_sk);
         assert!(res.is_err(), "Decryption should fail with wrong AAD");
         assert!(matches!(res.err(), Some(Error::Crypto(_))));
@@ -680,7 +677,7 @@ mod tests {
         let res2 = seal
             .decrypt()
             .slice(&encrypted)?
-            .with_verification_key(verification_key)
+            .with_verification_key(sig_pk)
             .with_key_to_vec(&enc_sk);
         assert!(res2.is_err(), "Decryption should fail with no AAD");
 
@@ -974,8 +971,6 @@ mod tests {
                 .into_signature_wrapper()
                 .generate_keypair()?
                 .into_keypair();
-            let sig_pk_bytes = sig_pk.to_bytes();
-            let verification_key = SignaturePublicKey::new(sig_pk_bytes);
 
             let signer_key_id = "test-signer-key-async".to_string();
             let plaintext = get_test_data();
@@ -1003,7 +998,7 @@ mod tests {
                 .async_reader(Cursor::new(&encrypted))
                 .await?
                 .with_aad(aad)
-                .with_verification_key(verification_key.clone())
+                .with_verification_key(sig_pk.clone())
                 .with_key_to_reader(&enc_sk)
                 .await?;
             let mut decrypted_ok = Vec::new();
@@ -1016,7 +1011,7 @@ mod tests {
                 .async_reader(Cursor::new(&encrypted))
                 .await?
                 .with_aad(b"wrong-aad")
-                .with_verification_key(verification_key)
+                .with_verification_key(sig_pk)
                 .with_key_to_reader(&enc_sk)
                 .await;
             assert!(res.is_err());

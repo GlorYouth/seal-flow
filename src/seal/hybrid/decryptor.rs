@@ -10,7 +10,7 @@ use crate::hybrid::traits::{
 };
 use crate::keys::provider::KeyProvider;
 use crate::keys::TypedAsymmetricPrivateKey;
-use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey};
+use crate::keys::{AsymmetricPrivateKey, TypedSignaturePublicKey};
 use crate::seal::traits::{
     AsyncStreamingDecryptor, InMemoryDecryptor, ParallelStreamingDecryptor, StreamingDecryptor,
     WithAad, WithVerificationKey,
@@ -27,7 +27,7 @@ use tokio::io::AsyncRead;
 pub struct PendingDecryptor<T> {
     inner: T,
     aad: Option<Vec<u8>>,
-    verification_key: Option<SignaturePublicKey>,
+    verification_key: Option<TypedSignaturePublicKey>,
     key_provider: Option<Arc<dyn KeyProvider>>,
 }
 
@@ -39,7 +39,7 @@ impl<T> WithAad for PendingDecryptor<T> {
 }
 
 impl<T> WithVerificationKey for PendingDecryptor<T> {
-    fn with_verification_key(mut self, verification_key: SignaturePublicKey) -> Self {
+    fn with_verification_key(mut self, verification_key: TypedSignaturePublicKey) -> Self {
         self.verification_key = Some(verification_key);
         self
     }
