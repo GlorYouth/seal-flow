@@ -29,6 +29,7 @@ impl<'a> HybridConfig<'a> {
                 .as_ref()
                 .map(|d| d.derivation_info.clone()),
             self.config.chunk_size(),
+            self.aad.as_deref(),
         )?;
 
         let dek = if let Some(derivation_set) = self.derivation_config {

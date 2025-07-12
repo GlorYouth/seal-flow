@@ -31,6 +31,7 @@ pub(super) fn create_header<H: HybridAlgorithm + ?Sized>(
     signer: Option<SignerSet>,
     derivation_info: Option<DerivationInfo>,
     chunk_size: u32,
+    aad: Option<&[u8]>,
 ) -> Result<(Header, [u8; 12], Zeroizing<Vec<u8>>)> {
     // 1. KEM Encapsulate
     // 1. KEM 封装
@@ -61,7 +62,13 @@ pub(super) fn create_header<H: HybridAlgorithm + ?Sized>(
     if let Some(s) = signer {
         // The payload already has signature: None, so we can serialize it directly.
         // 有效载荷的签名字段为 None，所以我们可以直接序列化它。
-        let payload_bytes = bincode::encode_to_vec(&payload, bincode::config::standard())?;
+        let mut payload_bytes = bincode::encode_to_vec(&payload, bincode::config::standard())?;
+        
+        // Append AAD to payload before signing
+        if let Some(aad_data) = aad {
+            payload_bytes.extend_from_slice(aad_data);
+        }
+
         let signature_bytes = s.signer.sign(&payload_bytes, &s.signing_key)?;
 
         // Now, set the signature on the actual payload by mutating it.
