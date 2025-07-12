@@ -40,6 +40,12 @@ pub mod prelude {
         SignatureAlgorithm as SignatureAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
         XofAlgorithm as XofAlgorithmEnum,
     };
+    pub use crate::algorithms::traits::{
+        AsymmetricAlgorithm as AsymmetricAlgorithmTrait, KdfKeyAlgorithm as KdfKeyAlgorithmTrait,
+        KdfPasswordAlgorithm as KdfPasswordAlgorithmTrait,
+        SignatureAlgorithm as SignatureAlgorithmTrait, SymmetricAlgorithm as SymmetricAlgorithmTrait,
+        XofAlgorithm as XofAlgorithmTrait,
+    };
     pub use crate::keys::provider::{EncryptionKeyProvider, KeyProvider, KeyProviderError};
     pub use crate::keys::{
         AsymmetricPrivateKey, AsymmetricPublicKey, SignaturePublicKey, SymmetricKey,
