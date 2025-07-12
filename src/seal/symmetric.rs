@@ -117,7 +117,7 @@
 //! assert_eq!(plaintext, &decrypted[..]);
 //! ```
 use crate::common::config::{ArcConfig, ConfigBuilder};
-use crate::keys::SymmetricKey;
+use crate::keys::TypedSymmetricKey;
 use decryptor::SymmetricDecryptorBuilder;
 use encryptor::SymmetricEncryptor;
 
@@ -166,7 +166,7 @@ impl SymmetricSeal {
     ///
     /// 这将返回一个 `SymmetricEncryptor` 上下文对象。然后，您可以链式调用以配置选项
     ///（如 `.with_aad()`）或调用执行方法（如 `.to_vec()`）来执行加密。
-    pub fn encrypt(&self, key: SymmetricKey, key_id: String) -> SymmetricEncryptor {
+    pub fn encrypt(&self, key: TypedSymmetricKey, key_id: String) -> SymmetricEncryptor {
         SymmetricEncryptor {
             key,
             key_id,
@@ -197,17 +197,16 @@ impl SymmetricSeal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keys::SymmetricKey;
     use crate::prelude::SymmetricAlgorithmEnum;
     use crate::prelude::{InMemoryEncryptor, StreamingEncryptor};
     use crate::seal::traits::WithAad;
-    use seal_crypto::prelude::*;
-    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
     use std::collections::HashMap;
     use std::io::{Cursor, Read, Write};
     #[cfg(feature = "async")]
     use tokio::io::AsyncReadExt;
     const TEST_KEY_ID: &str = "test-key";
+
+    type TheAlgorithmEnum = SymmetricAlgorithmEnum;
 
     fn get_test_data() -> &'static [u8] {
         b"This is a reasonably long test message to ensure that we cross chunk boundaries."
@@ -215,38 +214,34 @@ mod tests {
 
     #[test]
     fn test_in_memory_roundtrip() {
-        let typed_key = Aes256Gcm::generate_key().unwrap();
-        let key = SymmetricKey::new(typed_key.to_bytes());
+        let typed_key = TheAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper().generate_typed_key().unwrap();
         let plaintext = get_test_data();
 
         let seal = SymmetricSeal::default();
         let encrypted = seal
-            .encrypt(key.clone(), TEST_KEY_ID.to_string())
-            .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
+            .encrypt(typed_key.clone(), TEST_KEY_ID.to_string())
             .to_vec(plaintext)
             .unwrap();
         let pending = seal.decrypt().slice(&encrypted).unwrap();
         assert_eq!(pending.key_id(), Some(TEST_KEY_ID));
-        let decrypted = pending.with_untyped_key_to_vec(&key).unwrap();
+        let decrypted = pending.with_key_to_vec(&typed_key).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
     }
 
     #[test]
     fn test_in_memory_parallel_roundtrip() -> crate::Result<()> {
-        let typed_key = Aes256Gcm::generate_key()?;
-        let key = SymmetricKey::new(typed_key.to_bytes());
+        let typed_key = TheAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper().generate_typed_key()?;
         let plaintext = get_test_data();
         let key_id = "test-key-id-2".to_string();
         let seal = SymmetricSeal::default();
 
         let encrypted = seal
-            .encrypt(key.clone(), key_id.clone())
-            .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
+            .encrypt(typed_key.clone(), key_id.clone())
             .to_vec_parallel(plaintext)?;
 
         let pending = seal.decrypt().slice_parallel(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
-        let decrypted = pending.with_untyped_key_to_vec(&key)?;
+        let decrypted = pending.with_key_to_vec(&typed_key)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -255,8 +250,7 @@ mod tests {
     #[test]
     fn test_streaming_roundtrip() {
         let mut key_store = HashMap::new();
-        let typed_key = Aes256Gcm::generate_key().unwrap();
-        let key = SymmetricKey::new(typed_key.to_bytes());
+        let typed_key = TheAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper().generate_typed_key().unwrap();
         key_store.insert(TEST_KEY_ID.to_string(), typed_key.clone());
 
         let plaintext = get_test_data();
@@ -265,8 +259,7 @@ mod tests {
         // Encrypt
         let mut encrypted_data = Vec::new();
         let mut encryptor = seal
-            .encrypt(key.clone(), TEST_KEY_ID.to_string())
-            .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
+            .encrypt(typed_key.clone(), TEST_KEY_ID.to_string())
             .into_writer(&mut encrypted_data)
             .unwrap();
         encryptor.write_all(plaintext).unwrap();
@@ -276,7 +269,7 @@ mod tests {
         let pending = seal.decrypt().reader(Cursor::new(&encrypted_data)).unwrap();
         let key_id = pending.key_id().unwrap();
         let _decryption_key = key_store.get(key_id).unwrap();
-        let mut decryptor = pending.with_untyped_key_to_reader(&key).unwrap();
+        let mut decryptor = pending.with_key_to_reader(&typed_key).unwrap();
 
         let mut decrypted_data = Vec::new();
         decryptor.read_to_end(&mut decrypted_data).unwrap();
@@ -285,22 +278,20 @@ mod tests {
 
     #[test]
     fn test_parallel_streaming_roundtrip() -> crate::Result<()> {
-        let typed_key = Aes256Gcm::generate_key()?;
-        let key = SymmetricKey::new(typed_key.to_bytes());
+        let typed_key = TheAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper().generate_typed_key()?;
         let plaintext = get_test_data();
         let key_id = "test-key-id-p-streaming".to_string();
         let seal = SymmetricSeal::default();
 
         let mut encrypted = Vec::new();
-        seal.encrypt(key.clone(), key_id.clone())
-            .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
+        seal.encrypt(typed_key.clone(), key_id.clone())
             .pipe_parallel(Cursor::new(plaintext), &mut encrypted)?;
 
         let pending = seal.decrypt().reader_parallel(Cursor::new(&encrypted))?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
 
         let mut decrypted = Vec::new();
-        pending.with_untyped_key_to_writer(&key, &mut decrypted)?;
+        pending.with_key_to_writer(&typed_key, &mut decrypted)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
         Ok(())
@@ -308,22 +299,20 @@ mod tests {
 
     #[test]
     fn test_with_bytes_roundtrip() -> crate::Result<()> {
-        let typed_key = Aes256Gcm::generate_key()?;
-        let key = SymmetricKey::new(typed_key.to_bytes());
+        let typed_key = TheAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper().generate_typed_key()?;
         let plaintext = get_test_data();
         let key_id = "test-key-id-bytes".to_string();
         let seal = SymmetricSeal::default();
 
         // 使用原始密钥加密
         let encrypted = seal
-            .encrypt(key.clone(), key_id.clone())
-            .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
+            .encrypt(typed_key.clone(), key_id.clone())
             .to_vec(plaintext)?;
 
         // 使用密钥字节解密
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
-        let decrypted = pending.with_untyped_key_to_vec(&key)?;
+        let decrypted = pending.with_key_to_vec(&typed_key)?;
 
         assert_eq!(plaintext, &decrypted[..]);
         Ok(())
@@ -331,33 +320,31 @@ mod tests {
 
     #[test]
     fn test_aad_in_memory_roundtrip() -> crate::Result<()> {
-        let typed_key = Aes256Gcm::generate_key()?;
-        let key = SymmetricKey::new(typed_key.to_bytes());
+        let typed_key = TheAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper().generate_typed_key()?;
         let plaintext = get_test_data();
         let aad = b"test-associated-data";
         let key_id = "aad-key".to_string();
         let seal = SymmetricSeal::default();
 
         let encrypted = seal
-            .encrypt(key.clone(), key_id.clone())
+            .encrypt(typed_key.clone(), key_id.clone())
             .with_aad(aad)
-            .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
             .to_vec(plaintext)?;
 
         // Decrypt with correct AAD
         let pending = seal.decrypt().with_aad(aad).slice(&encrypted)?;
         assert_eq!(pending.key_id(), Some(key_id.as_str()));
-        let decrypted = pending.with_untyped_key_to_vec(&key)?;
+        let decrypted = pending.with_key_to_vec(&typed_key)?;
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
         let pending_fail = seal.decrypt().with_aad(b"wrong-aad").slice(&encrypted)?;
-        let result = pending_fail.with_untyped_key_to_vec(&key);
+        let result = pending_fail.with_key_to_vec(&typed_key);
         assert!(result.is_err());
 
         // Decrypt with no AAD fails
         let pending_fail2 = seal.decrypt().slice(&encrypted)?;
-        let result2 = pending_fail2.with_untyped_key_to_vec(&key);
+        let result2 = pending_fail2.with_key_to_vec(&typed_key);
         assert!(result2.is_err());
 
         Ok(())
@@ -373,8 +360,7 @@ mod tests {
         #[tokio::test]
         async fn test_asynchronous_streaming_roundtrip() {
             let mut key_store = HashMap::new();
-            let typed_key = Aes256Gcm::generate_key().unwrap();
-            let key = SymmetricKey::new(typed_key.to_bytes());
+            let typed_key = TheAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper().generate_typed_key().unwrap();
             key_store.insert(TEST_KEY_ID.to_string(), typed_key.clone());
             let plaintext = get_test_data();
 
@@ -384,8 +370,7 @@ mod tests {
             let mut encrypted_data = Vec::new();
             {
                 let mut encryptor = seal
-                    .encrypt(key.clone(), TEST_KEY_ID.to_string())
-                    .execute_with(SymmetricAlgorithmEnum::Aes256Gcm)
+                    .encrypt(typed_key.clone(), TEST_KEY_ID.to_string())
                     .into_async_writer(&mut encrypted_data)
                     .await
                     .unwrap();
@@ -401,7 +386,7 @@ mod tests {
                 .unwrap();
             let key_id = pending.key_id().unwrap();
             let _decryption_key = key_store.get(key_id).unwrap();
-            let mut decryptor = pending.with_untyped_key_to_async_reader(&key).await.unwrap();
+            let mut decryptor = pending.with_key_to_async_reader(&typed_key).await.unwrap();
 
             let mut decrypted_data = Vec::new();
             decryptor.read_to_end(&mut decrypted_data).await.unwrap();

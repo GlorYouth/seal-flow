@@ -430,6 +430,24 @@ impl TypedSymmetricKey {
     pub fn untyped(&self) -> SymmetricKey {
         SymmetricKey::new(self.as_ref().to_vec())
     }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Aes128Gcm(key) => key.as_ref(),
+            Self::Aes256Gcm(key) => key.as_ref(),
+            Self::XChaCha20Poly1305(key) => key.as_ref(),
+            Self::ChaCha20Poly1305(key) => key.as_ref(),
+        }
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        match self {
+            Self::Aes128Gcm(key) => key.to_vec(),
+            Self::Aes256Gcm(key) => key.to_vec(),
+            Self::XChaCha20Poly1305(key) => key.to_vec(),
+            Self::ChaCha20Poly1305(key) => key.to_vec(),
+        }
+    }
 }
 
 impl AsRef<[u8]> for TypedSymmetricKey {
