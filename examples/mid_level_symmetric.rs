@@ -1,23 +1,36 @@
-use seal_flow::algorithms::kdf::passwd::Pbkdf2Sha256;
-use seal_flow::algorithms::kdf::HkdfSha256;
-use seal_flow::algorithms::symmetric::Aes256Gcm;
-use seal_flow::error::Result;
-use seal_flow::flows::header::Header;
-use seal_flow::flows::symmetric::*;
-use seal_flow::prelude::*;
-use seal_flow::secrecy::SecretBox;
+//! An example demonstrating the mid-level symmetric encryption APIs.
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
+
+use seal_flow::mid_level::common::config::ArcConfig;
+use seal_flow::error::Result;
+use seal_flow::base::keys::TypedSymmetricKey;
+use seal_flow::mid_level::symmetric::{
+    asynchronous::Asynchronous,
+    ordinary::Ordinary,
+    parallel::Parallel,
+    parallel_streaming::ParallelStreaming,
+    streaming::Streaming,
+    traits::{
+        SymmetricAsynchronousProcessor, SymmetricOrdinaryProcessor, SymmetricParallelProcessor,
+        SymmetricParallelStreamingProcessor, SymmetricStreamingProcessor,
+    },
+};
+use seal_flow::prelude::*;
+use seal_crypto::secrecy::SecretBox;
+use seal_flow::base::algorithms::kdf::passwd::{KdfPasswordWrapper, Pbkdf2Sha256Wrapper};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-type TheAlgorithm = Aes256Gcm;
+type TheAlgorithmEnum = SymmetricAlgorithmEnum;
 const KEY_ID: &str = "mid-level-symmetric-key";
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // 1. Setup
     let mut key_store = HashMap::new();
-    let key = TheAlgorithm::generate_key()?;
+    let algo = TheAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper();
+    let key = algo.generate_typed_key()?;
     key_store.insert(KEY_ID.to_string(), key);
 
     let plaintext = b"This is a test message for the mid-level API.";
@@ -25,16 +38,25 @@ async fn main() -> Result<()> {
     // --- Mode 1: In-Memory (Ordinary) ---
     println!("--- Testing Mode: In-Memory (Ordinary) ---");
     let key1 = key_store.get(KEY_ID).unwrap();
-    let ciphertext1 =
-        ordinary::encrypt::<TheAlgorithm>(key1.clone(), plaintext, KEY_ID.to_string(), None)?;
+    let ordinary_processor = Ordinary::new();
+    let ciphertext1 = ordinary_processor.encrypt_symmetric_in_memory(
+        plaintext,
+        seal_flow::mid_level::symmetric::config::SymmetricConfig {
+            algorithm: Cow::Borrowed(&algo),
+            key: Cow::Borrowed(key1),
+            key_id: KEY_ID.to_string(),
+            aad: None,
+            config: ArcConfig::default(),
+        },
+    )?;
 
     // Demonstrate two-stage decryption
-    let (header1, body1) = Header::decode_from_prefixed_slice(&ciphertext1)?;
-    let found_key_id1 = header1.payload.key_id().unwrap();
+    let pending_decryptor1 = ordinary_processor
+        .begin_decrypt_symmetric_in_memory(&ciphertext1, ArcConfig::default())?;
+    let found_key_id1 = pending_decryptor1.header().payload.key_id().unwrap();
     println!("Found key ID in header: '{}'", found_key_id1);
     let decryption_key1 = key_store.get(found_key_id1).unwrap();
-    let decrypted1 =
-        ordinary::decrypt_body::<TheAlgorithm>(decryption_key1.clone(), &header1, body1, None)?;
+    let decrypted1 = pending_decryptor1.into_plaintext(decryption_key1, None)?;
 
     assert_eq!(plaintext, &decrypted1[..]);
     println!("In-Memory (Ordinary) roundtrip successful!");
@@ -42,15 +64,24 @@ async fn main() -> Result<()> {
     // --- Mode 2: In-Memory Parallel ---
     println!("\n--- Testing Mode: In-Memory Parallel ---");
     let key2 = key_store.get(KEY_ID).unwrap();
-    let ciphertext2 =
-        parallel::encrypt::<TheAlgorithm>(key2.clone(), plaintext, KEY_ID.to_string(), None)?;
+    let parallel_processor = Parallel::new();
+    let ciphertext2 = parallel_processor.encrypt_symmetric_parallel(
+        plaintext,
+        seal_flow::mid_level::symmetric::config::SymmetricConfig {
+            algorithm: Cow::Borrowed(&algo),
+            key: Cow::Borrowed(key2),
+            key_id: KEY_ID.to_string(),
+            aad: None,
+            config: ArcConfig::default(),
+        },
+    )?;
 
-    let (header2, body2) = Header::decode_from_prefixed_slice(&ciphertext2)?;
-    let found_key_id2 = header2.payload.key_id().unwrap();
+    let pending_decryptor2 = parallel_processor
+        .begin_decrypt_symmetric_parallel(&ciphertext2, ArcConfig::default())?;
+    let found_key_id2 = pending_decryptor2.header().payload.key_id().unwrap();
     println!("Found key ID in parallel header: '{}'", found_key_id2);
     let decryption_key2 = key_store.get(found_key_id2).unwrap();
-    let decrypted2 =
-        parallel::decrypt_body::<TheAlgorithm>(decryption_key2.clone(), &header2, body2, None)?;
+    let decrypted2 = pending_decryptor2.into_plaintext(decryption_key2, None)?;
 
     assert_eq!(plaintext, &decrypted2[..]);
     println!("In-Memory Parallel roundtrip successful!");
@@ -59,22 +90,26 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Mode: Synchronous Streaming ---");
     let mut ciphertext3 = Vec::new();
     let key3 = key_store.get(KEY_ID).unwrap();
-    let mut encryptor3 = streaming::Encryptor::<_, TheAlgorithm>::new(
-        &mut ciphertext3,
-        key3.clone(),
-        KEY_ID.to_string(),
-        None,
+    let streaming_processor = Streaming::new();
+    let mut encryptor3 = streaming_processor.encrypt_symmetric_to_stream(
+        Box::new(&mut ciphertext3),
+        seal_flow::mid_level::symmetric::config::SymmetricConfig {
+            algorithm: Cow::Borrowed(&algo),
+            key: Cow::Borrowed(key3),
+            key_id: KEY_ID.to_string(),
+            aad: None,
+            config: ArcConfig::default(),
+        },
     )?;
     encryptor3.write_all(plaintext)?;
     encryptor3.finish()?;
 
-    let pending_decryptor3 =
-        streaming::PendingDecryptor::<_>::from_reader(Cursor::new(&ciphertext3))?;
+    let pending_decryptor3 = streaming_processor
+        .begin_decrypt_symmetric_from_stream(Box::new(Cursor::new(&ciphertext3)), ArcConfig::default())?;
     let found_key_id3 = pending_decryptor3.header().payload.key_id().unwrap();
     println!("Found key ID in stream: '{}'", found_key_id3);
     let decryption_key3 = key_store.get(found_key_id3).unwrap();
-    let mut decryptor3 =
-        pending_decryptor3.into_decryptor::<TheAlgorithm>(decryption_key3.clone(), None)?;
+    let mut decryptor3 = pending_decryptor3.into_decryptor(decryption_key3, None)?;
 
     let mut decrypted3 = Vec::new();
     decryptor3.read_to_end(&mut decrypted3)?;
@@ -85,23 +120,33 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Mode: Asynchronous Streaming ---");
     let mut ciphertext4 = Vec::new();
     let key4 = key_store.get(KEY_ID).unwrap();
-    let mut encryptor4 = asynchronous::Encryptor::<_, TheAlgorithm>::new(
-        &mut ciphertext4,
-        key4.clone(),
-        KEY_ID.to_string(),
-        None,
-    )
-    .await?;
-    encryptor4.write_all(plaintext).await?;
-    encryptor4.shutdown().await?;
+    let async_processor = Asynchronous::new();
+    {
+        let mut encryptor4 = async_processor
+            .encrypt_symmetric_async(
+                Box::new(&mut ciphertext4),
+                seal_flow::mid_level::symmetric::config::SymmetricConfig {
+                    algorithm: Cow::Borrowed(&algo),
+                    key: Cow::Borrowed(key4),
+                    key_id: KEY_ID.to_string(),
+                    aad: None,
+                    config: ArcConfig::default(),
+                },
+            )
+            .await?;
+        encryptor4.write_all(plaintext).await?;
+        encryptor4.shutdown().await?;
+    }
 
-    let pending_decryptor4 =
-        asynchronous::PendingDecryptor::<_>::from_reader(Cursor::new(&ciphertext4)).await?;
+    let pending_decryptor4 = async_processor
+        .begin_decrypt_symmetric_async(Box::new(Cursor::new(&ciphertext4)), ArcConfig::default())
+        .await?;
     let found_key_id4 = pending_decryptor4.header().payload.key_id().unwrap();
     println!("Found key ID in async stream: '{}'", found_key_id4);
     let decryption_key4 = key_store.get(found_key_id4).unwrap();
-    let mut decryptor4 =
-        pending_decryptor4.into_decryptor::<TheAlgorithm>(decryption_key4.clone(), None)?;
+    let mut decryptor4 = pending_decryptor4
+        .into_decryptor(decryption_key4, None)
+        .await?;
 
     let mut decrypted4 = Vec::new();
     decryptor4.read_to_end(&mut decrypted4).await?;
@@ -112,26 +157,28 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Mode: Parallel Streaming ---");
     let mut ciphertext5 = Vec::new();
     let key5 = key_store.get(KEY_ID).unwrap();
-    parallel_streaming::encrypt::<TheAlgorithm, _, _>(
-        key5.clone(),
-        Cursor::new(plaintext),
-        &mut ciphertext5,
-        KEY_ID.to_string(),
-        None,
+    let parallel_streaming_processor = ParallelStreaming::new();
+    parallel_streaming_processor.encrypt_symmetric_pipeline(
+        Box::new(Cursor::new(plaintext)),
+        Box::new(&mut ciphertext5),
+        seal_flow::mid_level::symmetric::config::SymmetricConfig {
+            algorithm: Cow::Borrowed(&algo),
+            key: Cow::Borrowed(key5),
+            key_id: KEY_ID.to_string(),
+            aad: None,
+            config: ArcConfig::default(),
+        },
     )?;
 
     let mut decrypted5 = Vec::new();
     let mut source5 = Cursor::new(&ciphertext5);
-    let pending_decryptor5 = parallel_streaming::PendingDecryptor::from_reader(&mut source5)?;
+    let pending_decryptor5 = parallel_streaming_processor
+        .begin_decrypt_symmetric_pipeline(Box::new(&mut source5), ArcConfig::default())?;
     let header5 = pending_decryptor5.header().clone();
     let found_key_id5 = header5.payload.key_id().unwrap();
     println!("Found key ID in parallel stream: '{}'", found_key_id5);
     let decryption_key5 = key_store.get(found_key_id5).unwrap();
-    pending_decryptor5.decrypt_to_writer::<TheAlgorithm, _>(
-        decryption_key5.clone(),
-        &mut decrypted5,
-        None,
-    )?;
+    pending_decryptor5.decrypt_to_writer(decryption_key5, Box::new(&mut decrypted5), None)?;
 
     assert_eq!(plaintext, &decrypted5[..]);
     println!("Parallel Streaming roundtrip successful!");
@@ -142,23 +189,32 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Mode: In-Memory with AAD ---");
     let aad = b"this is authenticated data for the mid-level symmetric api";
     let key6 = key_store.get(KEY_ID).unwrap();
-    let ciphertext6 =
-        ordinary::encrypt::<TheAlgorithm>(key6.clone(), plaintext, KEY_ID.to_string(), Some(aad))?;
+    let ciphertext6 = ordinary_processor.encrypt_symmetric_in_memory(
+        plaintext,
+        seal_flow::mid_level::symmetric::config::SymmetricConfig {
+            algorithm: Cow::Borrowed(&algo),
+            key: Cow::Borrowed(key6),
+            key_id: KEY_ID.to_string(),
+            aad: Some(aad.to_vec()),
+            config: ArcConfig::default(),
+        },
+    )?;
 
-    let pending_decryptor6 = ordinary::PendingDecryptor::from_ciphertext(&ciphertext6)?;
+    let pending_decryptor6 = ordinary_processor
+        .begin_decrypt_symmetric_in_memory(&ciphertext6, ArcConfig::default())?;
     let found_key_id6 = pending_decryptor6.header().payload.key_id().unwrap();
     let decryption_key6 = key_store.get(found_key_id6).unwrap();
 
     // Decrypt with correct AAD
-    let decrypted6 =
-        pending_decryptor6.into_plaintext::<TheAlgorithm>(decryption_key6.clone(), Some(aad))?;
+    let decrypted6 = pending_decryptor6.into_plaintext(decryption_key6, Some(aad.to_vec()))?;
     assert_eq!(plaintext, &decrypted6[..]);
     println!("In-Memory with AAD roundtrip successful!");
 
     // Decrypt with wrong AAD should fail
-    let pending_decryptor_fail = ordinary::PendingDecryptor::from_ciphertext(&ciphertext6)?;
-    let result_fail = pending_decryptor_fail
-        .into_plaintext::<TheAlgorithm>(decryption_key6.clone(), Some(b"wrong aad"));
+    let pending_decryptor_fail = ordinary_processor
+        .begin_decrypt_symmetric_in_memory(&ciphertext6, ArcConfig::default())?;
+    let result_fail =
+        pending_decryptor_fail.into_plaintext(decryption_key6, Some(b"wrong aad".to_vec()));
     assert!(result_fail.is_err());
     println!("In-Memory with wrong AAD correctly failed!");
 
@@ -166,17 +222,18 @@ async fn main() -> Result<()> {
     println!("\n--- Testing Key Derivation ---");
 
     // 从主密钥派生子密钥 - 使用 HKDF
-    let master_key = SymmetricKey::new(key_store.get(KEY_ID).unwrap().to_bytes());
-    let deriver = HkdfSha256::default();
+    let master_key_bytes = key_store.get(KEY_ID).unwrap().as_ref().to_vec();
+    let master_key = SymmetricKey::new(master_key_bytes);
+    let deriver = KdfKeyAlgorithmEnum::HkdfSha256;
 
     // 使用不同的上下文信息派生不同用途的子密钥
     let salt = b"rotation-salt-2023";
     let encryption_info = b"data-encryption-key";
     let signing_info = b"signing-key";
 
-    let encryption_key = master_key.derive_key(&deriver, Some(salt), Some(encryption_info), 32)?;
+    let encryption_key = master_key.derive_key(deriver, Some(salt), Some(encryption_info), 32)?;
 
-    let _signing_key = master_key.derive_key(&deriver, Some(salt), Some(signing_info), 32)?;
+    let _signing_key = master_key.derive_key(deriver, Some(salt), Some(signing_info), 32)?;
 
     println!("成功从主密钥派生子密钥！");
 
@@ -185,15 +242,26 @@ async fn main() -> Result<()> {
     let derived_key_id = "derived-encryption-key";
 
     // 将派生的字节转换为算法密钥
-    let algo_key = <Aes256Gcm as SymmetricKeySet>::Key::from_bytes(derived_key_bytes)?;
+    let algo_key =
+        TypedSymmetricKey::from_bytes(derived_key_bytes, TheAlgorithmEnum::Aes256Gcm)?;
 
-    let ciphertext7 =
-        ordinary::encrypt::<TheAlgorithm>(algo_key, plaintext, derived_key_id.to_string(), None)?;
+    let ciphertext7 = ordinary_processor.encrypt_symmetric_in_memory(
+        plaintext,
+        seal_flow::mid_level::symmetric::config::SymmetricConfig {
+            algorithm: Cow::Borrowed(&algo),
+            key: Cow::Borrowed(&algo_key),
+            key_id: derived_key_id.to_string(),
+            aad: None,
+            config: ArcConfig::default(),
+        },
+    )?;
 
     // 使用派生的密钥进行解密
-    let pending_decryptor7 = ordinary::PendingDecryptor::from_ciphertext(&ciphertext7)?;
-    let algo_key2 = <Aes256Gcm as SymmetricKeySet>::Key::from_bytes(derived_key_bytes)?;
-    let decrypted7 = pending_decryptor7.into_plaintext::<TheAlgorithm>(algo_key2, None)?;
+    let pending_decryptor7 = ordinary_processor
+        .begin_decrypt_symmetric_in_memory(&ciphertext7, ArcConfig::default())?;
+    let algo_key2 =
+        TypedSymmetricKey::from_bytes(derived_key_bytes, TheAlgorithmEnum::Aes256Gcm)?;
+    let decrypted7 = pending_decryptor7.into_plaintext(&algo_key2, None)?;
 
     assert_eq!(plaintext, &decrypted7[..]);
     println!("使用派生密钥加密/解密成功！");
@@ -205,31 +273,40 @@ async fn main() -> Result<()> {
     let salt = b"random-salt-value";
 
     // 在实际应用中应使用更高的迭代次数 (至少 100,000)
-    let pbkdf2_deriver = Pbkdf2Sha256::new(100_000);
+    let pbkdf2_deriver = KdfPasswordWrapper::new(Box::new(Pbkdf2Sha256Wrapper::new(100_000)));
 
     // 从用户密码派生加密密钥
     let password_derived_key =
-        SymmetricKey::derive_from_password(&password, &pbkdf2_deriver, salt, 32)?;
+        SymmetricKey::derive_from_password(&password, pbkdf2_deriver.clone(), salt, 32)?;
 
     // 使用从密码派生的密钥加密数据
     let password_key_id = "password-derived-key";
-    let password_key =
-        <Aes256Gcm as SymmetricKeySet>::Key::from_bytes(password_derived_key.as_bytes())?;
-    let ciphertext8 = ordinary::encrypt::<TheAlgorithm>(
-        password_key,
+    let password_key = TypedSymmetricKey::from_bytes(
+        password_derived_key.as_bytes(),
+        TheAlgorithmEnum::Aes256Gcm,
+    )?;
+    let ciphertext8 = ordinary_processor.encrypt_symmetric_in_memory(
         plaintext,
-        password_key_id.to_string(),
-        None,
+        seal_flow::mid_level::symmetric::config::SymmetricConfig {
+            algorithm: Cow::Borrowed(&algo),
+            key: Cow::Borrowed(&password_key),
+            key_id: password_key_id.to_string(),
+            aad: None,
+            config: ArcConfig::default(),
+        },
     )?;
 
     // 模拟另一个位置：重新从相同密码派生相同密钥进行解密
     let password_derived_key2 =
-        SymmetricKey::derive_from_password(&password, &pbkdf2_deriver, salt, 32)?;
+        SymmetricKey::derive_from_password(&password, pbkdf2_deriver, salt, 32)?;
 
-    let pending_decryptor8 = ordinary::PendingDecryptor::from_ciphertext(&ciphertext8)?;
-    let password_key2 =
-        <Aes256Gcm as SymmetricKeySet>::Key::from_bytes(password_derived_key2.as_bytes())?;
-    let decrypted8 = pending_decryptor8.into_plaintext::<TheAlgorithm>(password_key2, None)?;
+    let pending_decryptor8 = ordinary_processor
+        .begin_decrypt_symmetric_in_memory(&ciphertext8, ArcConfig::default())?;
+    let password_key2 = TypedSymmetricKey::from_bytes(
+        password_derived_key2.as_bytes(),
+        TheAlgorithmEnum::Aes256Gcm,
+    )?;
+    let decrypted8 = pending_decryptor8.into_plaintext(&password_key2, None)?;
 
     assert_eq!(plaintext, &decrypted8[..]);
     println!("从密码派生密钥并成功加密/解密数据！");
