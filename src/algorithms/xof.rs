@@ -1,9 +1,8 @@
 use crate::algorithms::traits::XofAlgorithm;
 use crate::error::{Error, Result};
 use crate::prelude::XofAlgorithmEnum;
-use seal_crypto::prelude::KeyBasedDerivation;
+use seal_crypto::prelude::{XofDerivation, XofReader};
 use seal_crypto::schemes::xof::shake::{Shake128, Shake256};
-use seal_crypto::zeroize::Zeroizing;
 
 #[derive(Clone, Default)]
 pub struct Shake128Wrapper {
@@ -19,14 +18,15 @@ impl Shake128Wrapper {
 }
 
 impl XofAlgorithm for Shake128Wrapper {
-    fn derive(
+    fn reader<'a>(
         &self,
-        ikm: &[u8],
-        salt: Option<&[u8]>,
-        info: Option<&[u8]>,
-        output_len: usize,
-    ) -> Result<Zeroizing<Vec<u8>>> {
-        self.shake.derive(ikm, salt, info, output_len).map(|dk| dk.0).map_err(Error::from)
+        ikm: &'a [u8],
+        salt: Option<&'a [u8]>,
+        info: Option<&'a [u8]>,
+    ) -> Result<XofReaderWrapper<'a>> {
+        self.shake.reader(ikm, salt, info)
+            .map(|r| XofReaderWrapper::new(r))
+            .map_err(Error::from)
     }
 
     fn clone_box(&self) -> Box<dyn XofAlgorithm> {
@@ -52,16 +52,15 @@ impl Shake256Wrapper {
 }
 
 impl XofAlgorithm for Shake256Wrapper {
-    fn derive(
+    fn reader<'a>(
         &self,
-        ikm: &[u8],
-        salt: Option<&[u8]>,
-        info: Option<&[u8]>,
-        output_len: usize,
-    ) -> Result<Zeroizing<Vec<u8>>> {
+        ikm: &'a [u8],
+        salt: Option<&'a [u8]>,
+        info: Option<&'a [u8]>,
+    ) -> Result<XofReaderWrapper<'a>> {
         self.shake
-            .derive(ikm, salt, info, output_len)
-            .map(|dk| dk.0)
+            .reader(ikm, salt, info)
+            .map(|r| XofReaderWrapper::new(r))
             .map_err(Error::from)
     }
 
@@ -85,14 +84,13 @@ impl XofWrapper {
 }
 
 impl XofAlgorithm for XofWrapper {
-    fn derive(
+    fn reader<'a>(
         &self,
-        ikm: &[u8],
-        salt: Option<&[u8]>,
-        info: Option<&[u8]>,
-        output_len: usize,
-    ) -> Result<Zeroizing<Vec<u8>>> {
-        self.algorithm.derive(ikm, salt, info, output_len)
+        ikm: &'a [u8],
+        salt: Option<&'a [u8]>,
+        info: Option<&'a [u8]>,
+    ) -> Result<XofReaderWrapper<'a>> {
+        self.algorithm.reader(ikm, salt, info)
     }
 
     fn clone_box(&self) -> Box<dyn XofAlgorithm> {
@@ -101,5 +99,26 @@ impl XofAlgorithm for XofWrapper {
 
     fn algorithm(&self) -> XofAlgorithmEnum {
         self.algorithm.algorithm()
+    }
+}
+
+pub struct XofReaderWrapper<'a> {
+    reader: XofReader<'a>,
+}
+
+impl<'a> XofReaderWrapper<'a> {
+    pub fn new(reader: XofReader<'a>) -> Self {
+        Self { reader }
+    }
+
+    pub fn read(&mut self, buffer: &mut [u8]) {
+        use seal_crypto::prelude::DigestXofReader;
+        self.reader.read(buffer);
+    }
+
+    pub fn read_boxed(&mut self, n: usize) -> Box<[u8]> {
+        let mut buf = vec![0u8; n].into_boxed_slice();
+        self.read(&mut buf);
+        buf
     }
 }

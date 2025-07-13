@@ -83,7 +83,11 @@ impl DerivationWrapper {
         use crate::algorithms::traits::XofAlgorithm;
         match self {
             DerivationWrapper::Kdf(kdf_wrapper) => kdf_wrapper.derive(ikm, salt, info, output_len),
-            DerivationWrapper::Xof(xof_wrapper) => xof_wrapper.derive(ikm, salt, info, output_len),
+            DerivationWrapper::Xof(xof_wrapper) => {
+                let mut xof_reader = xof_wrapper.reader(ikm, salt, info)?;
+                let dek = xof_reader.read_boxed(output_len);
+                Ok(Zeroizing::new(dek.to_vec()))
+            }
         }
     }
 }

@@ -10,6 +10,7 @@ use crate::keys::{
 use crate::prelude::{
     KdfKeyAlgorithmEnum, KdfPasswordAlgorithmEnum, XofAlgorithmEnum,
 };
+use super::xof::XofReaderWrapper;
 use crate::{common, keys::TypedAsymmetricKeyPair};
 use seal_crypto::secrecy::SecretBox;
 use seal_crypto::zeroize::Zeroizing;
@@ -31,6 +32,31 @@ macro_rules! impl_trait_for_box {
 
         impl $trait for Box<dyn $trait> {
             $($impls)*
+        }
+    };
+
+    // Munch a `ref fn` with generics
+    (
+        @impl,
+        $trait:ident,
+        $clone_box_name:ident,
+        {
+            ref fn $method:ident< $($lt:lifetime),+ >(&self, $($arg:ident: $ty:ty),*) -> $ret:ty;
+            $($rest:tt)*
+        },
+        { $($impls:tt)* }
+    ) => {
+        impl_trait_for_box! {
+            @impl,
+            $trait,
+            $clone_box_name,
+            { $($rest)* },
+            {
+                $($impls)*
+                fn $method< $($lt),+ >(&self, $($arg: $ty),*) -> $ret {
+                    self.as_ref().$method($($arg),*)
+                }
+            }
         }
     };
 
@@ -414,20 +440,21 @@ impl_trait_for_box!(KdfPasswordAlgorithm {
     ref fn algorithm(&self,) -> KdfPasswordAlgorithmEnum;
 }, clone_box);
 
+
+
 pub trait XofAlgorithm: Send + Sync + 'static {
-    fn derive(
+    fn reader<'a>(
         &self,
-        ikm: &[u8],
-        salt: Option<&[u8]>,
-        info: Option<&[u8]>,
-        output_len: usize,
-    ) -> Result<Zeroizing<Vec<u8>>>;
+        ikm: &'a [u8],
+        salt: Option<&'a [u8]>,
+        info: Option<&'a [u8]>,
+    ) -> Result<XofReaderWrapper<'a>>;
     fn clone_box(&self) -> Box<dyn XofAlgorithm>;
     fn algorithm(&self) -> XofAlgorithmEnum;
 }
 
 impl_trait_for_box!(XofAlgorithm {
-    ref fn derive(&self, ikm: &[u8], salt: Option<&[u8]>, info: Option<&[u8]>, output_len: usize) -> Result<Zeroizing<Vec<u8>>>;
+    ref fn reader<'a>(&self, ikm: &'a [u8], salt: Option<&'a [u8]>, info: Option<&'a [u8]>) -> Result<XofReaderWrapper<'a>>;
     ref fn algorithm(&self,) -> XofAlgorithmEnum;
     ref fn clone_box(&self,) -> Box<dyn XofAlgorithm>;
 }, clone_box);

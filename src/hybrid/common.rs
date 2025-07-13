@@ -149,12 +149,15 @@ pub(super) fn prepare_body_decrypt_config(
                 kdf_info.info.as_deref(),
                 algorithm.symmetric_algorithm().key_size(),
             )?,
-            Xof(xof_info) => xof_info.xof_algorithm.into_xof_wrapper().derive(
-                shared_secret.as_ref(),
-                xof_info.salt.as_deref(),
-                xof_info.info.as_deref(),
-                algorithm.symmetric_algorithm().key_size(),
-            )?,
+            Xof(xof_info) => {
+                let mut xof_reader = xof_info.xof_algorithm.into_xof_wrapper().reader(
+                    shared_secret.as_ref(),
+                    xof_info.salt.as_deref(),
+                    xof_info.info.as_deref(),
+                )?;
+                let dek = xof_reader.read_boxed(algorithm.symmetric_algorithm().key_size());
+                Zeroizing::new(dek.to_vec())
+            },
         }
     } else {
         shared_secret
