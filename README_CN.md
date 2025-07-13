@@ -21,8 +21,8 @@
 ```mermaid
 graph TD
     A["开始: <br/>SymmetricSeal 或 <br/>HybridSeal"] --> B["创建加密/解密器 <br/> .encrypt() 或 .decrypt()"];
-    B --> C["配置 (可选) <br/> .with_aad() <br/> .with_signer() <br/> ..."];
-    C --> D["执行 <br/> .to_vec(plaintext) <br/> .with_key(key) <br/> ..."];
+    B --> C["配置 (可选) <br/> .with_aad() <br/> .with_signer() <br/> .with_kdf() <br/> ..."];
+    C --> D["执行 <br/> .to_vec(plaintext) <br/> .with_key_to_vec(key) <br/> ..."];
     D --> E["结果: <br/>密文或明文"];
 ```
 
@@ -68,7 +68,7 @@ let key_id = pending.key_id().unwrap(); // 例如 "my-key-v1"
 let key_to_use = my_key_store.get(key_id).unwrap();
 
 // 4. 提供密钥以完成解密
-let plaintext = pending.with_key(key_to_use)?;
+let plaintext = pending.with_key_to_vec(&key_to_use)?;
 ```
 
 **2. 自动化密钥查找 (使用 `KeyProvider`)**
@@ -76,17 +76,19 @@ let plaintext = pending.with_key(key_to_use)?;
 为了更加方便，您可以为您的密钥库实现 `KeyProvider` trait。这允许库为您自动处理密钥查找过程。
 
 ```rust,ignore
+use std::sync::Arc;
+
 // 你的密钥库必须实现 KeyProvider trait
 struct MyKeyStore { /* ... */ }
 impl KeyProvider for MyKeyStore { /* ... */ }
 
-let key_provider = MyKeyStore::new();
+let key_provider = Arc::new(MyKeyStore::new());
 
-// 1. 附加 provider 并调用 resolve_and_decrypt()
+// 1. 附加 provider 并调用 resolve_and_decrypt_to_vec()
 let plaintext = seal.decrypt()
-    .with_key_provider(&key_provider)
+    .with_key_provider(key_provider)
     .slice(&ciphertext)?
-    .resolve_and_decrypt()?; // 密钥查找和解密会自动发生
+    .resolve_and_decrypt_to_vec()?; // 密钥查找和解密会自动发生
 ```
 
 ### 数字签名用于发送方身份验证
@@ -117,6 +119,26 @@ AAD 会被混合到密码学计算中，这意味着密文与 AAD 是密码学�
 
 该示例的完整代码可以在 [`examples/readme/advanced_key_derivation.rs`](./examples/readme/advanced_key_derivation.rs) 中找到。
 
+### 混合加密与集成KDF
+
+对于高级协议，`seal-flow` 支持将密钥派生函数（KDF）直接集成到混合加密流程中（即 KEM-KDF 模式）。在这种模式下，密钥封装机制（KEM）产生的封装密钥不会直接用作数据加密密钥（DEK），而是作为KDF（如HKDF）的输入，以派生出最终的DEK。该技术对于域分离和兼容特定密码学标准非常有用。
+
+您可以在加密时通过 `.with_kdf()` 方法来启用此功能。
+
+```rust,ignore
+// 使用 Kyber 作为 KEM，并用 HKDF 派生最终的 AES 密钥
+let ciphertext = seal
+    .encrypt(kdf_pk, kdf_key_id.to_string())
+    .with_kdf(
+        KdfKeyAlgorithmEnum::HkdfSha256,
+        Some(b"kdf-salt"), // 推荐使用盐
+        Some(b"kdf-info"), // 上下文信息
+    )
+    .execute_with(dem_kdf)
+    .to_vec(kdf_plaintext)?;
+```
+解密过程是透明的；库会自动检测到KDF的使用并在内部执行密钥派生。该功能的完整示例代码可以在 [`examples/high_level_hybrid.rs`](./examples/high_level_hybrid.rs) 中找到。
+
 ## 执行模式
 
 `seal-flow` 提供四种不同的执行模式以处理任何工作负载。由于所有模式都生成统一格式的数据，您可以自由地混合和匹配它们——例如，在服务器上进行流式加密，然后在客户端上进行并行解密。
@@ -127,6 +149,7 @@ AAD 会被混合到密码学计算中，这意味着密文与 AAD 是密码学�
 | **并行内存处理** | `.to_vec_parallel()`, `.slice_parallel()`         | 在多核系统上对较大数据进行高吞吐量处理。                       |
 | **流式处理** | `.into_writer()`, `.reader()`                     | 用于处理大文件或网络I/O，避免内存占用过高。                    |
 | **异步流式处理** | `.into_async_writer()`, `.async_reader()`         | 用于高并发异步应用中的非阻塞I/O（例如 Tokio）。|
+| **并行流式处理** | `.pipe_parallel()`, `.reader_parallel()`          | 在多核系统上进行高吞吐量流式处理，兼顾性能与低内存占用。       |
 
 ## 互操作性
 

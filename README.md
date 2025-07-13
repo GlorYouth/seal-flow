@@ -21,8 +21,8 @@ This design makes your code readable, flexible, and less prone to errors.
 ```mermaid
 graph TD
     A["Start: <br/>SymmetricSeal or <br/>HybridSeal"] --> B["Create Encryptor/Decryptor <br/> .encrypt() or .decrypt()"];
-    B --> C["Configure (Optional) <br/> .with_aad() <br/> .with_signer() <br/> ..."];
-    C --> D["Execute <br/> .to_vec(plaintext) <br/> .with_key(key) <br/> ..."];
+    B --> C["Configure (Optional) <br/> .with_aad() <br/> .with_signer() <br/> .with_kdf() <br/> ..."];
+    C --> D["Execute <br/> .to_vec(plaintext) <br/> .with_key_to_vec(key) <br/> ..."];
     D --> E["Result: <br/>Ciphertext or <br/>Plaintext"];
 ```
 
@@ -68,7 +68,7 @@ let key_id = pending.key_id().unwrap(); // e.g., "my-key-v1"
 let key_to_use = my_key_store.get(key_id).unwrap();
 
 // 4. Provide the key to complete decryption
-let plaintext = pending.with_key(key_to_use)?;
+let plaintext = pending.with_key_to_vec(&key_to_use)?;
 ```
 
 **2. Automated Key Lookup (Using `KeyProvider`)**
@@ -76,17 +76,19 @@ let plaintext = pending.with_key(key_to_use)?;
 For even greater convenience, you can implement the `KeyProvider` trait for your key store. This allows the library to handle the key lookup process for you automatically.
 
 ```rust,ignore
+use std::sync::Arc;
+
 // Your key store must implement the `KeyProvider` trait
 struct MyKeyStore { /* ... */ }
 impl KeyProvider for MyKeyStore { /* ... */ }
 
-let key_provider = MyKeyStore::new();
+let key_provider = Arc::new(MyKeyStore::new());
 
-// 1. Attach the provider and call `resolve_and_decrypt()`
+// 1. Attach the provider and call `resolve_and_decrypt_to_vec()`
 let plaintext = seal.decrypt()
-    .with_key_provider(&key_provider)
+    .with_key_provider(key_provider)
     .slice(&ciphertext)?
-    .resolve_and_decrypt()?; // Key lookup and decryption happen automatically
+    .resolve_and_decrypt_to_vec()?; // Key lookup and decryption happen automatically
 ```
 
 ### Digital Signatures for Sender Authentication
@@ -117,6 +119,26 @@ The library provides direct access to key derivation functions, allowing you to 
 
 The full code for this example can be found in [`examples/readme/advanced_key_derivation.rs`](./examples/readme/advanced_key_derivation.rs).
 
+### Hybrid Encryption with Integrated KDF
+
+For advanced protocols, `seal-flow` supports integrating a Key Derivation Function (KDF) directly into the hybrid encryption process (e.g., KEM-KDF). Instead of the Key Encapsulation Mechanism (KEM) directly producing the Data Encryption Key (DEK), the encapsulated secret is used as input to a KDF (like HKDF) to derive the DEK. This is useful for domain separation and compatibility with certain cryptographic standards.
+
+You can enable this by using the `.with_kdf()` method during encryption.
+
+```rust,ignore
+// Encrypt using Kyber as KEM and HKDF to derive the final AES key
+let ciphertext = seal
+    .encrypt(kdf_pk, kdf_key_id.to_string())
+    .with_kdf(
+        KdfKeyAlgorithmEnum::HkdfSha256,
+        Some(b"kdf-salt"), // Salt is recommended
+        Some(b"kdf-info"), // Contextual info
+    )
+    .execute_with(dem_kdf)
+    .to_vec(kdf_plaintext)?;
+```
+Decryption is transparent; the library automatically detects the use of KDF and performs the derivation internally. The full code for this example can be found in [`examples/high_level_hybrid.rs`](./examples/high_level_hybrid.rs).
+
 ## Execution Modes
 
 `seal-flow` offers four distinct execution modes to handle any workload. Because all modes produce data in a unified format, you can mix and match them freely—for example, stream-encrypt on a server and parallel-decrypt on a client.
@@ -127,6 +149,7 @@ The full code for this example can be found in [`examples/readme/advanced_key_de
 | **Parallel In-Memory**    | `.to_vec_parallel()`, `.slice_parallel()`         | High-throughput processing for larger data on multi-core systems.     |
 | **Streaming**             | `.into_writer()`, `.reader()`                     | For very large files or network I/O in low-memory environments.       |
 | **Asynchronous Streaming**| `.into_async_writer()`, `.async_reader()`         | Non-blocking I/O for high-concurrency async applications (e.g., Tokio).|
+| **Parallel Streaming**    | `.pipe_parallel()`, `.reader_parallel()`          | High-throughput streaming on multi-core systems with low memory usage.|
 
 ## Interoperability
 
