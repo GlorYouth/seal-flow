@@ -101,7 +101,7 @@ async fn main() -> seal_flow::error::Result<()> {
         .execute_with(DEM)
         .into_writer(&mut ciphertext3)?;
     encryptor.write_all(plaintext)?;
-    drop(encryptor); // Dropping the writer finalizes encryption
+    encryptor.finish()?; // Dropping the writer finalizes encryption
 
     let pending_decryptor3 = seal.decrypt().reader(Cursor::new(ciphertext3))?;
     println!(

@@ -58,7 +58,7 @@ harness = false
 required-features = ["async"]
 
 [[bench]]
-name = "asymmetric_benchmark"
+name = "hybrid_benchmark"
 harness = false
 required-features = ["async"]
 

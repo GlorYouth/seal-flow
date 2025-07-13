@@ -48,7 +48,8 @@ impl SymmetricEncryptorMode {
                         .encrypt(key.clone(), key_id)
                         .into_writer(&mut encrypted_data)?;
                     encryptor.write_all(plaintext)?;
-                } // encryptor is dropped here
+                    encryptor.finish()?;
+                }
                 Ok(encrypted_data)
             }
             SymmetricEncryptorMode::AsyncStreaming => {
@@ -207,7 +208,8 @@ impl HybridEncryptorMode {
                         .execute_with(TEST_DEK)
                         .into_writer(&mut encrypted_data)?;
                     encryptor.write_all(plaintext)?;
-                } // encryptor is dropped here
+                    encryptor.finish()?;
+                }
                 Ok(encrypted_data)
             }
             HybridEncryptorMode::AsyncStreaming => {
