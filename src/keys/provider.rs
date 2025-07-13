@@ -1,4 +1,7 @@
-use crate::keys::{AsymmetricPrivateKey, AsymmetricPublicKey, SignaturePublicKey, SymmetricKey};
+use crate::keys::{
+    TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSignaturePrivateKey,
+    TypedSignaturePublicKey, TypedSymmetricKey,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum KeyProviderError {
@@ -20,13 +23,13 @@ pub enum KeyProviderError {
 /// 一个通过 ID 动态查找加密密钥的 trait。
 ///
 /// 用户可以为自己的密钥管理系统实现此 trait，以便与解密器无缝集成。
-pub trait KeyProvider {
+pub trait KeyProvider: Send + Sync {
     /// Looks up a symmetric key by its ID.
     /// Used for symmetric decryption.
     ///
     /// 通过 ID 查找对称密钥。
     /// 用于对称解密。
-    fn get_symmetric_key(&self, key_id: &str) -> Result<SymmetricKey, KeyProviderError>;
+    fn get_symmetric_key(&self, key_id: &str) -> Result<TypedSymmetricKey, KeyProviderError>;
 
     /// Looks up an asymmetric private key by its ID.
     /// Used for key unwrapping in hybrid decryption.
@@ -36,7 +39,7 @@ pub trait KeyProvider {
     fn get_asymmetric_private_key(
         &self,
         key_id: &str,
-    ) -> Result<AsymmetricPrivateKey, KeyProviderError>;
+    ) -> Result<TypedAsymmetricPrivateKey, KeyProviderError>;
 
     /// Looks up a signature verification public key by its ID.
     /// Used for verifying metadata signatures during hybrid decryption.
@@ -46,7 +49,7 @@ pub trait KeyProvider {
     fn get_signature_public_key(
         &self,
         key_id: &str,
-    ) -> Result<SignaturePublicKey, KeyProviderError>;
+    ) -> Result<TypedSignaturePublicKey, KeyProviderError>;
 }
 
 /// A trait for dynamically looking up cryptographic keys by their ID for encryption.
@@ -57,7 +60,7 @@ pub trait KeyProvider {
 /// 一个通过 ID 动态查找加密密钥以进行加密的 trait。
 ///
 /// 用户可以为自己的密钥管理系统实现此 trait，以便与加密器无缝集成。
-pub trait EncryptionKeyProvider {
+pub trait EncryptionKeyProvider: Send + Sync {
     /// Looks up an asymmetric public key by its ID.
     /// Used for hybrid encryption (recipient's KEM key).
     ///
@@ -66,7 +69,7 @@ pub trait EncryptionKeyProvider {
     fn get_asymmetric_public_key(
         &self,
         key_id: &str,
-    ) -> Result<AsymmetricPublicKey, KeyProviderError>;
+    ) -> Result<TypedAsymmetricPublicKey, KeyProviderError>;
 
     /// Looks up an asymmetric private key by its ID.
     /// Used for signing in hybrid encryption (sender's signing key).
@@ -76,5 +79,5 @@ pub trait EncryptionKeyProvider {
     fn get_signing_private_key(
         &self,
         key_id: &str,
-    ) -> Result<AsymmetricPrivateKey, KeyProviderError>;
+    ) -> Result<TypedSignaturePrivateKey, KeyProviderError>;
 }

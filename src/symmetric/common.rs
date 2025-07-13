@@ -3,29 +3,67 @@
 //! 对称加密模式的通用工具。
 
 use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::common::header::{Header, HeaderPayload, SealMode, StreamInfo};
-use crate::common::DEFAULT_CHUNK_SIZE;
-use crate::error::Result;
+use crate::body::config::BodyDecryptConfig;
+use crate::common::config::{ArcConfig, DecryptorConfig};
+use crate::common::header::{Header, HeaderPayload, SpecificHeaderPayload};
+use crate::error::{Error, FormatError};
+use crate::keys::TypedSymmetricKey;
 use rand::{rngs::OsRng, TryRngCore};
+use std::borrow::Cow;
 
 /// Creates a complete header and a new base_nonce for a symmetric encryption stream.
 ///
 /// 为对称加密流创建一个完整的标头和一个新的 base_nonce。
-pub fn create_header<S: SymmetricAlgorithm>(key_id: String) -> Result<(Header, [u8; 12])> {
+pub fn create_header<S: SymmetricAlgorithm>(
+    algorithm: &S,
+    key_id: String,
+    chunk_size: u32,
+) -> crate::Result<(Header, [u8; 12])> {
     let mut base_nonce = [0u8; 12];
     OsRng.try_fill_bytes(&mut base_nonce)?;
 
     let header = Header {
         version: 1,
-        mode: SealMode::Symmetric,
-        payload: HeaderPayload::Symmetric {
-            key_id,
-            algorithm: S::ALGORITHM,
-            stream_info: Some(StreamInfo {
-                chunk_size: DEFAULT_CHUNK_SIZE,
-                base_nonce,
-            }),
+        payload: HeaderPayload {
+            chunk_size,
+            base_nonce,
+            specific_payload: SpecificHeaderPayload::Symmetric {
+                key_id,
+                algorithm: algorithm.algorithm(),
+            },
         },
     };
     Ok((header, base_nonce))
+}
+
+pub(super) fn prepare_body_decrypt_config(
+    header: &Header,
+    key: &TypedSymmetricKey,
+    aad: Option<Vec<u8>>,
+    arc_config: ArcConfig,
+) -> crate::Result<BodyDecryptConfig<'static>> {
+    if let HeaderPayload {
+        base_nonce,
+        chunk_size,
+        specific_payload: SpecificHeaderPayload::Symmetric { algorithm, .. },
+    } = header.payload
+    {
+        if algorithm != key.algorithm() {
+            return Err(Error::Format(FormatError::InvalidKeyType));
+        }
+
+        let config = BodyDecryptConfig {
+            key: Cow::Owned(key.clone()),
+            nonce: base_nonce,
+            aad,
+            config: DecryptorConfig {
+                chunk_size,
+                arc_config,
+            },
+        };
+
+        Ok(config)
+    } else {
+        Err(Error::Format(FormatError::InvalidHeader))
+    }
 }

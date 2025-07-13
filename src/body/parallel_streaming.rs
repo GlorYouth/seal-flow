@@ -4,9 +4,10 @@
 //! 实现并行流式加密和解密的通用逻辑。
 //! 这是对称和混合并行流式模式的后端。
 
+use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
 use crate::algorithms::traits::SymmetricAlgorithm;
 use crate::common::buffer::BufferPool;
-use crate::common::{derive_nonce, OrderedChunk, CHANNEL_BOUND, DEFAULT_CHUNK_SIZE};
+use crate::common::{derive_nonce, OrderedChunk};
 use crate::error::{Error, Result};
 use rayon::prelude::*;
 use std::collections::BinaryHeap;
@@ -14,28 +15,37 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 use std::thread;
 
+use super::config::{BodyDecryptConfig, BodyEncryptConfig};
+use super::traits::ParallelStreamingBodyProcessor;
+
 /// The core pipeline for parallel streaming encryption.
 ///
 /// 并行流式加密的核心管道。
-pub fn encrypt_pipeline<S, R, W>(
-    key: S::Key,
-    base_nonce: [u8; 12],
+fn encrypt_pipeline<'a, R, W>(
+    algorithm: SymmetricAlgorithmWrapper,
     mut reader: R,
     mut writer: W,
-    aad: Option<&[u8]>,
+    config: BodyEncryptConfig,
 ) -> Result<()>
 where
-    S: SymmetricAlgorithm,
     R: Read + Send,
     W: Write,
 {
-    let key_arc = Arc::new(key);
+    let BodyEncryptConfig {
+        key,
+        nonce,
+        aad,
+        config,
+        ..
+    } = config;
+    let key = Arc::new(key);
     let aad_arc = Arc::new(aad.map(|d| d.to_vec()));
-    let pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize));
+    let pool = Arc::new(BufferPool::new(config.chunk_size() as usize));
+    let tag_size = algorithm.tag_size();
 
     // 2. Setup channels for producer-consumer pipeline
-    let (raw_chunk_tx, raw_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
-    let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
+    let (raw_chunk_tx, raw_chunk_rx) = crossbeam_channel::bounded(config.channel_bound());
+    let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(config.channel_bound());
     let (io_error_tx, io_error_rx) = crossbeam_channel::unbounded();
 
     thread::scope(|s| {
@@ -82,18 +92,19 @@ where
         // --- Thread 2: Parallel Encryptor (Consumer/Producer) ---
         // --- 线程 2: 并行加密器 (消费者/生产者) ---
         let enc_chunk_tx_clone = enc_chunk_tx.clone();
-        let key_clone = Arc::clone(&key_arc);
+        let algo_clone = algorithm.clone();
         let aad_clone = Arc::clone(&aad_arc);
         let in_pool = Arc::clone(&pool);
-        let out_pool = Arc::new(BufferPool::new(DEFAULT_CHUNK_SIZE as usize + S::TAG_SIZE));
+        let out_pool = Arc::new(BufferPool::new(config.chunk_size() as usize + tag_size));
         let writer_pool = Arc::clone(&out_pool);
+        let key_clone = Arc::clone(&key);
         s.spawn(move || {
             raw_chunk_rx
                 .into_iter()
                 .par_bridge()
                 .for_each(|(index, in_buffer)| {
                     let mut out_buffer = out_pool.acquire();
-                    let nonce = derive_nonce(&base_nonce, index);
+                    let nonce = derive_nonce(&nonce, index);
                     let aad_val = aad_clone.as_deref();
 
                     // Resize buffer to its full capacity to get a mutable slice
@@ -101,18 +112,19 @@ where
                     let capacity = out_buffer.capacity();
                     out_buffer.resize(capacity, 0);
 
-                    let result = S::encrypt_to_buffer(
-                        &key_clone,
-                        &nonce,
-                        &in_buffer,
-                        &mut out_buffer,
-                        aad_val,
-                    )
-                    .map(|bytes_written| {
-                        out_buffer.truncate(bytes_written);
-                        out_buffer
-                    })
-                    .map_err(Error::from);
+                    let result = algo_clone
+                        .encrypt_to_buffer(
+                            key_clone.as_ref().as_ref(),
+                            &nonce,
+                            &in_buffer,
+                            &mut out_buffer,
+                            aad_val,
+                        )
+                        .map(|bytes_written| {
+                            out_buffer.truncate(bytes_written);
+                            out_buffer
+                        })
+                        .map_err(Error::from);
 
                     in_pool.release(in_buffer);
 
@@ -191,27 +203,31 @@ where
 /// The core pipeline for parallel streaming decryption.
 ///
 /// 并行流式解密的核心管道。
-pub fn decrypt_pipeline<S, R, W>(
-    key: S::Key,
-    base_nonce: [u8; 12],
-    chunk_size: u32,
+fn decrypt_pipeline<'a, R, W>(
+    algorithm: SymmetricAlgorithmWrapper,
     mut reader: R,
     mut writer: W,
-    aad: Option<&[u8]>,
+    config: BodyDecryptConfig,
 ) -> Result<()>
 where
-    S: SymmetricAlgorithm,
     R: Read + Send,
     W: Write,
 {
-    let encrypted_chunk_size = (chunk_size as usize) + S::TAG_SIZE;
-    let key_arc = Arc::new(key);
+    let BodyDecryptConfig {
+        key,
+        nonce,
+        aad,
+        config,
+        ..
+    } = config;
+    let encrypted_chunk_size = (config.chunk_size() as usize) + algorithm.tag_size();
+    let key = Arc::new(key);
     let aad_arc = Arc::new(aad.map(|d| d.to_vec()));
     let pool = Arc::new(BufferPool::new(encrypted_chunk_size));
 
     // 2. Setup channels
-    let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
-    let (dec_chunk_tx, dec_chunk_rx) = crossbeam_channel::bounded(CHANNEL_BOUND);
+    let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(config.channel_bound());
+    let (dec_chunk_tx, dec_chunk_rx) = crossbeam_channel::bounded(config.channel_bound());
     let (io_error_tx, io_error_rx) = crossbeam_channel::unbounded();
 
     thread::scope(|s| {
@@ -258,18 +274,19 @@ where
         // --- Thread 2: Parallel Decryptor ---
         // --- 线程 2: 并行解密器 ---
         let dec_chunk_tx_clone = dec_chunk_tx.clone();
-        let key_clone = Arc::clone(&key_arc);
+        let algo_clone = algorithm.clone();
         let aad_clone = Arc::clone(&aad_arc);
         let in_pool = Arc::clone(&pool);
-        let out_pool = Arc::new(BufferPool::new(chunk_size as usize));
+        let out_pool = Arc::new(BufferPool::new(config.chunk_size() as usize));
         let writer_pool = Arc::clone(&out_pool);
+        let key_clone = Arc::clone(&key);
         s.spawn(move || {
             enc_chunk_rx
                 .into_iter()
                 .par_bridge()
                 .for_each(|(index, in_buffer)| {
                     let mut out_buffer = out_pool.acquire();
-                    let nonce = derive_nonce(&base_nonce, index);
+                    let nonce = derive_nonce(&nonce, index);
                     let aad_val = aad_clone.as_deref();
 
                     // Resize buffer to its full capacity to get a mutable slice
@@ -277,18 +294,19 @@ where
                     let capacity = out_buffer.capacity();
                     out_buffer.resize(capacity, 0);
 
-                    let result = S::decrypt_to_buffer(
-                        &key_clone,
-                        &nonce,
-                        &in_buffer,
-                        &mut out_buffer,
-                        aad_val,
-                    )
-                    .map(|bytes_written| {
-                        out_buffer.truncate(bytes_written);
-                        out_buffer
-                    })
-                    .map_err(Error::from);
+                    let result = algo_clone
+                        .decrypt_to_buffer(
+                            key_clone.as_ref().as_ref(),
+                            &nonce,
+                            &in_buffer,
+                            &mut out_buffer,
+                            aad_val,
+                        )
+                        .map(|bytes_written| {
+                            out_buffer.truncate(bytes_written);
+                            out_buffer
+                        })
+                        .map_err(Error::from);
 
                     in_pool.release(in_buffer);
 
@@ -359,4 +377,34 @@ where
 
         final_result
     })
+}
+
+impl<S: SymmetricAlgorithm + ?Sized> ParallelStreamingBodyProcessor for S {
+    fn encrypt_body_pipeline<'a>(
+        &self,
+        reader: Box<dyn Read + Send + 'a>,
+        writer: Box<dyn Write + Send + 'a>,
+        config: BodyEncryptConfig,
+    ) -> Result<()> {
+        encrypt_pipeline(
+            self.algorithm().into_symmetric_wrapper(),
+            reader,
+            writer,
+            config,
+        )
+    }
+
+    fn decrypt_body_pipeline<'a>(
+        &self,
+        reader: Box<dyn Read + Send + 'a>,
+        writer: Box<dyn Write + Send + 'a>,
+        config: BodyDecryptConfig,
+    ) -> Result<()> {
+        decrypt_pipeline(
+            self.algorithm().into_symmetric_wrapper(),
+            reader,
+            writer,
+            config,
+        )
+    }
 }

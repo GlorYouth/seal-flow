@@ -1,152 +1,59 @@
-use crate::algorithms::traits::SymmetricAlgorithm;
-use crate::keys::SymmetricKey;
+use crate::body::traits::FinishingWrite;
+use crate::common::config::ArcConfig;
+use crate::keys::TypedSymmetricKey;
 use crate::seal::traits::{
-    InMemoryEncryptor, IntoAsyncWriter, IntoWriter, StreamingEncryptor as StreamingEncryptorTrait,
+    AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor, WithAad,
 };
-use seal_crypto::prelude::Key;
+#[cfg(feature = "async")]
+use crate::symmetric::asynchronous::Asynchronous;
+use crate::symmetric::config::SymmetricConfig;
+use crate::symmetric::ordinary::Ordinary;
+use crate::symmetric::parallel::Parallel;
+use crate::symmetric::parallel_streaming::ParallelStreaming;
+use crate::symmetric::streaming::Streaming;
+use crate::symmetric::traits::*;
+#[cfg(feature = "async")]
+use async_trait::async_trait;
+use std::borrow::Cow;
 use std::io::{Read, Write};
-use std::marker::PhantomData;
+#[cfg(feature = "async")]
 use tokio::io::AsyncWrite;
 
 /// A context for symmetric encryption operations, allowing selection of execution mode.
 ///
 /// 对称加密操作的上下文，允许选择执行模式。
 pub struct SymmetricEncryptor {
-    pub(crate) key: SymmetricKey,
+    pub(crate) key: TypedSymmetricKey,
     pub(crate) key_id: String,
     pub(crate) aad: Option<Vec<u8>>,
+    pub(crate) config: ArcConfig,
 }
 
-impl SymmetricEncryptor {
+impl WithAad for SymmetricEncryptor {
     /// Sets the Associated Data (AAD) for this encryption operation.
     ///
     /// 为此加密操作设置关联数据 (AAD)。
-    pub fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
+    fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.aad = Some(aad.into());
         self
     }
-
-    /// Configures the encryptor to use a specific symmetric algorithm.
-    ///
-    /// This returns a new encryptor instance that is specialized for the given
-    /// algorithm, which can then be used to perform the actual encryption.
-    ///
-    /// 配置加密器以使用特定的对称算法。
-    ///
-    /// 这将返回一个为给定算法特化的新加密器实例，
-    /// 然后可用于执行实际的加密操作。
-    pub fn with_algorithm<S: SymmetricAlgorithm>(self) -> SymmetricEncryptorWithAlgorithm<S> {
-        SymmetricEncryptorWithAlgorithm {
-            inner: self,
-            _phantom: PhantomData,
-        }
-    }
-
-    /// Encrypts the given plaintext in-memory.
-    ///
-    /// 在内存中加密给定的明文。
-    pub fn to_vec<S: SymmetricAlgorithm>(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
-        crate::symmetric::ordinary::encrypt::<S>(
-            Key::from_bytes(self.key.as_bytes())?,
-            plaintext,
-            self.key_id,
-            self.aad.as_deref(),
-        )
-    }
-
-    /// Encrypts the given plaintext in-memory using parallel processing.
-    ///
-    /// 使用并行处理在内存中加密给定的明文。
-    pub fn to_vec_parallel<S: SymmetricAlgorithm>(
-        self,
-        plaintext: &[u8],
-    ) -> crate::Result<Vec<u8>> {
-        crate::symmetric::parallel::encrypt::<S>(
-            Key::from_bytes(self.key.as_bytes())?,
-            plaintext,
-            self.key_id,
-            self.aad.as_deref(),
-        )
-    }
-
-    /// Creates a streaming encryptor that writes to the given `Write` implementation.
-    ///
-    /// 创建一个流式加密器，写入给定的 `Write` 实现。
-    pub fn into_writer<S: SymmetricAlgorithm, W: Write>(
-        self,
-        writer: W,
-    ) -> crate::Result<crate::symmetric::streaming::Encryptor<W, S>> {
-        crate::symmetric::streaming::Encryptor::new(
-            writer,
-            Key::from_bytes(self.key.as_bytes())?,
-            self.key_id,
-            self.aad.as_deref(),
-        )
-    }
-
-    /// [Async] Creates an asynchronous streaming encryptor.
-    ///
-    /// [异步] 创建一个异步流式加密器。
-    #[cfg(feature = "async")]
-    pub async fn into_async_writer<S: SymmetricAlgorithm, W: AsyncWrite + Unpin>(
-        self,
-        writer: W,
-    ) -> crate::Result<crate::symmetric::asynchronous::Encryptor<W, S>> {
-        crate::symmetric::asynchronous::Encryptor::new(
-            writer,
-            Key::from_bytes(self.key.as_bytes())?,
-            self.key_id,
-            self.aad.as_deref(),
-        )
-        .await
-    }
-
-    /// Encrypts data from a reader and writes to a writer using parallel processing.
-    ///
-    /// 使用并行处理从 reader 加密数据并写入 writer。
-    pub fn pipe_parallel<S: SymmetricAlgorithm, R, W>(
-        self,
-        reader: R,
-        writer: W,
-    ) -> crate::Result<()>
-    where
-        R: Read + Send,
-        W: Write,
-    {
-        crate::symmetric::parallel_streaming::encrypt::<S, R, W>(
-            Key::from_bytes(self.key.as_bytes())?,
-            reader,
-            writer,
-            self.key_id,
-            self.aad.as_deref(),
-        )
-    }
 }
 
-/// A symmetric encryptor that has been configured with a specific algorithm.
-///
-/// This struct provides the final encryption methods (`to_vec`, `into_writer`, etc.)
-/// without requiring further generic algorithm specification.
-///
-/// 已配置特定算法的对称加密器。
-///
-/// 该结构提供了最终的加密方法（`to_vec`、`into_writer`等），
-/// 无需进一步指定泛型算法。
-pub struct SymmetricEncryptorWithAlgorithm<S: SymmetricAlgorithm> {
-    inner: SymmetricEncryptor,
-    _phantom: PhantomData<S>,
-}
-
-impl<S: SymmetricAlgorithm> InMemoryEncryptor for SymmetricEncryptorWithAlgorithm<S> {
+impl InMemoryEncryptor for SymmetricEncryptor {
     /// Encrypts the given plaintext in-memory.
     ///
     /// 在内存中加密给定的明文。
     fn to_vec(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
-        crate::symmetric::ordinary::encrypt::<S>(
-            Key::from_bytes(self.inner.key.as_bytes())?,
+        let processor = Ordinary::new();
+        processor.encrypt_symmetric_in_memory(
             plaintext,
-            self.inner.key_id,
-            self.inner.aad.as_deref(),
+            SymmetricConfig {
+                algorithm: Cow::Owned(self.key.algorithm().into_symmetric_wrapper()),
+                key: Cow::Borrowed(&self.key),
+                key_id: self.key_id,
+                aad: self.aad,
+                config: self.config,
+            },
         )
     }
 
@@ -154,69 +61,86 @@ impl<S: SymmetricAlgorithm> InMemoryEncryptor for SymmetricEncryptorWithAlgorith
     ///
     /// 使用并行处理在内存中加密给定的明文。
     fn to_vec_parallel(self, plaintext: &[u8]) -> crate::Result<Vec<u8>> {
-        crate::symmetric::parallel::encrypt::<S>(
-            Key::from_bytes(self.inner.key.as_bytes())?,
+        let processor = Parallel::new();
+        processor.encrypt_symmetric_parallel(
             plaintext,
-            self.inner.key_id,
-            self.inner.aad.as_deref(),
+            SymmetricConfig {
+                algorithm: Cow::Owned(self.key.algorithm().into_symmetric_wrapper()),
+                key: Cow::Borrowed(&self.key),
+                key_id: self.key_id,
+                aad: self.aad,
+                config: self.config,
+            },
         )
     }
 }
 
-impl<S: SymmetricAlgorithm> StreamingEncryptorTrait for SymmetricEncryptorWithAlgorithm<S> {
+impl StreamingEncryptor for SymmetricEncryptor {
+    /// Creates a streaming encryptor that wraps the given `Write` implementation.
+    ///
+    /// 创建一个包装了给定 `Write` 实现的流式加密器。
+    fn into_writer<'a, W: Write + 'a>(
+        self,
+        writer: W,
+    ) -> crate::Result<Box<dyn FinishingWrite + 'a>> {
+        let processor = Streaming::new();
+        processor.encrypt_symmetric_to_stream(
+            Box::new(writer),
+            SymmetricConfig {
+                algorithm: Cow::Owned(self.key.algorithm().into_symmetric_wrapper()),
+                key: Cow::Owned(self.key),
+                key_id: self.key_id,
+                aad: self.aad,
+                config: self.config,
+            },
+        )
+    }
+
     /// Encrypts data from a reader and writes to a writer using parallel processing.
     ///
     /// 使用并行处理从 reader 加密数据并写入 writer。
     fn pipe_parallel<R, W>(self, reader: R, writer: W) -> crate::Result<()>
     where
         R: Read + Send,
-        W: Write,
+        W: Write + Send,
     {
-        crate::symmetric::parallel_streaming::encrypt::<S, R, W>(
-            Key::from_bytes(self.inner.key.as_bytes())?,
-            reader,
-            writer,
-            self.inner.key_id,
-            self.inner.aad.as_deref(),
-        )
-    }
-}
-
-impl<S: SymmetricAlgorithm> IntoWriter for SymmetricEncryptorWithAlgorithm<S> {
-    type Encryptor<W: Write> = crate::symmetric::streaming::Encryptor<W, S>;
-    fn into_writer<W: Write>(
-        self,
-        writer: W,
-    ) -> crate::Result<crate::symmetric::streaming::Encryptor<W, S>> {
-        crate::symmetric::streaming::Encryptor::new(
-            writer,
-            Key::from_bytes(self.inner.key.as_bytes())?,
-            self.inner.key_id,
-            self.inner.aad.as_deref(),
+        let processor = ParallelStreaming::new();
+        processor.encrypt_symmetric_pipeline(
+            Box::new(reader),
+            Box::new(writer),
+            SymmetricConfig {
+                algorithm: Cow::Owned(self.key.algorithm().into_symmetric_wrapper()),
+                key: Cow::Borrowed(&self.key),
+                key_id: self.key_id,
+                aad: self.aad,
+                config: self.config,
+            },
         )
     }
 }
 
 #[cfg(feature = "async")]
-impl<S: SymmetricAlgorithm> IntoAsyncWriter for SymmetricEncryptorWithAlgorithm<S> {
-    type AsyncEncryptor<W: AsyncWrite + Unpin + Send> =
-        crate::symmetric::asynchronous::Encryptor<W, S>;
-    fn into_async_writer<W: AsyncWrite + Unpin + Send>(
+#[async_trait]
+impl AsyncStreamingEncryptor for SymmetricEncryptor {
+    /// Creates an asynchronous streaming encryptor that wraps the given `AsyncWrite` implementation.
+    ///
+    /// 创建一个包装了给定 `AsyncWrite` 实现的异步流式加密器。
+    async fn into_async_writer<'a, W: AsyncWrite + Unpin + Send + 'a>(
         self,
         writer: W,
-    ) -> impl std::future::Future<Output = crate::Result<Self::AsyncEncryptor<W>>> + Send {
-        let key_bytes = self.inner.key;
-        let key_id = self.inner.key_id;
-        let aad = self.inner.aad;
-
-        async move {
-            crate::symmetric::asynchronous::Encryptor::new(
-                writer,
-                Key::from_bytes(key_bytes.as_bytes())?,
-                key_id,
-                aad.as_deref(),
+    ) -> crate::Result<Box<dyn AsyncWrite + Unpin + Send + 'a>> {
+        let processor = Asynchronous::new();
+        processor
+            .encrypt_symmetric_async(
+                Box::new(writer),
+                SymmetricConfig {
+                    algorithm: Cow::Owned(self.key.algorithm().into_symmetric_wrapper()),
+                    key: Cow::Owned(self.key),
+                    key_id: self.key_id,
+                    aad: self.aad,
+                    config: self.config
+                },
             )
             .await
-        }
     }
 }

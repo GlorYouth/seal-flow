@@ -1,4 +1,7 @@
-use crate::common::algorithms::SignatureAlgorithm;
+use crate::{
+    algorithms::signature::SignatureAlgorithmWrapper,
+    keys::TypedSignaturePrivateKey,
+};
 use bytes::BytesMut;
 use seal_crypto::zeroize::Zeroizing;
 
@@ -7,12 +10,13 @@ use seal_crypto::zeroize::Zeroizing;
 /// 这个模块从 `common` 目录中重新导出公共功能。
 pub mod algorithms;
 pub(crate) mod buffer;
+pub mod config;
 pub mod header;
 
 pub const DEFAULT_CHUNK_SIZE: u32 = 65536;
 
 /// Derives a nonce for a specific chunk index from a base nonce.
-pub fn derive_nonce(base_nonce: &[u8; 12], chunk_index: u64) -> [u8; 12] {
+pub(crate) fn derive_nonce(base_nonce: &[u8; 12], chunk_index: u64) -> [u8; 12] {
     let mut nonce_bytes = *base_nonce;
     let i_bytes = chunk_index.to_le_bytes(); // u64 -> 8 bytes, little-endian
 
@@ -54,18 +58,57 @@ impl Ord for OrderedChunk {
 }
 
 pub struct SignerSet {
-    pub(crate) signer_key_id: String,
-    pub(crate) signer_algorithm: SignatureAlgorithm,
-    pub(crate) signer: Box<dyn Fn(&[u8], Option<&[u8]>) -> crate::Result<Vec<u8>> + Send + Sync>,
+    pub signer_key_id: String,
+    pub signer: SignatureAlgorithmWrapper,
+    pub signing_key: TypedSignaturePrivateKey,
+}
+
+use crate::algorithms::kdf::key::KdfKeyWrapper;
+use crate::algorithms::xof::XofWrapper;
+
+pub enum DerivationWrapper {
+    Kdf(KdfKeyWrapper),
+    Xof(XofWrapper),
+}
+
+impl DerivationWrapper {
+    pub fn derive(
+        &self,
+        ikm: &[u8],
+        salt: Option<&[u8]>,
+        info: Option<&[u8]>,
+        output_len: usize,
+    ) -> crate::Result<Zeroizing<Vec<u8>>> {
+        use crate::algorithms::traits::KdfKeyAlgorithm;
+        use crate::algorithms::traits::XofAlgorithm;
+        match self {
+            DerivationWrapper::Kdf(kdf_wrapper) => kdf_wrapper.derive(ikm, salt, info, output_len),
+            DerivationWrapper::Xof(xof_wrapper) => {
+                let mut xof_reader = xof_wrapper.reader(ikm, salt, info)?;
+                let dek = xof_reader.read_boxed(output_len);
+                Ok(Zeroizing::new(dek.to_vec()))
+            }
+        }
+    }
 }
 
 pub struct DerivationSet {
-    pub(crate) derivation_info: header::DerivationInfo,
-    pub(crate) deriver_fn:
-        Box<dyn Fn(&[u8]) -> crate::Result<Zeroizing<Vec<u8>>> + Send + Sync + 'static>,
+    pub derivation_info: header::DerivationInfo,
+    pub wrapper: DerivationWrapper,
 }
 
-// A private trait to abstract access to the header from the inner implementation.
-pub trait PendingImpl {
-    fn header(&self) -> &header::Header;
+impl DerivationSet {
+    pub fn salt(&self) -> Option<&[u8]> {
+        match &self.derivation_info {
+            header::DerivationInfo::Kdf(kdf_info) => kdf_info.salt.as_deref(),
+            header::DerivationInfo::Xof(xof_info) => xof_info.salt.as_deref(),
+        }
+    }
+
+    pub fn info(&self) -> Option<&[u8]> {
+        match &self.derivation_info {
+            header::DerivationInfo::Kdf(kdf_info) => kdf_info.info.as_deref(),
+            header::DerivationInfo::Xof(xof_info) => xof_info.info.as_deref(),
+        }
+    }
 }

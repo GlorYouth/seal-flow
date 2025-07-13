@@ -1,18 +1,19 @@
-use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::algorithms::SymmetricAlgorithm as SymmetricAlgorithmEnum;
+use crate::common::config::ArcConfig;
 use crate::common::header::Header;
-use crate::common::PendingImpl;
 use crate::error::{FormatError, KeyManagementError};
-use crate::keys::provider::KeyProvider;
-use crate::keys::{AsymmetricPrivateKey, SignaturePublicKey, TypedAsymmetricPrivateKey};
-use crate::seal::traits::{WithAad, WithVerificationKey};
-use seal_crypto::schemes::asymmetric::{
-    post_quantum::kyber::{Kyber1024, Kyber512, Kyber768},
-    traditional::rsa::{Rsa2048, Rsa4096},
+use crate::hybrid::traits::HybridAsynchronousProcessor;
+use crate::hybrid::traits::{
+    HybridAsynchronousPendingDecryptor, HybridOrdinaryPendingDecryptor, HybridOrdinaryProcessor,
+    HybridParallelPendingDecryptor, HybridParallelProcessor,
+    HybridParallelStreamingPendingDecryptor, HybridParallelStreamingProcessor,
+    HybridStreamingPendingDecryptor, HybridStreamingProcessor,
 };
-use seal_crypto::schemes::symmetric::{
-    aes_gcm::{Aes128Gcm, Aes256Gcm},
-    chacha20_poly1305::{ChaCha20Poly1305, XChaCha20Poly1305},
+use crate::keys::provider::KeyProvider;
+use crate::keys::TypedAsymmetricPrivateKey;
+use crate::keys::{AsymmetricPrivateKey, TypedSignaturePublicKey};
+use crate::seal::traits::{
+    AsyncStreamingDecryptor, InMemoryDecryptor, ParallelStreamingDecryptor, StreamingDecryptor,
+    WithAad, WithVerificationKey,
 };
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -26,25 +27,28 @@ use tokio::io::AsyncRead;
 pub struct PendingDecryptor<T> {
     inner: T,
     aad: Option<Vec<u8>>,
-    verification_key: Option<SignaturePublicKey>,
+    verification_key: Option<TypedSignaturePublicKey>,
     key_provider: Option<Arc<dyn KeyProvider>>,
 }
 
-impl<T: PendingImpl> WithAad for PendingDecryptor<T> {
+impl<T> WithAad for PendingDecryptor<T> {
     fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.aad = Some(aad.into());
         self
     }
 }
 
-impl<T: PendingImpl> WithVerificationKey for PendingDecryptor<T> {
-    fn with_verification_key(mut self, verification_key: SignaturePublicKey) -> Self {
+impl<T> WithVerificationKey for PendingDecryptor<T> {
+    fn with_verification_key(mut self, verification_key: TypedSignaturePublicKey) -> Self {
         self.verification_key = Some(verification_key);
         self
     }
 }
 
-impl<T: PendingImpl> PendingDecryptor<T> {
+impl<T> PendingDecryptor<T>
+where
+    T: PendingDecryptorTrait,
+{
     /// Creates a new `PendingDecryptor` with the given inner implementation.
     ///
     /// 使用给定的内部实现创建一个新的 `PendingDecryptor`。
@@ -55,6 +59,23 @@ impl<T: PendingImpl> PendingDecryptor<T> {
             verification_key: None,
             key_provider,
         }
+    }
+
+    fn resolve_private_key(&mut self) -> crate::Result<TypedAsymmetricPrivateKey> {
+        let provider = self
+            .key_provider
+            .as_ref()
+            .ok_or(KeyManagementError::ProviderMissing)?;
+
+        if let Some(signer_key_id) = self.signer_key_id() {
+            let verification_key = provider.get_signature_public_key(signer_key_id)?;
+            self.verification_key = Some(verification_key);
+        }
+
+        let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
+        provider
+            .get_asymmetric_private_key(kek_id)
+            .map_err(Into::into)
     }
 
     /// Returns a reference to the header.
@@ -77,21 +98,40 @@ impl<T: PendingImpl> PendingDecryptor<T> {
     pub fn signer_key_id(&self) -> Option<&str> {
         self.header().payload.signer_key_id()
     }
+}
 
-    /// Sets the Associated Data (AAD) for this decryption operation.
-    /// The AAD must match the value provided during encryption.
-    ///
-    /// 为此解密操作设置关联数据 (AAD)。
-    /// AAD 必须与加密时提供的值匹配。
-    pub fn with_aad(self, aad: impl Into<Vec<u8>>) -> Self {
-        <Self as WithAad>::with_aad(self, aad)
+pub trait PendingDecryptorTrait {
+    fn header(&self) -> &Header;
+}
+
+impl<'a> PendingDecryptorTrait for Box<dyn HybridOrdinaryPendingDecryptor + 'a> {
+    fn header(&self) -> &Header {
+        self.as_ref().header()
     }
+}
 
-    /// Supplies a verification key from raw bytes
-    ///
-    /// 提供原始字节形式的验证密钥。
-    pub fn with_verification_key(self, verification_key: SignaturePublicKey) -> Self {
-        <Self as WithVerificationKey>::with_verification_key(self, verification_key)
+impl<'a> PendingDecryptorTrait for Box<dyn HybridParallelPendingDecryptor + 'a> {
+    fn header(&self) -> &Header {
+        self.as_ref().header()
+    }
+}
+
+impl<'a> PendingDecryptorTrait for Box<dyn HybridStreamingPendingDecryptor<'a> + 'a> {
+    fn header(&self) -> &Header {
+        self.as_ref().header()
+    }
+}
+
+impl<'a> PendingDecryptorTrait for Box<dyn HybridParallelStreamingPendingDecryptor<'a> + 'a> {
+    fn header(&self) -> &Header {
+        self.as_ref().header()
+    }
+}
+
+#[cfg(feature = "async")]
+impl<'a> PendingDecryptorTrait for Box<dyn HybridAsynchronousPendingDecryptor<'a> + Send + 'a> {
+    fn header(&self) -> &Header {
+        self.as_ref().header()
     }
 }
 
@@ -99,43 +139,47 @@ impl<T: PendingImpl> PendingDecryptor<T> {
 ///
 /// 待处理内存混合解密器的类型别名。
 pub type PendingInMemoryDecryptor<'a> =
-    PendingDecryptor<crate::hybrid::ordinary::PendingDecryptor<'a>>;
+    PendingDecryptor<Box<dyn HybridOrdinaryPendingDecryptor + 'a>>;
+
 /// A type alias for a pending parallel in-memory hybrid decryptor.
 ///
 /// 待处理并行内存混合解密器的类型别名。
 pub type PendingInMemoryParallelDecryptor<'a> =
-    PendingDecryptor<crate::hybrid::parallel::PendingDecryptor<'a>>;
+    PendingDecryptor<Box<dyn HybridParallelPendingDecryptor + 'a>>;
 /// A type alias for a pending synchronous streaming hybrid decryptor.
 ///
 /// 待处理同步流混合解密器的类型别名。
-pub type PendingStreamingDecryptor<R> =
-    PendingDecryptor<crate::hybrid::streaming::PendingDecryptor<R>>;
+pub type PendingStreamingDecryptor<'a> =
+    PendingDecryptor<Box<dyn HybridStreamingPendingDecryptor<'a> + 'a>>;
 /// A type alias for a pending parallel streaming hybrid decryptor.
 ///
 /// 待处理并行流混合解密器的类型别名。
-pub type PendingParallelStreamingDecryptor<R> =
-    PendingDecryptor<crate::hybrid::parallel_streaming::PendingDecryptor<R>>;
+pub type PendingParallelStreamingDecryptor<'a> =
+    PendingDecryptor<Box<dyn HybridParallelStreamingPendingDecryptor<'a> + 'a>>;
 /// A type alias for a pending asynchronous streaming hybrid decryptor.
 ///
 /// 待处理异步流混合解密器的类型别名。
 #[cfg(feature = "async")]
-pub type PendingAsyncStreamingDecryptor<R> =
-    PendingDecryptor<crate::hybrid::asynchronous::PendingDecryptor<R>>;
+pub type PendingAsyncStreamingDecryptor<'a> =
+    PendingDecryptor<Box<dyn HybridAsynchronousPendingDecryptor<'a> + Send + 'a>>;
 
 /// A builder for hybrid decryption operations.
 ///
 /// 混合解密操作的构建器。
-#[derive(Default)]
 pub struct HybridDecryptorBuilder {
     key_provider: Option<Arc<dyn KeyProvider>>,
+    config: ArcConfig,
 }
 
 impl HybridDecryptorBuilder {
     /// Creates a new `HybridDecryptorBuilder`.
     ///
     /// 创建一个新的 `HybridDecryptorBuilder`。
-    pub fn new() -> Self {
-        Self { key_provider: None }
+    pub fn new(config: ArcConfig) -> Self {
+        Self {
+            key_provider: None,
+            config,
+        }
     }
 
     /// Attaches a `KeyProvider` to the builder.
@@ -155,41 +199,48 @@ impl HybridDecryptorBuilder {
     /// Configures decryption from an in-memory byte slice.
     ///
     /// 从内存中的字节切片配置解密。
-    pub fn slice<'a>(self, ciphertext: &'a [u8]) -> crate::Result<PendingInMemoryDecryptor<'a>> {
+    pub fn slice(self, ciphertext: &[u8]) -> crate::Result<PendingInMemoryDecryptor> {
+        let processor = crate::hybrid::ordinary::Ordinary::new();
         let mid_level_pending =
-            crate::hybrid::ordinary::PendingDecryptor::from_ciphertext(ciphertext)?;
+            processor.begin_decrypt_hybrid_in_memory(ciphertext, self.config)?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
     /// Configures parallel decryption from an in-memory byte slice.
     ///
     /// 从内存中的字节切片配置并行解密。
-    pub fn slice_parallel<'a>(
+    pub fn slice_parallel(
         self,
-        ciphertext: &'a [u8],
-    ) -> crate::Result<PendingInMemoryParallelDecryptor<'a>> {
-        let mid_level_pending =
-            crate::hybrid::parallel::PendingDecryptor::from_ciphertext(ciphertext)?;
+        ciphertext: &[u8],
+    ) -> crate::Result<PendingInMemoryParallelDecryptor> {
+        let processor = crate::hybrid::parallel::Parallel::new();
+        let mid_level_pending = processor.begin_decrypt_hybrid_parallel(ciphertext, self.config)?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
     /// Configures decryption from a synchronous `Read` stream.
     ///
     /// 从同步 `Read` 流配置解密。
-    pub fn reader<R: Read>(self, reader: R) -> crate::Result<PendingStreamingDecryptor<R>> {
-        let mid_level_pending = crate::hybrid::streaming::PendingDecryptor::from_reader(reader)?;
+    pub fn reader<'a, R: Read + 'a>(
+        self,
+        reader: R,
+    ) -> crate::Result<PendingStreamingDecryptor<'a>> {
+        let processor = crate::hybrid::streaming::Streaming::new();
+        let mid_level_pending =
+            processor.begin_decrypt_hybrid_from_stream(Box::new(reader), self.config)?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
     /// Configures parallel decryption from a synchronous `Read` stream.
     ///
     /// 从同步 `Read` 流配置并行解密。
-    pub fn reader_parallel<R: Read + Send>(
+    pub fn reader_parallel<'a, R: Read + Send + 'a>(
         self,
         reader: R,
-    ) -> crate::Result<PendingParallelStreamingDecryptor<R>> {
+    ) -> crate::Result<PendingParallelStreamingDecryptor<'a>> {
+        let processor = crate::hybrid::parallel_streaming::ParallelStreaming::new();
         let mid_level_pending =
-            crate::hybrid::parallel_streaming::PendingDecryptor::from_reader(reader)?;
+            processor.begin_decrypt_hybrid_pipeline(Box::new(reader), self.config)?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 
@@ -197,679 +248,361 @@ impl HybridDecryptorBuilder {
     ///
     /// [异步] 从异步 `Read` 流配置解密。
     #[cfg(feature = "async")]
-    pub async fn async_reader<R: AsyncRead + Unpin>(
+    pub async fn async_reader<'a, R: AsyncRead + Unpin + Send + 'a>(
         self,
         reader: R,
-    ) -> crate::Result<PendingAsyncStreamingDecryptor<R>> {
-        let mid_level_pending =
-            crate::hybrid::asynchronous::PendingDecryptor::from_reader(reader).await?;
+    ) -> crate::Result<PendingAsyncStreamingDecryptor<'a>> {
+        let processor = crate::hybrid::asynchronous::Asynchronous::new();
+
+        let mid_level_pending = processor
+            .begin_decrypt_hybrid_async(Box::new(reader), self.config)
+            .await?;
         Ok(PendingDecryptor::new(mid_level_pending, self.key_provider))
     }
 }
 
 impl<'a> PendingInMemoryDecryptor<'a> {
+    /// Supplies typed private key for decryption.
+    ///
+    /// The algorithm types must match what was used for encryption. This method
+    /// is useful when the algorithm is known out-of-band and does not rely on
+    /// parsing it from the ciphertext header.
+    ///
+    /// 提供类型化的私钥以进行解密。
+    ///
+    /// 算法类型必须与加密时使用的类型匹配。当算法是带外获知且不依赖于
+    /// 从密文标头解析时，此方法很有用。
+    pub fn with_key_to_vec(self, key: &TypedAsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
+        self.header()
+            .verify(self.verification_key.as_ref(), self.aad.as_deref())?;
+        self.inner.into_plaintext(key, self.aad)
+    }
+
     /// Automatically resolves keys using the attached `KeyProvider` and completes decryption.
     ///
     /// 使用附加的 `KeyProvider` 自动解析密钥并完成解密。
-    pub fn resolve_and_decrypt(mut self) -> crate::Result<Vec<u8>> {
-        let provider = self
-            .key_provider
-            .as_ref()
-            .ok_or(KeyManagementError::ProviderMissing)?;
-
-        if let Some(signer_key_id) = self.signer_key_id() {
-            let verification_key = provider.get_signature_public_key(signer_key_id)?;
-            self.verification_key = Some(verification_key);
-        }
-
-        let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
-        let private_key = provider.get_asymmetric_private_key(kek_id)?;
-
-        self.with_key(private_key)
+    pub fn resolve_and_decrypt_to_vec(mut self) -> crate::Result<Vec<u8>> {
+        let private_key = self.resolve_private_key()?;
+        self.with_key_to_vec(&private_key)
     }
 
     /// Supplies a private key directly from its wrapper for decryption
     ///
     /// 提供包装好的私钥以进行解密。
-    pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
-        self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
+    pub fn with_untyped_key_to_vec(
+        self,
+        key: &AsymmetricPrivateKey,
+    ) -> crate::Result<Vec<u8>> {
+        let typed_key = key.clone().into_typed(
+            self.header()
+                .payload
+                .asymmetric_algorithm()
+                .ok_or(FormatError::InvalidHeader)?,
+        )?;
+        self.with_key_to_vec(&typed_key)
+    }
+}
 
-        let asymmetric_algorithm = self
-            .header()
-            .payload
-            .asymmetric_algorithm()
-            .ok_or(FormatError::InvalidHeader)?;
+impl<'a> InMemoryDecryptor for PendingInMemoryDecryptor<'a> {
+    type TypedKey = TypedAsymmetricPrivateKey;
+    type UntypedKey = AsymmetricPrivateKey;
 
-        let typed_key = key.into_typed(asymmetric_algorithm)?;
-        let symmetric_algorithm = self.header().payload.symmetric_algorithm();
-
-        match typed_key {
-            TypedAsymmetricPrivateKey::Rsa2048Sha256(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Rsa2048, Aes128Gcm>(&sk),
-                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Rsa2048, Aes256Gcm>(&sk),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key::<Rsa2048, XChaCha20Poly1305>(&sk)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key::<Rsa2048, ChaCha20Poly1305>(&sk)
-                }
-            },
-            TypedAsymmetricPrivateKey::Rsa4096Sha256(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Rsa4096, Aes128Gcm>(&sk),
-                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Rsa4096, Aes256Gcm>(&sk),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key::<Rsa4096, XChaCha20Poly1305>(&sk)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key::<Rsa4096, ChaCha20Poly1305>(&sk)
-                }
-            },
-            TypedAsymmetricPrivateKey::Kyber512(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => {
-                    self.with_typed_key::<Kyber512, Aes128Gcm>(&sk)
-                }
-                SymmetricAlgorithmEnum::Aes256Gcm => {
-                    self.with_typed_key::<Kyber512, Aes256Gcm>(&sk)
-                }
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key::<Kyber512, XChaCha20Poly1305>(&sk)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key::<Kyber512, ChaCha20Poly1305>(&sk)
-                }
-            },
-            TypedAsymmetricPrivateKey::Kyber768(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => {
-                    self.with_typed_key::<Kyber768, Aes128Gcm>(&sk)
-                }
-                SymmetricAlgorithmEnum::Aes256Gcm => {
-                    self.with_typed_key::<Kyber768, Aes256Gcm>(&sk)
-                }
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key::<Kyber768, XChaCha20Poly1305>(&sk)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key::<Kyber768, ChaCha20Poly1305>(&sk)
-                }
-            },
-            TypedAsymmetricPrivateKey::Kyber1024(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => {
-                    self.with_typed_key::<Kyber1024, Aes128Gcm>(&sk)
-                }
-                SymmetricAlgorithmEnum::Aes256Gcm => {
-                    self.with_typed_key::<Kyber1024, Aes256Gcm>(&sk)
-                }
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key::<Kyber1024, XChaCha20Poly1305>(&sk)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key::<Kyber1024, ChaCha20Poly1305>(&sk)
-                }
-            },
-        }
+    fn resolve_and_decrypt_to_vec(self) -> crate::Result<Vec<u8>> {
+        PendingInMemoryDecryptor::resolve_and_decrypt_to_vec(self)
     }
 
-    /// Supplies the typed private key and returns the decrypted plaintext.
-    ///
-    /// 提供类型化的私钥并返回解密的明文。
-    pub fn with_typed_key<A, S>(self, sk: &A::PrivateKey) -> crate::Result<Vec<u8>>
-    where
-        A: AsymmetricAlgorithm,
-        S: SymmetricAlgorithm,
-    {
-        self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        self.inner.into_plaintext::<A, S>(sk, self.aad.as_deref())
+    fn with_key_to_vec(self, key: &Self::TypedKey) -> crate::Result<Vec<u8>> {
+        PendingInMemoryDecryptor::with_key_to_vec(self, key)
+    }
+
+    fn with_untyped_key_to_vec(self, key: &Self::UntypedKey) -> crate::Result<Vec<u8>> {
+        PendingInMemoryDecryptor::with_untyped_key_to_vec(self, key)
     }
 }
 
 impl<'a> PendingInMemoryParallelDecryptor<'a> {
+    /// Supplies typed private key for decryption.
+    ///
+    /// The algorithm types must match what was used for encryption.
+    ///
+    /// 提供类型化的私钥以进行解密。
+    ///
+    /// 算法类型必须与加密时使用的类型匹配。
+    pub fn with_key_to_vec(self, key: &TypedAsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
+        self.header()
+            .verify(self.verification_key.as_ref(), self.aad.as_deref())?;
+        self.inner.into_plaintext(&key, self.aad)
+    }
+
     /// Automatically resolves keys using the attached `KeyProvider` and completes decryption.
     ///
     /// 使用附加的 `KeyProvider` 自动解析密钥并完成解密。
-    pub fn resolve_and_decrypt(mut self) -> crate::Result<Vec<u8>> {
-        let provider = self
-            .key_provider
-            .as_ref()
-            .ok_or(KeyManagementError::ProviderMissing)?;
-
-        if let Some(signer_key_id) = self.signer_key_id() {
-            let verification_key = provider.get_signature_public_key(signer_key_id)?;
-            self.verification_key = Some(verification_key);
-        }
-
-        let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
-        let private_key = provider.get_asymmetric_private_key(kek_id)?;
-
-        self.with_key(private_key)
+    pub fn resolve_and_decrypt_to_vec(mut self) -> crate::Result<Vec<u8>> {
+        let private_key = self.resolve_private_key()?;
+        self.with_key_to_vec(&private_key)
     }
 
     /// Supplies a private key directly from its wrapper for decryption
     ///
     /// 提供包装好的私钥以进行解密。
-    pub fn with_key(self, key: AsymmetricPrivateKey) -> crate::Result<Vec<u8>> {
-        self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
-
-        let asymmetric_algorithm = self
-            .header()
-            .payload
-            .asymmetric_algorithm()
-            .ok_or(FormatError::InvalidHeader)?;
-
-        let typed_key = key.into_typed(asymmetric_algorithm)?;
-        let symmetric_algorithm = self.header().payload.symmetric_algorithm();
-
-        match typed_key {
-            TypedAsymmetricPrivateKey::Rsa2048Sha256(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Rsa2048, Aes128Gcm>(&sk),
-                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Rsa2048, Aes256Gcm>(&sk),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key::<Rsa2048, XChaCha20Poly1305>(&sk)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key::<Rsa2048, ChaCha20Poly1305>(&sk)
-                }
-            },
-            TypedAsymmetricPrivateKey::Rsa4096Sha256(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self.with_typed_key::<Rsa4096, Aes128Gcm>(&sk),
-                SymmetricAlgorithmEnum::Aes256Gcm => self.with_typed_key::<Rsa4096, Aes256Gcm>(&sk),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key::<Rsa4096, XChaCha20Poly1305>(&sk)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key::<Rsa4096, ChaCha20Poly1305>(&sk)
-                }
-            },
-            TypedAsymmetricPrivateKey::Kyber512(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => {
-                    self.with_typed_key::<Kyber512, Aes128Gcm>(&sk)
-                }
-                SymmetricAlgorithmEnum::Aes256Gcm => {
-                    self.with_typed_key::<Kyber512, Aes256Gcm>(&sk)
-                }
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key::<Kyber512, XChaCha20Poly1305>(&sk)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key::<Kyber512, ChaCha20Poly1305>(&sk)
-                }
-            },
-            TypedAsymmetricPrivateKey::Kyber768(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => {
-                    self.with_typed_key::<Kyber768, Aes128Gcm>(&sk)
-                }
-                SymmetricAlgorithmEnum::Aes256Gcm => {
-                    self.with_typed_key::<Kyber768, Aes256Gcm>(&sk)
-                }
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key::<Kyber768, XChaCha20Poly1305>(&sk)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key::<Kyber768, ChaCha20Poly1305>(&sk)
-                }
-            },
-            TypedAsymmetricPrivateKey::Kyber1024(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => {
-                    self.with_typed_key::<Kyber1024, Aes128Gcm>(&sk)
-                }
-                SymmetricAlgorithmEnum::Aes256Gcm => {
-                    self.with_typed_key::<Kyber1024, Aes256Gcm>(&sk)
-                }
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key::<Kyber1024, XChaCha20Poly1305>(&sk)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key::<Kyber1024, ChaCha20Poly1305>(&sk)
-                }
-            },
-        }
-    }
-
-    /// Supplies the typed private key and returns the decrypted plaintext.
-    ///
-    /// 提供类型化的私钥并返回解密的明文。
-    pub fn with_typed_key<A, S>(self, sk: &A::PrivateKey) -> crate::Result<Vec<u8>>
-    where
-        A: AsymmetricAlgorithm,
-        S: SymmetricAlgorithm,
-    {
-        self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        self.inner.into_plaintext::<A, S>(sk, self.aad.as_deref())
+    pub fn with_untyped_key_to_vec(
+        self,
+        key: &AsymmetricPrivateKey,
+    ) -> crate::Result<Vec<u8>> {
+        let typed_key = key.clone().into_typed(
+            self.header()
+                .payload
+                .asymmetric_algorithm()
+                .ok_or(FormatError::InvalidHeader)?,
+        )?;
+        self.with_key_to_vec(&typed_key)
     }
 }
 
-impl<R: Read> PendingStreamingDecryptor<R> {
+impl<'a> InMemoryDecryptor for PendingInMemoryParallelDecryptor<'a> {
+    type TypedKey = TypedAsymmetricPrivateKey;
+    type UntypedKey = AsymmetricPrivateKey;
+
+    fn resolve_and_decrypt_to_vec(self) -> crate::Result<Vec<u8>> {
+        PendingInMemoryParallelDecryptor::resolve_and_decrypt_to_vec(self)
+    }
+
+    fn with_key_to_vec(self, key: &Self::TypedKey) -> crate::Result<Vec<u8>> {
+        PendingInMemoryParallelDecryptor::with_key_to_vec(self, key)
+    }
+
+    fn with_untyped_key_to_vec(self, key: &Self::UntypedKey) -> crate::Result<Vec<u8>> {
+        PendingInMemoryParallelDecryptor::with_untyped_key_to_vec(self, key)
+    }
+}
+
+impl<'a> PendingStreamingDecryptor<'a> {
+    /// Supplies typed private key for decryption.
+    ///
+    /// The algorithm types must match what was used for encryption.
+    ///
+    /// 提供类型化的私钥以进行解密。
+    ///
+    /// 算法类型必须与加密时使用的类型匹配。
+    pub fn with_key_to_reader(
+        self,
+        key: &TypedAsymmetricPrivateKey,
+    ) -> crate::Result<Box<dyn Read + 'a>> {
+        self.header()
+            .verify(self.verification_key.as_ref(), self.aad.as_deref())?;
+        self.inner.into_decryptor(key, self.aad)
+    }
+
     /// Automatically resolves keys using the attached `KeyProvider` and completes decryption.
     ///
     /// 使用附加的 `KeyProvider` 自动解析密钥并完成解密。
-    pub fn resolve_and_decrypt<'s>(mut self) -> crate::Result<Box<dyn Read + 's>>
-    where
-        R: 's,
-    {
-        let provider = self
-            .key_provider
-            .as_ref()
-            .ok_or(KeyManagementError::ProviderMissing)?;
-
-        if let Some(signer_key_id) = self.signer_key_id() {
-            let verification_key = provider.get_signature_public_key(signer_key_id)?;
-            self.verification_key = Some(verification_key);
-        }
-
-        let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
-        let private_key = provider.get_asymmetric_private_key(kek_id)?;
-
-        self.with_key(private_key)
+    pub fn resolve_and_decrypt_to_reader(mut self) -> crate::Result<Box<dyn Read + 'a>> {
+        let private_key = self.resolve_private_key()?;
+        self.with_key_to_reader(&private_key)
     }
 
     /// Supplies a private key directly from its wrapper for decryption
     ///
     /// 提供包装好的私钥以进行解密。
-    pub fn with_key<'s>(self, key: AsymmetricPrivateKey) -> crate::Result<Box<dyn Read + 's>>
-    where
-        R: 's,
-    {
-        self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
-
-        let asymmetric_algorithm = self
-            .header()
-            .payload
-            .asymmetric_algorithm()
-            .ok_or(FormatError::InvalidHeader)?;
-
-        let typed_key = key.into_typed(asymmetric_algorithm)?;
-        let symmetric_algorithm = self.header().payload.symmetric_algorithm();
-
-        match typed_key {
-            TypedAsymmetricPrivateKey::Rsa2048Sha256(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self
-                    .with_typed_key::<Rsa2048, Aes128Gcm>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::Aes256Gcm => self
-                    .with_typed_key::<Rsa2048, Aes256Gcm>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self
-                    .with_typed_key::<Rsa2048, XChaCha20Poly1305>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self
-                    .with_typed_key::<Rsa2048, ChaCha20Poly1305>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-            },
-            TypedAsymmetricPrivateKey::Rsa4096Sha256(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self
-                    .with_typed_key::<Rsa4096, Aes128Gcm>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::Aes256Gcm => self
-                    .with_typed_key::<Rsa4096, Aes256Gcm>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self
-                    .with_typed_key::<Rsa4096, XChaCha20Poly1305>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self
-                    .with_typed_key::<Rsa4096, ChaCha20Poly1305>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-            },
-            TypedAsymmetricPrivateKey::Kyber512(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self
-                    .with_typed_key::<Kyber512, Aes128Gcm>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::Aes256Gcm => self
-                    .with_typed_key::<Kyber512, Aes256Gcm>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self
-                    .with_typed_key::<Kyber512, XChaCha20Poly1305>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self
-                    .with_typed_key::<Kyber512, ChaCha20Poly1305>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-            },
-            TypedAsymmetricPrivateKey::Kyber768(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self
-                    .with_typed_key::<Kyber768, Aes128Gcm>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::Aes256Gcm => self
-                    .with_typed_key::<Kyber768, Aes256Gcm>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self
-                    .with_typed_key::<Kyber768, XChaCha20Poly1305>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self
-                    .with_typed_key::<Kyber768, ChaCha20Poly1305>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-            },
-            TypedAsymmetricPrivateKey::Kyber1024(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self
-                    .with_typed_key::<Kyber1024, Aes128Gcm>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::Aes256Gcm => self
-                    .with_typed_key::<Kyber1024, Aes256Gcm>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self
-                    .with_typed_key::<Kyber1024, XChaCha20Poly1305>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self
-                    .with_typed_key::<Kyber1024, ChaCha20Poly1305>(&sk)
-                    .map(|d| Box::new(d) as Box<dyn Read>),
-            },
-        }
-    }
-
-    /// Supplies the typed private key and returns a fully initialized `Decryptor`.
-    ///
-    /// 提供类型化的私钥并返回一个完全初始化的 `Decryptor`。
-    pub fn with_typed_key<A, S>(
+    pub fn with_untyped_key_to_reader(
         self,
-        sk: &A::PrivateKey,
-    ) -> crate::Result<crate::hybrid::streaming::Decryptor<R, A, S>>
-    where
-        A: AsymmetricAlgorithm,
-        S: SymmetricAlgorithm,
-    {
-        self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        self.inner.into_decryptor::<A, S>(sk, self.aad.as_deref())
+        key: &AsymmetricPrivateKey,
+    ) -> crate::Result<Box<dyn Read + 'a>> {
+        let typed_key = key.clone().into_typed(
+            self.header()
+                .payload
+                .asymmetric_algorithm()
+                .ok_or(FormatError::InvalidHeader)?,
+        )?;
+        self.with_key_to_reader(&typed_key)
     }
 }
 
-impl<R> PendingParallelStreamingDecryptor<R>
-where
-    R: Read + Send,
-{
-    /// Automatically resolves keys and decrypts the stream to the provided writer.
-    ///
-    /// 自动解析密钥并将流解密到提供的写入器。
-    pub fn resolve_and_decrypt_to_writer<W: Write>(mut self, writer: W) -> crate::Result<()> {
-        let provider = self
-            .key_provider
-            .as_ref()
-            .ok_or(KeyManagementError::ProviderMissing)?;
+impl<'a> StreamingDecryptor for PendingStreamingDecryptor<'a> {
+    type TypedKey = TypedAsymmetricPrivateKey;
+    type UntypedKey = AsymmetricPrivateKey;
 
-        if let Some(signer_key_id) = self.signer_key_id() {
-            let verification_key = provider.get_signature_public_key(signer_key_id)?;
-            self.verification_key = Some(verification_key);
-        }
-
-        let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
-        let private_key = provider.get_asymmetric_private_key(kek_id)?;
-
-        self.with_key_to_writer(private_key, writer)
+    fn resolve_and_decrypt_to_reader<'s>(self) -> crate::Result<Box<dyn Read + 's>>
+    where
+        Self: 's,
+    {
+        PendingStreamingDecryptor::resolve_and_decrypt_to_reader(self)
     }
 
-    /// Supplies a private key directly from its wrapper for decryption
-    ///
-    /// 提供包装好的私钥以进行解密。
-    pub fn with_key_to_writer<W: Write>(
+    fn with_key_to_reader<'s>(
         self,
-        key: AsymmetricPrivateKey,
+        key: &Self::TypedKey,
+    ) -> crate::Result<Box<dyn Read + 's>>
+    where
+        Self: 's,
+    {
+        PendingStreamingDecryptor::with_key_to_reader(self, key)
+    }
+
+    fn with_untyped_key_to_reader<'s>(
+        self,
+        key: &Self::UntypedKey,
+    ) -> crate::Result<Box<dyn Read + 's>>
+    where
+        Self: 's,
+    {
+        PendingStreamingDecryptor::with_untyped_key_to_reader(self, key)
+    }
+}
+
+impl<'a> PendingParallelStreamingDecryptor<'a> {
+    /// Supplies a typed private key and decrypts the stream to the provided writer.
+    ///
+    /// The algorithm types must match what was used for encryption.
+    ///
+    /// 提供类型化的私钥并将流解密到提供的写入器。
+    ///
+    /// 算法类型必须与加密时使用的类型匹配。
+    pub fn with_key_to_writer<W: Write + Send + 'a>(
+        self,
+        key: &TypedAsymmetricPrivateKey,
         writer: W,
     ) -> crate::Result<()> {
         self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
-
-        let asymmetric_algorithm = self
-            .header()
-            .payload
-            .asymmetric_algorithm()
-            .ok_or(FormatError::InvalidHeader)?;
-
-        let typed_key = key.into_typed(asymmetric_algorithm)?;
-        let symmetric_algorithm = self.header().payload.symmetric_algorithm();
-
-        match typed_key {
-            TypedAsymmetricPrivateKey::Rsa2048Sha256(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => {
-                    self.with_typed_key_to_writer::<Rsa2048, Aes128Gcm, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::Aes256Gcm => {
-                    self.with_typed_key_to_writer::<Rsa2048, Aes256Gcm, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key_to_writer::<Rsa2048, XChaCha20Poly1305, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key_to_writer::<Rsa2048, ChaCha20Poly1305, W>(&sk, writer)
-                }
-            },
-            TypedAsymmetricPrivateKey::Rsa4096Sha256(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => {
-                    self.with_typed_key_to_writer::<Rsa4096, Aes128Gcm, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::Aes256Gcm => {
-                    self.with_typed_key_to_writer::<Rsa4096, Aes256Gcm, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key_to_writer::<Rsa4096, XChaCha20Poly1305, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key_to_writer::<Rsa4096, ChaCha20Poly1305, W>(&sk, writer)
-                }
-            },
-            TypedAsymmetricPrivateKey::Kyber512(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => {
-                    self.with_typed_key_to_writer::<Kyber512, Aes128Gcm, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::Aes256Gcm => {
-                    self.with_typed_key_to_writer::<Kyber512, Aes256Gcm, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key_to_writer::<Kyber512, XChaCha20Poly1305, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key_to_writer::<Kyber512, ChaCha20Poly1305, W>(&sk, writer)
-                }
-            },
-            TypedAsymmetricPrivateKey::Kyber768(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => {
-                    self.with_typed_key_to_writer::<Kyber768, Aes128Gcm, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::Aes256Gcm => {
-                    self.with_typed_key_to_writer::<Kyber768, Aes256Gcm, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key_to_writer::<Kyber768, XChaCha20Poly1305, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key_to_writer::<Kyber768, ChaCha20Poly1305, W>(&sk, writer)
-                }
-            },
-            TypedAsymmetricPrivateKey::Kyber1024(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => {
-                    self.with_typed_key_to_writer::<Kyber1024, Aes128Gcm, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::Aes256Gcm => {
-                    self.with_typed_key_to_writer::<Kyber1024, Aes256Gcm, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => {
-                    self.with_typed_key_to_writer::<Kyber1024, XChaCha20Poly1305, W>(&sk, writer)
-                }
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => {
-                    self.with_typed_key_to_writer::<Kyber1024, ChaCha20Poly1305, W>(&sk, writer)
-                }
-            },
-        }
+            .verify(self.verification_key.as_ref(), self.aad.as_deref())?;
+        self.inner
+            .decrypt_to_writer(key, Box::new(writer), self.aad)
     }
 
-    /// Supplies the typed private key and decrypts the stream, writing to the provided writer.
+    /// Automatically resolves keys and decrypts the stream to the provided writer.
     ///
-    /// 提供类型化的私钥并解密流，写入提供的写入器。
-    pub fn with_typed_key_to_writer<A, S, W: Write>(
-        self,
-        sk: &A::PrivateKey,
+    /// 自动解析密钥并将流解密到提供的写入器。
+    pub fn resolve_and_decrypt_to_writer<W: Write + Send + 'a>(
+        mut self,
         writer: W,
-    ) -> crate::Result<()>
-    where
-        A: AsymmetricAlgorithm,
-        S: SymmetricAlgorithm,
-    {
-        self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        self.inner
-            .decrypt_to_writer::<A, S, W>(sk, writer, self.aad.as_deref())
+    ) -> crate::Result<()> {
+        let private_key = self.resolve_private_key()?;
+        self.with_key_to_writer(&private_key, writer)
+    }
+
+    /// Supplies a private key directly from its wrapper for decryption
+    ///
+    /// 提供包装好的私钥以进行解密。
+    pub fn with_untyped_key_to_writer<W: Write + Send + 'a>(
+        self,
+        key: &AsymmetricPrivateKey,
+        writer: W,
+    ) -> crate::Result<()> {
+        let typed_key = key.clone().into_typed(
+            self.header()
+                .payload
+                .asymmetric_algorithm()
+                .ok_or(FormatError::InvalidHeader)?,
+        )?;
+        self.with_key_to_writer(&typed_key, writer)
+    }
+}
+
+impl<'a> ParallelStreamingDecryptor for PendingParallelStreamingDecryptor<'a> {
+    type TypedKey = TypedAsymmetricPrivateKey;
+    type UntypedKey = AsymmetricPrivateKey;
+
+    fn resolve_and_decrypt_to_writer<W: Write + Send + 'static>(
+        self,
+        writer: W,
+    ) -> crate::Result<()> {
+        PendingParallelStreamingDecryptor::resolve_and_decrypt_to_writer(self, writer)
+    }
+
+    fn with_key_to_writer<W: Write + Send + 'static>(
+        self,
+        key: &Self::TypedKey,
+        writer: W,
+    ) -> crate::Result<()> {
+        PendingParallelStreamingDecryptor::with_key_to_writer(self, key, writer)
+    }
+
+    fn with_untyped_key_to_writer<W: Write + Send + 'static>(
+        self,
+        key: &Self::UntypedKey,
+        writer: W,
+    ) -> crate::Result<()> {
+        PendingParallelStreamingDecryptor::with_untyped_key_to_writer(self, key, writer)
     }
 }
 
 #[cfg(feature = "async")]
-impl<R: AsyncRead + Unpin> PendingAsyncStreamingDecryptor<R> {
+impl<'a> PendingAsyncStreamingDecryptor<'a> {
+    /// Supplies typed private key for decryption.
+    ///
+    /// The algorithm types must match what was used for encryption.
+    ///
+    /// 提供类型化的私钥以进行解密。
+    ///
+    /// 算法类型必须与加密时使用的类型匹配。
+    pub async fn with_key_to_reader(
+        self,
+        key: &TypedAsymmetricPrivateKey,
+    ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 'a>> {
+        self.header()
+            .verify(self.verification_key.as_ref(), self.aad.as_deref())?;
+        self.inner.into_decryptor(key, self.aad).await
+    }
+
     /// Automatically resolves keys and returns a decrypting async reader.
     ///
     /// 自动解析密钥并返回一个解密的异步读取器。
-    pub async fn resolve_and_decrypt<'s>(
+    pub async fn resolve_and_decrypt_to_reader(
         mut self,
-    ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 's>>
-    where
-        R: Send + 's,
-    {
-        let provider = self
-            .key_provider
-            .as_ref()
-            .ok_or(KeyManagementError::ProviderMissing)?;
-
-        if let Some(signer_key_id) = self.signer_key_id() {
-            let verification_key = provider.get_signature_public_key(signer_key_id)?;
-            self.verification_key = Some(verification_key);
-        }
-
-        let kek_id = self.kek_id().ok_or(KeyManagementError::KekIdNotFound)?;
-        let private_key = provider.get_asymmetric_private_key(kek_id)?;
-
-        self.with_key(private_key).await
+    ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 'a>> {
+        let private_key = self.resolve_private_key()?;
+        self.with_key_to_reader(&private_key).await
     }
 
     /// Supplies a private key directly from its wrapper for decryption
     ///
     /// 提供包装好的私钥以进行解密。
-    pub async fn with_key<'s>(
+    pub async fn with_untyped_key_to_reader(
         self,
-        key: AsymmetricPrivateKey,
+        key: &AsymmetricPrivateKey,
+    ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 'a>> {
+        let typed_key = key.clone().into_typed(
+            self.header()
+                .payload
+                .asymmetric_algorithm()
+                .ok_or(FormatError::InvalidHeader)?,
+        )?;
+        self.with_key_to_reader(&typed_key).await
+    }
+}
+
+#[cfg(feature = "async")]
+#[async_trait::async_trait]
+impl<'a> AsyncStreamingDecryptor for PendingAsyncStreamingDecryptor<'a> {
+    type TypedKey = TypedAsymmetricPrivateKey;
+    type UntypedKey = AsymmetricPrivateKey;
+
+    async fn resolve_and_decrypt_to_reader<'s>(
+        self,
     ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 's>>
     where
-        R: Send + 's,
+        Self: 's,
     {
-        self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
-
-        let asymmetric_algorithm = self
-            .header()
-            .payload
-            .asymmetric_algorithm()
-            .ok_or(FormatError::InvalidHeader)?;
-
-        let typed_key = key.into_typed(asymmetric_algorithm)?;
-        let symmetric_algorithm = self.header().payload.symmetric_algorithm();
-
-        match typed_key {
-            TypedAsymmetricPrivateKey::Rsa2048Sha256(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self
-                    .with_typed_key::<Rsa2048, Aes128Gcm>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::Aes256Gcm => self
-                    .with_typed_key::<Rsa2048, Aes256Gcm>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self
-                    .with_typed_key::<Rsa2048, XChaCha20Poly1305>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self
-                    .with_typed_key::<Rsa2048, ChaCha20Poly1305>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-            },
-            TypedAsymmetricPrivateKey::Rsa4096Sha256(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self
-                    .with_typed_key::<Rsa4096, Aes128Gcm>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::Aes256Gcm => self
-                    .with_typed_key::<Rsa4096, Aes256Gcm>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self
-                    .with_typed_key::<Rsa4096, XChaCha20Poly1305>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self
-                    .with_typed_key::<Rsa4096, ChaCha20Poly1305>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-            },
-            TypedAsymmetricPrivateKey::Kyber512(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self
-                    .with_typed_key::<Kyber512, Aes128Gcm>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::Aes256Gcm => self
-                    .with_typed_key::<Kyber512, Aes256Gcm>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self
-                    .with_typed_key::<Kyber512, XChaCha20Poly1305>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self
-                    .with_typed_key::<Kyber512, ChaCha20Poly1305>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-            },
-            TypedAsymmetricPrivateKey::Kyber768(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self
-                    .with_typed_key::<Kyber768, Aes128Gcm>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::Aes256Gcm => self
-                    .with_typed_key::<Kyber768, Aes256Gcm>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self
-                    .with_typed_key::<Kyber768, XChaCha20Poly1305>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self
-                    .with_typed_key::<Kyber768, ChaCha20Poly1305>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-            },
-            TypedAsymmetricPrivateKey::Kyber1024(sk) => match symmetric_algorithm {
-                SymmetricAlgorithmEnum::Aes128Gcm => self
-                    .with_typed_key::<Kyber1024, Aes128Gcm>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::Aes256Gcm => self
-                    .with_typed_key::<Kyber1024, Aes256Gcm>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::XChaCha20Poly1305 => self
-                    .with_typed_key::<Kyber1024, XChaCha20Poly1305>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-                SymmetricAlgorithmEnum::ChaCha20Poly1305 => self
-                    .with_typed_key::<Kyber1024, ChaCha20Poly1305>(sk)
-                    .await
-                    .map(|d| Box::new(d) as Box<dyn AsyncRead + Unpin + Send>),
-            },
-        }
+        PendingAsyncStreamingDecryptor::resolve_and_decrypt_to_reader(self).await
     }
 
-    /// Supplies the typed private key and returns a fully initialized `Decryptor`.
-    ///
-    /// 提供类型化的私钥并返回一个完全初始化的 `Decryptor`。
-    pub async fn with_typed_key<A, S>(
+    async fn with_key_to_reader<'s>(
         self,
-        sk: A::PrivateKey,
-    ) -> crate::Result<crate::hybrid::asynchronous::Decryptor<R, A, S>>
+        key: &Self::TypedKey,
+    ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 's>>
     where
-        A: AsymmetricAlgorithm,
-        S: SymmetricAlgorithm,
+        Self: 's,
     {
-        self.header()
-            .verify(self.verification_key.clone(), self.aad.as_deref())?;
-        self.inner
-            .into_decryptor::<A, S>(sk, self.aad.as_deref())
-            .await
+        PendingAsyncStreamingDecryptor::with_key_to_reader(self, key).await
+    }
+
+    async fn with_untyped_key_to_reader<'s>(
+        self,
+        key: &Self::UntypedKey,
+    ) -> crate::Result<Box<dyn AsyncRead + Unpin + Send + 's>>
+    where
+        Self: 's,
+    {
+        PendingAsyncStreamingDecryptor::with_untyped_key_to_reader(self, key).await
     }
 }

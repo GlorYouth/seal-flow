@@ -1,11 +1,9 @@
-use seal_flow::algorithms::symmetric::Aes256Gcm;
 use seal_flow::prelude::*;
-
 fn main() -> seal_flow::error::Result<()> {
     // --- Setup ---
     // --- 准备工作 ---
-    let key = Aes256Gcm::generate_key()?;
-    let key_wrapped = SymmetricKey::new(key);
+    let algorithm = SymmetricAlgorithmEnum::Aes256Gcm;
+    let key = algorithm.into_symmetric_wrapper().generate_typed_key()?;
     let key_id = "my-aad-key".to_string();
     let plaintext = b"This data is secret and needs integrity protection.";
 
@@ -19,7 +17,7 @@ fn main() -> seal_flow::error::Result<()> {
 
     // The high-level API factory is stateless and reusable.
     // 高级 API 工厂是无状态且可重用的。
-    let seal = SymmetricSeal::new();
+    let seal = SymmetricSeal::default();
 
     // --- Encrypt with AAD ---
     // --- 使用 AAD 加密 ---
@@ -28,9 +26,9 @@ fn main() -> seal_flow::error::Result<()> {
         String::from_utf8_lossy(aad)
     );
     let ciphertext = seal
-        .encrypt(key_wrapped.clone(), key_id)
+        .encrypt(key.clone(), key_id)
         .with_aad(aad)
-        .to_vec::<Aes256Gcm>(plaintext)?;
+        .to_vec(plaintext)?;
 
     // --- Decryption Success ---
     // --- 解密成功场景 ---
@@ -40,9 +38,11 @@ fn main() -> seal_flow::error::Result<()> {
     // 本库会通过密码学手段验证 AAD 是否匹配。
     println!("Attempting decryption with the correct AAD...");
     let pending_decryptor = seal.decrypt().slice(&ciphertext)?;
-    let decrypted_text = pending_decryptor
-        .with_aad(aad)
-        .with_key(key_wrapped.clone())?;
+    // In a real application, you would look up the key based on `pending_decryptor.key_id()`
+    // from a secure key store. For this example, we'll use the key we already have.
+    // 在实际应用中，您会根据 `pending_decryptor.key_id()` 从安全的密钥库中查找密钥。
+    // 在本示例中，我们直接使用已有的密钥。
+    let decrypted_text = pending_decryptor.with_aad(aad).with_key_to_vec(&key)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully decrypted with correct AAD!");
@@ -61,9 +61,7 @@ fn main() -> seal_flow::error::Result<()> {
         String::from_utf8_lossy(wrong_aad)
     );
     let pending_fail = seal.decrypt().slice(&ciphertext)?;
-    let result_fail = pending_fail
-        .with_aad(wrong_aad)
-        .with_key(key_wrapped.clone());
+    let result_fail = pending_fail.with_aad(wrong_aad).with_key_to_vec(&key);
 
     assert!(result_fail.is_err());
     if let Err(e) = result_fail {
@@ -75,7 +73,7 @@ fn main() -> seal_flow::error::Result<()> {
     // 2. 如果加密时使用了 AAD，解密时却不提供，同样会导致解密失败。
     println!("\nAttempting decryption with MISSING AAD...");
     let pending_fail2 = seal.decrypt().slice(&ciphertext)?;
-    let result_fail2 = pending_fail2.with_key(key_wrapped);
+    let result_fail2 = pending_fail2.with_key_to_vec(&key);
 
     assert!(result_fail2.is_err());
     if let Err(e) = result_fail2 {

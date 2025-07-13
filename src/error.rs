@@ -92,6 +92,18 @@ pub enum FormatError {
     /// 这通常表示数据损坏或被截断。
     #[error("密文格式不正确或流不完整")]
     InvalidCiphertext,
+
+    /// The key type is invalid.
+    ///
+    /// 密钥类型无效。
+    #[error("密钥类型无效")]
+    InvalidKeyType,
+
+    /// The key is invalid.
+    ///
+    /// 密钥无效。
+    #[error("密钥无效")]
+    InvalidKey,
 }
 
 /// Errors related to key lookup and management.

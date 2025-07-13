@@ -1,6 +1,4 @@
-use seal_flow::algorithms::asymmetric::Rsa2048;
-use seal_flow::algorithms::hash::Sha256;
-use seal_flow::algorithms::symmetric::Aes256Gcm;
+use seal_flow::base::keys::TypedAsymmetricPrivateKey;
 use seal_flow::prelude::*;
 use std::collections::HashMap;
 
@@ -11,12 +9,12 @@ use std::collections::HashMap;
 // This algorithm protects the Data Encryption Key (DEK).
 // 定义用于密钥封装 (KEM) 的非对称算法。
 // 该算法用于保护数据加密密钥 (DEK)。
-type Kem = Rsa2048<Sha256>;
+const KEM_ALGO: AsymmetricAlgorithmEnum = AsymmetricAlgorithmEnum::Rsa2048Sha256;
 // Define the symmetric algorithm used for Data Encapsulation.
 // This algorithm encrypts the actual plaintext data.
 // 定义用于数据封装的对称算法。
 // 该算法用于加密实际的明文数据。
-type Dek = Aes256Gcm;
+const DEK_ALGO: SymmetricAlgorithmEnum = SymmetricAlgorithmEnum::Aes256Gcm;
 
 fn main() -> seal_flow::error::Result<()> {
     // --- Setup ---
@@ -28,39 +26,41 @@ fn main() -> seal_flow::error::Result<()> {
     // 1. 为接收方生成一个非对称密钥对。
     //    在实际应用中，公钥会被分发出去，
     //    而私钥则由接收方安全地存储。
-    let (pk, sk) = Kem::generate_keypair()?;
+    let (pk, sk) = KEM_ALGO
+        .into_asymmetric_wrapper()
+        .generate_keypair()?
+        .into_keypair();
 
     // 2. Simulate a private key store for the recipient.
-    //    We store the private key bytes, identified by a Key ID.
+    //    We store the typed private key, identified by a Key ID.
     // 2. 为接收方模拟一个私钥存储。
-    //    我们通过密钥 ID 来存储私钥的字节。
-    let mut private_key_store = HashMap::new();
+    //    我们通过密钥 ID 来存储类型化的私钥。
+    let mut private_key_store: HashMap<String, TypedAsymmetricPrivateKey> = HashMap::new();
     let kek_id = "rsa-key-pair-001".to_string(); // Key Encryption Key ID
-    private_key_store.insert(kek_id.clone(), sk.to_bytes());
+    private_key_store.insert(kek_id.clone(), sk);
 
     let plaintext = b"This is a secret message for hybrid encryption.";
 
     // The high-level API factory is stateless and reusable.
     // 高级 API 工厂是无状态且可重用的。
-    let seal = HybridSeal::new();
+    let seal = HybridSeal::default();
 
     // --- 1. Encryption (Sender's side) ---
     // --- 1. 加密（发送方） ---
 
-    // The sender uses the recipient's public key to encrypt.
-    // 发送方使用接收方的公钥进行加密。
-    let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
+    // The sender uses the recipient's typed public key to encrypt.
+    // The KEM algorithm is inferred from the key type.
+    // 发送方使用接收方的类型化公钥进行加密。
+    // KEM 算法会从密钥类型中推断出来。
     let ciphertext = seal
-        // Specify the symmetric algorithm (Dek) for encrypting the data.
-        // A new random key for this algorithm will be generated internally.
-        // 指定用于加密数据的对称算法 (Dek)。
-        // 一个用于此算法的新的随机密钥将在内部生成。
-        .encrypt::<Dek>(pk_wrapped, kek_id)
-        // Specify the asymmetric algorithm (Kem) to encrypt the generated symmetric key.
-        // This executes the hybrid encryption.
-        // 指定用于加密所生成的对称密钥的非对称算法 (Kem)。
-        // 这将执行混合加密。
-        .with_algorithm::<Kem>()
+        .encrypt(pk, kek_id)
+        // Specify the symmetric algorithm (DEK) for encrypting the data.
+        // A new random key for this algorithm will be generated internally,
+        // encapsulated using the public key, and stored in the header.
+        // 指定用于加密数据的对称算法 (DEK)。
+        // 一个用于此算法的新随机密钥将在内部生成，
+        // 使用公钥进行封装，并存储在头部。
+        .execute_with(DEK_ALGO)
         .to_vec(plaintext)?;
 
     // --- 2. Decryption (Recipient's side) ---
@@ -75,14 +75,15 @@ fn main() -> seal_flow::error::Result<()> {
 
     // b. Fetch the corresponding private key from the key store.
     // b. 从密钥存储中获取对应的私钥。
-    let sk_bytes = private_key_store.get(found_kek_id).unwrap();
-    let sk_wrapped = AsymmetricPrivateKey::new(sk_bytes.clone());
+    let decryption_key = private_key_store.get(found_kek_id).unwrap();
 
     // c. Provide the private key to decrypt the DEK and then the plaintext.
     //    The symmetric algorithm is automatically inferred from the header.
+    //    The library also verifies that the provided key's algorithm matches the one in the header.
     // c. 提供私钥以解密 DEK，进而解密明文。
     //    对称算法会自动从头部信息中推断出来。
-    let decrypted_text = pending_decryptor.with_key(sk_wrapped)?;
+    //    库还会验证所提供密钥的算法是否与头部中的算法匹配。
+    let decrypted_text = pending_decryptor.with_key_to_vec(decryption_key)?;
 
     assert_eq!(plaintext, &decrypted_text[..]);
     println!("Successfully performed hybrid encryption and decryption!");

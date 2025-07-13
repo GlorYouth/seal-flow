@@ -2,16 +2,14 @@ use criterion::{criterion_group, criterion_main, Bencher, Criterion};
 use num_cpus;
 use rand::{rngs::OsRng, TryRngCore};
 use rayon;
-use seal_flow::algorithms::asymmetric::Kyber768;
-use seal_flow::algorithms::symmetric::Aes256Gcm;
+use seal_flow::base::keys::{TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey};
 use seal_flow::prelude::*;
-use seal_flow::seal::hybrid::HybridSeal;
 use std::hint::black_box;
 use std::io::{Cursor, Write};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-type TestKem = Kyber768;
-type TestDek = Aes256Gcm;
+const KEM: AsymmetricAlgorithmEnum = AsymmetricAlgorithmEnum::Kyber768;
+const DEM: SymmetricAlgorithmEnum = SymmetricAlgorithmEnum::Aes256Gcm;
 
 const KIBIBYTE: usize = 1024;
 const MEBIBYTE: usize = 1024 * KIBIBYTE;
@@ -19,22 +17,25 @@ const PLAINTEXT_SIZE: usize = MEBIBYTE; // 1 MiB
 
 /// Generates keys and a vector of random bytes for benchmarking.
 fn setup() -> (
-    AsymmetricPublicKey,
-    <TestKem as AsymmetricKeySet>::PrivateKey,
+    TypedAsymmetricPublicKey,
+    TypedAsymmetricPrivateKey,
     Vec<u8>,
 ) {
-    let (pk, sk) = TestKem::generate_keypair().unwrap();
-    let pk_wrapped = AsymmetricPublicKey::new(pk.to_bytes());
+    let (pk, sk) = KEM
+        .into_asymmetric_wrapper()
+        .generate_keypair()
+        .unwrap()
+        .into_keypair();
     let mut plaintext = vec![0u8; PLAINTEXT_SIZE];
     OsRng.try_fill_bytes(&mut plaintext).unwrap();
-    (pk_wrapped, sk, plaintext)
+    (pk, sk, plaintext)
 }
 
 /// Creates a benchmark group for hybrid encryption modes.
 fn benchmark_hybrid_encryption(c: &mut Criterion) {
     let (pk, _, plaintext) = setup();
     let kek_id = "benchmark_kek".to_string();
-    let seal = HybridSeal::new();
+    let seal = HybridSeal::default();
 
     let mut group = c.benchmark_group("Hybrid Encryption");
     group.sample_size(10);
@@ -43,8 +44,8 @@ fn benchmark_hybrid_encryption(c: &mut Criterion) {
     // --- In-memory (Ordinary) ---
     group.bench_function("in_memory", |b| {
         b.iter(|| {
-            seal.encrypt::<TestDek>(pk.clone(), kek_id.clone())
-                .with_algorithm::<TestKem>()
+            seal.encrypt(pk.clone(), kek_id.clone())
+                .execute_with(DEM)
                 .to_vec(black_box(&plaintext))
                 .unwrap();
         });
@@ -58,8 +59,8 @@ fn benchmark_hybrid_encryption(c: &mut Criterion) {
             .unwrap();
         pool.install(|| {
             b.iter(|| {
-                seal.encrypt::<TestDek>(pk.clone(), kek_id.clone())
-                    .with_algorithm::<TestKem>()
+                seal.encrypt(pk.clone(), kek_id.clone())
+                    .execute_with(DEM)
                     .to_vec_parallel(black_box(&plaintext))
                     .unwrap();
             });
@@ -71,8 +72,8 @@ fn benchmark_hybrid_encryption(c: &mut Criterion) {
         b.iter(|| {
             let mut encrypted_data = Vec::with_capacity(PLAINTEXT_SIZE + 1024);
             let mut encryptor = seal
-                .encrypt::<TestDek>(pk.clone(), kek_id.clone())
-                .with_algorithm::<TestKem>()
+                .encrypt(pk.clone(), kek_id.clone())
+                .execute_with(DEM)
                 .into_writer(&mut encrypted_data)
                 .unwrap();
             encryptor.write_all(black_box(&plaintext)).unwrap();
@@ -86,8 +87,8 @@ fn benchmark_hybrid_encryption(c: &mut Criterion) {
         b.to_async(&runtime).iter(|| async {
             let mut encrypted_data = Vec::with_capacity(PLAINTEXT_SIZE + 1024);
             let mut encryptor = seal
-                .encrypt::<TestDek>(pk.clone(), kek_id.clone())
-                .with_algorithm::<TestKem>()
+                .encrypt(pk.clone(), kek_id.clone())
+                .execute_with(DEM)
                 .into_async_writer(&mut encrypted_data)
                 .await
                 .unwrap();
@@ -105,8 +106,8 @@ fn benchmark_hybrid_encryption(c: &mut Criterion) {
         pool.install(|| {
             b.iter(|| {
                 let mut encrypted_data = Vec::with_capacity(PLAINTEXT_SIZE + 1024);
-                seal.encrypt::<TestDek>(pk.clone(), kek_id.clone())
-                    .with_algorithm::<TestKem>()
+                seal.encrypt(pk.clone(), kek_id.clone())
+                    .execute_with(DEM)
                     .pipe_parallel(Cursor::new(black_box(&plaintext)), &mut encrypted_data)
                     .unwrap();
             });
@@ -120,12 +121,12 @@ fn benchmark_hybrid_encryption(c: &mut Criterion) {
 fn benchmark_hybrid_decryption(c: &mut Criterion) {
     let (pk, sk, plaintext) = setup();
     let kek_id = "benchmark_kek".to_string();
-    let seal = HybridSeal::new();
+    let seal = HybridSeal::default();
 
     // Prepare encrypted data for each mode to be decrypted
     let in_memory_ciphertext = seal
-        .encrypt::<TestDek>(pk, kek_id)
-        .with_algorithm::<TestKem>()
+        .encrypt(pk, kek_id)
+        .execute_with(DEM)
         .to_vec(&plaintext)
         .unwrap();
 
@@ -140,7 +141,7 @@ fn benchmark_hybrid_decryption(c: &mut Criterion) {
                 .decrypt()
                 .slice(black_box(&in_memory_ciphertext))
                 .unwrap();
-            pending.with_typed_key::<TestKem, TestDek>(&sk).unwrap();
+            pending.with_key_to_vec(&sk).unwrap();
         });
     });
 
@@ -156,7 +157,7 @@ fn benchmark_hybrid_decryption(c: &mut Criterion) {
                     .decrypt()
                     .slice_parallel(black_box(&in_memory_ciphertext))
                     .unwrap();
-                pending.with_typed_key::<TestKem, TestDek>(&sk).unwrap();
+                pending.with_key_to_vec(&sk).unwrap();
             });
         });
     });
@@ -168,7 +169,7 @@ fn benchmark_hybrid_decryption(c: &mut Criterion) {
                 .decrypt()
                 .reader(Cursor::new(black_box(in_memory_ciphertext.clone())))
                 .unwrap();
-            let mut decryptor = pending.with_typed_key::<TestKem, TestDek>(&sk).unwrap();
+            let mut decryptor = pending.with_key_to_reader(&sk).unwrap();
             let mut decrypted_data = Vec::with_capacity(PLAINTEXT_SIZE);
             std::io::copy(&mut decryptor, &mut decrypted_data).unwrap();
         });
@@ -183,14 +184,9 @@ fn benchmark_hybrid_decryption(c: &mut Criterion) {
                 .async_reader(Cursor::new(black_box(&in_memory_ciphertext)))
                 .await
                 .unwrap();
-            let mut decryptor = pending
-                .with_typed_key::<TestKem, TestDek>(sk.clone())
-                .await
-                .unwrap();
+            let mut decryptor = pending.with_key_to_reader(&sk).await.unwrap();
             let mut decrypted_data = Vec::with_capacity(PLAINTEXT_SIZE);
-            tokio::io::copy(&mut decryptor, &mut decrypted_data)
-                .await
-                .unwrap();
+            decryptor.read_to_end(&mut decrypted_data).await.unwrap();
         });
     });
 
@@ -208,7 +204,7 @@ fn benchmark_hybrid_decryption(c: &mut Criterion) {
                     .reader_parallel(Cursor::new(black_box(&in_memory_ciphertext)))
                     .unwrap();
                 pending
-                    .with_typed_key_to_writer::<TestKem, TestDek, _>(&sk, &mut decrypted_data)
+                    .with_key_to_writer(&sk, &mut decrypted_data)
                     .unwrap();
             });
         });

@@ -32,17 +32,20 @@
 //! use seal_flow::prelude::*;
 //! ```
 
-// Re-export the entire `seal-crypto` crate for direct access to its APIs.
-pub use seal_crypto as crypto;
-
 pub mod prelude {
     //! A "prelude" for users of the `seal-flow` crate.
     pub use crate::common::algorithms::{
-        AsymmetricAlgorithm as AsymmetricAlgorithmEnum, KdfAlgorithm as KdfAlgorithmEnum,
+        AsymmetricAlgorithm as AsymmetricAlgorithmEnum, KdfKeyAlgorithm as KdfKeyAlgorithmEnum,
+        KdfPasswordAlgorithm as KdfPasswordAlgorithmEnum,
         SignatureAlgorithm as SignatureAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
         XofAlgorithm as XofAlgorithmEnum,
     };
-    pub use crate::common::PendingImpl;
+    pub use crate::algorithms::traits::{
+        AsymmetricAlgorithm as AsymmetricAlgorithmTrait, KdfKeyAlgorithm as KdfKeyAlgorithmTrait,
+        KdfPasswordAlgorithm as KdfPasswordAlgorithmTrait,
+        SignatureAlgorithm as SignatureAlgorithmTrait, SymmetricAlgorithm as SymmetricAlgorithmTrait,
+        XofAlgorithm as XofAlgorithmTrait,
+    };
     pub use crate::keys::provider::{EncryptionKeyProvider, KeyProvider, KeyProviderError};
     pub use crate::keys::{
         AsymmetricPrivateKey, AsymmetricPublicKey, SignaturePublicKey, SymmetricKey,
@@ -50,45 +53,48 @@ pub mod prelude {
     pub use crate::seal::hybrid::{encryptor::HybridEncryptorBuilder, HybridEncryptionOptions};
     pub use crate::seal::traits::*;
     pub use crate::seal::{HybridSeal, SymmetricSeal};
-    pub use seal_crypto::prelude::*;
 }
 
-pub mod error;
-pub mod seal;
-
-/// Provides direct access to the mid-level execution flows.
-///
-/// This API layer is for users who need more fine-grained control over the
-/// execution process than what the high-level [`seal`] API provides.
-/// For example, you might use this to directly create a streaming encryptor
-/// without using the `HybridSeal` or `SymmetricSeal` builders.
-pub mod flows {
-    /// Mid-level flows for symmetric encryption.
-    pub mod symmetric {
-        pub use crate::symmetric::{
-            asynchronous, ordinary, parallel, parallel_streaming, streaming,
-        };
-    }
-
-    /// Mid-level flows for hybrid encryption.
-    pub mod hybrid {
-        pub use crate::hybrid::{asynchronous, ordinary, parallel, parallel_streaming, streaming};
-    }
-
-    pub use crate::common::header;
-}
-
+pub(crate) mod body;
 pub(crate) mod common;
-pub(crate) mod impls;
+pub mod error;
+pub(crate) mod seal;
 
-pub mod algorithms;
+pub(crate) mod algorithms;
+pub mod base {
+    pub mod algorithms {
+        pub use crate::algorithms::*;
+    }
+    pub mod keys {
+        pub use crate::keys::*;
+    }
+    pub mod seal {
+        pub use crate::seal::*;
+    }
+}
+pub mod mid_level {
+    pub mod body {
+        pub use crate::body::*;
+    }
+    pub mod hybrid {
+        pub use crate::hybrid::*;
+    }
+    pub mod symmetric {
+        pub use crate::symmetric::*;
+    }
+    pub mod common {
+        pub use crate::common::*;
+    }
+}
+pub mod high_level {
+    pub use crate::seal::*;
+}
+
 pub use error::{Error, Result};
 
 mod hybrid;
-pub mod keys;
-mod symmetric;
-
-pub use seal_crypto::{secrecy, zeroize};
+pub(crate) mod keys;
+pub(crate) mod symmetric;
 
 #[cfg(feature = "async")]
 pub use {::futures, ::tokio};

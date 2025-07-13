@@ -2,360 +2,316 @@
 //!
 //! 实现并行、内存中的混合加密和解密。
 
-use super::common::create_header;
-use crate::algorithms::traits::{AsymmetricAlgorithm, SymmetricAlgorithm};
-use crate::common::header::{Header, HeaderPayload};
-use crate::common::{DerivationSet, PendingImpl, SignerSet};
-use crate::error::{Error, FormatError, Result};
-use crate::impls::parallel::{decrypt_parallel, encrypt_parallel};
-use seal_crypto::prelude::Key;
+use super::traits::{HybridParallelPendingDecryptor, HybridParallelProcessor};
+use crate::algorithms::hybrid::HybridAlgorithmWrapper;
+use crate::algorithms::traits::HybridAlgorithm;
+use crate::body::traits::ParallelBodyProcessor;
+use crate::common::config::ArcConfig;
+use crate::common::header::Header;
+use crate::error::{FormatError, Result};
+use crate::hybrid::config::HybridConfig;
+use crate::hybrid::pending::PendingDecryptor;
+use crate::keys::TypedAsymmetricPrivateKey;
 
-/// Performs parallel, in-memory hybrid encryption.
-///
-/// 执行并行、内存中的混合加密。
-pub fn encrypt<'a, A, S>(
-    pk: &A::PublicKey,
-    plaintext: &[u8],
-    kek_id: String,
-    signer: Option<SignerSet>,
-    aad: Option<&[u8]>,
-    derivation_config: Option<DerivationSet>,
-) -> Result<Vec<u8>>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-{
-    let (info, deriver_fn) = derivation_config
-        .map(|d| (d.derivation_info, d.deriver_fn))
-        .unzip();
+pub struct Parallel;
 
-    // 1. Create header, nonce, and shared secret
-    // 1. 创建标头、nonce 和共享密钥
-    let (header, base_nonce, shared_secret) = create_header::<A, S>(pk, kek_id, signer, aad, info)?;
-
-    // 2. Derive key if a deriver function is specified
-    // 2. 如果指定了派生函数，则派生密钥
-    let dek = if let Some(f) = deriver_fn {
-        f(&shared_secret)?
-    } else {
-        shared_secret
-    };
-
-    // 3. Serialize the header and prepare for encryption
-    // 3. 序列化标头并准备加密
-    let header_bytes = header.encode_to_vec()?;
-    let key_material: S::Key = S::Key::from_bytes(dek.as_slice())?;
-
-    encrypt_parallel::<S>(key_material, base_nonce, header_bytes, plaintext, aad)
+impl Parallel {
+    pub fn new() -> Self {
+        Self
+    }
 }
 
-/// A pending decryptor for in-memory hybrid-encrypted data that will be
-/// processed in parallel.
-///
-/// This state is entered after the header has been successfully parsed from
-/// the ciphertext, allowing the user to inspect the header (e.g., to find
-/// the `kek_id`) before supplying the appropriate private key to proceed with
-/// decryption.
-///
-/// 一个用于将并行处理的内存中混合加密数据的待定解密器。
-///
-/// 从密文中成功解析标头后，进入此状态，允许用户在提供适当的私钥以继续解密之前检查标头（例如，查找 `kek_id`）。
-pub struct PendingDecryptor<'a> {
-    header: Header,
-    ciphertext_body: &'a [u8],
-}
+impl HybridParallelProcessor for Parallel {
+    fn encrypt_parallel<'a>(&self, plaintext: &[u8], config: HybridConfig<'a>) -> Result<Vec<u8>> {
+        let algo = config.algorithm.clone();
+        let (body_config, header_bytes) = config.into_body_config_and_header()?;
+        let encrypted_body = algo
+            .as_ref()
+            .symmetric_algorithm()
+            .encrypt_body_parallel(plaintext, body_config)?;
 
-impl<'a> PendingDecryptor<'a> {
-    /// Creates a new `PendingDecryptor` by parsing the header from the ciphertext.
-    ///
-    /// 通过从密文中解析标头来创建一个新的 `PendingDecryptor`。
-    pub fn from_ciphertext(ciphertext: &'a [u8]) -> Result<Self> {
+        let mut final_output = Vec::with_capacity(4 + header_bytes.len() + encrypted_body.len());
+        final_output.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
+        final_output.extend_from_slice(&header_bytes);
+        final_output.extend_from_slice(&encrypted_body);
+
+        Ok(final_output)
+    }
+
+    fn begin_decrypt_hybrid_parallel<'a>(
+        &self,
+        ciphertext: &'a [u8],
+        config: ArcConfig,
+    ) -> Result<Box<dyn HybridParallelPendingDecryptor + 'a>> {
         let (header, ciphertext_body) = Header::decode_from_prefixed_slice(ciphertext)?;
-        Ok(Self {
-            header,
-            ciphertext_body,
-        })
-    }
+        let asym_algo = header
+            .payload
+            .asymmetric_algorithm()
+            .ok_or(FormatError::InvalidHeader)?
+            .into_asymmetric_wrapper();
+        let sym_algo = header
+            .payload
+            .symmetric_algorithm()
+            .into_symmetric_wrapper();
+        let algorithm = HybridAlgorithmWrapper::new(asym_algo, sym_algo);
 
-    /// Consumes the `PendingDecryptor` and returns the decrypted plaintext.
-    ///
-    /// 消费 `PendingDecryptor` 并返回解密的明文。
-    pub fn into_plaintext<A, S>(self, sk: &A::PrivateKey, aad: Option<&[u8]>) -> Result<Vec<u8>>
-    where
-        A: AsymmetricAlgorithm,
-        S: SymmetricAlgorithm,
-    {
-        decrypt_body::<A, S>(sk, &self.header, self.ciphertext_body, aad)
+        let pending = PendingDecryptor {
+            source: ciphertext_body,
+            header,
+            algorithm,
+            config,
+        };
+        Ok(Box::new(pending))
     }
 }
 
-impl<'a> PendingImpl for PendingDecryptor<'a> {
+impl<'a> HybridParallelPendingDecryptor for PendingDecryptor<&'a [u8]> {
+    fn into_plaintext(
+        self: Box<Self>,
+        private_key: &TypedAsymmetricPrivateKey,
+        aad: Option<Vec<u8>>,
+    ) -> Result<Vec<u8>> {
+        let ciphertext_body = self.source;
+        let body_config = super::common::prepare_body_decrypt_config(
+            self.header,
+            &self.algorithm,
+            private_key,
+            aad,
+            self.config,
+        )?;
+
+        self.algorithm
+            .symmetric_algorithm()
+            .decrypt_body_parallel(ciphertext_body, body_config)
+    }
+
     fn header(&self) -> &Header {
         &self.header
     }
 }
 
-/// Performs parallel, in-memory hybrid decryption on a ciphertext body.
-///
-/// 对密文体执行并行、内存中的混合解密。
-pub fn decrypt_body<A, S>(
-    sk: &A::PrivateKey,
-    header: &Header,
-    ciphertext_body: &[u8],
-    aad: Option<&[u8]>,
-) -> Result<Vec<u8>>
-where
-    A: AsymmetricAlgorithm,
-    S: SymmetricAlgorithm,
-{
-    let (encapsulated_key, chunk_size, base_nonce, derivation_info) = match &header.payload {
-        HeaderPayload::Hybrid {
-            encrypted_dek,
-            stream_info: Some(info),
-            derivation_info,
-            ..
-        } => (
-            encrypted_dek.clone(),
-            info.chunk_size,
-            info.base_nonce,
-            derivation_info.clone(),
-        ),
-        _ => return Err(Error::Format(FormatError::InvalidHeader)),
-    };
-
-    let shared_secret = A::decapsulate(
-        sk,
-        &A::EncapsulatedKey::from_bytes(encapsulated_key.as_slice())?,
-    )?;
-
-    // 3. Derive key if derivation info is present.
-    // 3. 如果存在派生信息，则派生密钥。
-    let dek = if let Some(info) = derivation_info {
-        info.derive_key(&shared_secret)?
-    } else {
-        shared_secret
-    };
-
-    let key_material: S::Key = Key::from_bytes(dek.as_slice())?;
-
-    decrypt_parallel::<S>(key_material, base_nonce, chunk_size, ciphertext_body, aad)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algorithms::asymmetric::Rsa2048Sha256Wrapper;
+    use crate::algorithms::symmetric::Aes256GcmWrapper;
+    use crate::algorithms::traits::AsymmetricAlgorithm;
     use crate::common::header::{DerivationInfo, KdfInfo};
-    use crate::common::{DerivationSet, DEFAULT_CHUNK_SIZE};
-    use seal_crypto::prelude::{KeyBasedDerivation, KeyGenerator};
-    use seal_crypto::schemes::asymmetric::traditional::rsa::Rsa2048;
-    use seal_crypto::schemes::hash::Sha256;
-    use seal_crypto::schemes::kdf::hkdf::HkdfSha256;
-    use seal_crypto::schemes::symmetric::aes_gcm::Aes256Gcm;
-    use seal_crypto::zeroize::Zeroizing;
+    use crate::common::DerivationSet;
+    use crate::common::DEFAULT_CHUNK_SIZE;
+    use crate::keys::TypedAsymmetricPublicKey;
+    use std::borrow::Cow;
 
-    type TestKem = Rsa2048<Sha256>;
-    type TestDek = Aes256Gcm;
+    fn get_test_algorithm() -> HybridAlgorithmWrapper {
+        HybridAlgorithmWrapper::new(Rsa2048Sha256Wrapper::new(), Aes256GcmWrapper::new())
+    }
+
+    fn generate_test_keys() -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {
+        Rsa2048Sha256Wrapper::new()
+            .generate_keypair()
+            .unwrap()
+            .into_keypair()
+    }
 
     #[test]
     fn test_hybrid_parallel_roundtrip_with_kdf() {
-        let (pk, sk) = TestKem::generate_keypair().unwrap();
+        let algorithm = get_test_algorithm();
+        let processor = Parallel::new();
+        let (pk, sk) = generate_test_keys();
         let plaintext = b"This is a test message with KDF in parallel.";
         let salt = b"salt-parallel";
         let info = b"info-parallel";
-        let output_len = 32;
 
         let kdf_info = KdfInfo {
-            kdf_algorithm: crate::common::algorithms::KdfAlgorithm::HkdfSha256,
+            kdf_algorithm: crate::common::algorithms::KdfKeyAlgorithm::HkdfSha256,
             salt: Some(salt.to_vec()),
             info: Some(info.to_vec()),
-            output_len,
         };
 
-        let deriver = HkdfSha256::default();
-        let kdf_fn = Box::new(move |ikm: &[u8]| {
-            deriver
-                .derive(ikm, Some(salt), Some(info), output_len as usize)
-                .map(|dk| Zeroizing::new(dk.as_bytes().to_vec()))
-                .map_err(|e| e.into())
-        });
+        let kdf_algorithm = crate::common::algorithms::KdfKeyAlgorithm::HkdfSha256;
 
-        let encrypted = encrypt::<TestKem, TestDek>(
-            &pk,
-            plaintext,
-            "test_kek_id_kdf".to_string(),
-            None,
-            None,
-            Some(DerivationSet {
+        use crate::common::DerivationWrapper;
+        let config = HybridConfig {
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
+            kek_id: "test_kek_id_kdf".to_string(),
+            signer: None,
+            aad: None,
+            derivation_config: Some(DerivationSet {
                 derivation_info: DerivationInfo::Kdf(kdf_info),
-                deriver_fn: kdf_fn,
+                wrapper: DerivationWrapper::Kdf(kdf_algorithm.into_kdf_key_wrapper()),
             }),
-        )
-        .unwrap();
+            config: ArcConfig::default(),
+        };
 
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending
-            .into_plaintext::<TestKem, TestDek>(&sk, None)
+        let encrypted = processor.encrypt_parallel(plaintext, config).unwrap();
+
+        let pending = processor
+            .begin_decrypt_hybrid_parallel(&encrypted, ArcConfig::default())
             .unwrap();
+        let decrypted = pending.into_plaintext(&sk, None).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
     }
 
     #[test]
     fn test_hybrid_parallel_roundtrip() {
-        let (pk, sk) = TestKem::generate_keypair().unwrap();
+        let algorithm = get_test_algorithm();
+        let processor = Parallel::new();
+        let (pk, sk) = generate_test_keys();
         let plaintext = b"This is a test message for hybrid parallel encryption, which should be long enough to span multiple chunks to properly test the implementation.";
 
-        let encrypted = encrypt::<TestKem, TestDek>(
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let config = HybridConfig {
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
+            kek_id: "test_kek_id".to_string(),
+            signer: None,
+            aad: None,
+            derivation_config: None,
+            config: ArcConfig::default(),
+        };
+
+        let encrypted = processor.encrypt_parallel(plaintext, config).unwrap();
 
         // Test convenience function
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending
-            .into_plaintext::<TestKem, TestDek>(&sk, None)
+        let pending = processor
+            .begin_decrypt_hybrid_parallel(&encrypted, ArcConfig::default())
             .unwrap();
+        let decrypted = pending.into_plaintext(&sk, None).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
-
-        // Test separated functions
-        let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
-        assert_eq!(header.payload.kek_id(), Some("test_kek_id"));
-        let decrypted_body = decrypt_body::<TestKem, TestDek>(&sk, &header, body, None).unwrap();
-        assert_eq!(plaintext, decrypted_body.as_slice());
 
         // Tamper with the ciphertext body
         let mut encrypted_tampered = encrypted;
-        encrypted_tampered[300] ^= 1;
+        if encrypted_tampered.len() > 300 {
+            encrypted_tampered[300] ^= 1;
+        }
 
-        let pending = PendingDecryptor::from_ciphertext(&encrypted_tampered).unwrap();
-        let result = pending.into_plaintext::<TestKem, TestDek>(&sk, None);
+        let pending = processor
+            .begin_decrypt_hybrid_parallel(&encrypted_tampered, ArcConfig::default())
+            .unwrap();
+        let result = pending.into_plaintext(&sk, None);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_empty_plaintext() {
-        let (pk, sk) = TestKem::generate_keypair().unwrap();
+        let algorithm = get_test_algorithm();
+        let processor = Parallel::new();
+        let (pk, sk) = generate_test_keys();
         let plaintext = b"";
 
-        let encrypted = encrypt::<TestKem, TestDek>(
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let config = HybridConfig {
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
+            kek_id: "test_kek_id".to_string(),
+            signer: None,
+            aad: None,
+            derivation_config: None,
+            config: ArcConfig::default(),
+        };
 
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending
-            .into_plaintext::<TestKem, TestDek>(&sk, None)
+        let encrypted = processor.encrypt_parallel(plaintext, config).unwrap();
+
+        let pending = processor
+            .begin_decrypt_hybrid_parallel(&encrypted, ArcConfig::default())
             .unwrap();
+        let decrypted = pending.into_plaintext(&sk, None).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
     }
 
     #[test]
     fn test_exact_chunk_size() {
-        let (pk, sk) = TestKem::generate_keypair().unwrap();
+        let algorithm = get_test_algorithm();
+        let processor = Parallel::new();
+        let (pk, sk) = generate_test_keys();
         let plaintext = vec![42u8; DEFAULT_CHUNK_SIZE as usize];
 
-        let encrypted = encrypt::<TestKem, TestDek>(
-            &pk,
-            &plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let config = HybridConfig {
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
+            kek_id: "test_kek_id".to_string(),
+            signer: None,
+            aad: None,
+            derivation_config: None,
+            config: ArcConfig::default(),
+        };
 
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending
-            .into_plaintext::<TestKem, TestDek>(&sk, None)
+        let encrypted = processor.encrypt_parallel(&plaintext, config).unwrap();
+
+        let pending = processor
+            .begin_decrypt_hybrid_parallel(&encrypted, ArcConfig::default())
             .unwrap();
+        let decrypted = pending.into_plaintext(&sk, None).unwrap();
 
         assert_eq!(plaintext, decrypted);
     }
 
     #[test]
     fn test_wrong_private_key_fails() {
-        let (pk, _) = TestKem::generate_keypair().unwrap();
-        let (_, sk2) = TestKem::generate_keypair().unwrap();
+        let algorithm = get_test_algorithm();
+        let processor = Parallel::new();
+        let (pk, _) = generate_test_keys();
+        let (_, sk2) = generate_test_keys();
         let plaintext = b"some data";
 
-        let encrypted = encrypt::<TestKem, TestDek>(
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let config = HybridConfig {
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
+            kek_id: "test_kek_id".to_string(),
+            signer: None,
+            aad: None,
+            derivation_config: None,
+            config: ArcConfig::default(),
+        };
 
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result = pending.into_plaintext::<TestKem, TestDek>(&sk2, None);
+        let encrypted = processor.encrypt_parallel(plaintext, config).unwrap();
+
+        let pending = processor
+            .begin_decrypt_hybrid_parallel(&encrypted, ArcConfig::default())
+            .unwrap();
+        let result = pending.into_plaintext(&sk2, None);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_internal_functions() {
-        let (pk, sk) = TestKem::generate_keypair().unwrap();
-        let plaintext = b"some plaintext for parallel";
-        let encrypted = encrypt::<TestKem, TestDek>(
-            &pk,
-            plaintext,
-            "test_kek_id".to_string(),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-
-        // Test the separated functions
-        let (header, body) = Header::decode_from_prefixed_slice(&encrypted).unwrap();
-        assert_eq!(header.payload.kek_id(), Some("test_kek_id"));
-        let decrypted_body = decrypt_body::<TestKem, TestDek>(&sk, &header, body, None).unwrap();
-        assert_eq!(plaintext, decrypted_body.as_slice());
-    }
-
-    #[test]
     fn test_aad_roundtrip() {
-        let (pk, sk) = TestKem::generate_keypair().unwrap();
+        let algorithm = get_test_algorithm();
+        let processor = Parallel::new();
+        let (pk, sk) = generate_test_keys();
         let plaintext = b"some parallel data to protect";
-        let aad = b"some parallel context data";
+        let aad = b"some parallel context data".to_vec();
 
         // Encrypt with AAD
-        let encrypted = encrypt::<TestKem, TestDek>(
-            &pk,
-            plaintext,
-            "aad_key".to_string(),
-            None,
-            Some(aad),
-            None,
-        )
-        .unwrap();
+        let config = HybridConfig {
+            algorithm: Cow::Borrowed(&algorithm),
+            public_key: Cow::Borrowed(&pk),
+            kek_id: "aad_key".to_string(),
+            signer: None,
+            aad: Some(aad.clone()),
+            derivation_config: None,
+            config: ArcConfig::default(),
+        };
+        let encrypted = processor.encrypt_parallel(plaintext, config).unwrap();
 
         // Decrypt with correct AAD
-        let pending = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let decrypted = pending
-            .into_plaintext::<TestKem, TestDek>(&sk, Some(aad))
+        let pending = processor
+            .begin_decrypt_hybrid_parallel(&encrypted, ArcConfig::default())
             .unwrap();
+        let decrypted = pending.into_plaintext(&sk, Some(aad)).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
 
         // Decrypt with wrong AAD fails
-        let pending_fail = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result_fail = pending_fail.into_plaintext::<TestKem, TestDek>(&sk, Some(b"wrong aad"));
+        let pending_fail = processor
+            .begin_decrypt_hybrid_parallel(&encrypted, ArcConfig::default())
+            .unwrap();
+        let result_fail = pending_fail.into_plaintext(&sk, Some(b"wrong aad".to_vec()));
         assert!(result_fail.is_err());
 
         // Decrypt with no AAD fails
-        let pending_fail2 = PendingDecryptor::from_ciphertext(&encrypted).unwrap();
-        let result_fail2 = pending_fail2.into_plaintext::<TestKem, TestDek>(&sk, None);
+        let pending_fail2 = processor
+            .begin_decrypt_hybrid_parallel(&encrypted, ArcConfig::default())
+            .unwrap();
+        let result_fail2 = pending_fail2.into_plaintext(&sk, None);
         assert!(result_fail2.is_err());
     }
 }

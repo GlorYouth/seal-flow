@@ -1,11 +1,14 @@
 //! This module defines byte wrappers for cryptographic keys.
 //!
 //! 这个模块为加密密钥定义了字节包装器。
+use crate::algorithms::kdf::passwd::KdfPasswordWrapper;
+
 use crate::common::algorithms::{
     AsymmetricAlgorithm as AsymmetricAlgorithmEnum, SignatureAlgorithm as SignatureAlgorithmEnum,
     SymmetricAlgorithm as SymmetricAlgorithmEnum,
 };
 use crate::error::Error;
+use crate::prelude::KdfKeyAlgorithmEnum;
 use seal_crypto::prelude::{AsymmetricKeySet, KeyGenerator, SymmetricKeySet};
 use seal_crypto::schemes::asymmetric::{
     post_quantum::{
@@ -32,6 +35,7 @@ pub(crate) mod provider;
 ///
 /// 包装了类型化非对称密钥对的枚举。
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
 pub enum TypedAsymmetricKeyPair {
     Rsa2048Sha256(
         (
@@ -89,6 +93,31 @@ impl TypedAsymmetricKeyPair {
         }
     }
 
+    pub fn into_keypair(self) -> (TypedAsymmetricPublicKey, TypedAsymmetricPrivateKey) {
+        match self {
+            Self::Rsa2048Sha256((pk, sk)) => (
+                TypedAsymmetricPublicKey::Rsa2048Sha256(pk),
+                TypedAsymmetricPrivateKey::Rsa2048Sha256(sk),
+            ),
+            Self::Rsa4096Sha256((pk, sk)) => (
+                TypedAsymmetricPublicKey::Rsa4096Sha256(pk),
+                TypedAsymmetricPrivateKey::Rsa4096Sha256(sk),
+            ),
+            Self::Kyber512((pk, sk)) => (
+                TypedAsymmetricPublicKey::Kyber512(pk),
+                TypedAsymmetricPrivateKey::Kyber512(sk),
+            ),
+            Self::Kyber768((pk, sk)) => (
+                TypedAsymmetricPublicKey::Kyber768(pk),
+                TypedAsymmetricPrivateKey::Kyber768(sk),
+            ),
+            Self::Kyber1024((pk, sk)) => (
+                TypedAsymmetricPublicKey::Kyber1024(pk),
+                TypedAsymmetricPrivateKey::Kyber1024(sk),
+            ),
+        }
+    }
+
     /// Returns the public key as a generic byte wrapper.
     ///
     /// 以通用字节包装器形式返回公钥。
@@ -135,6 +164,7 @@ impl TypedAsymmetricKeyPair {
 ///
 /// 包装了类型化签名密钥对的枚举。
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
 pub enum TypedSignatureKeyPair {
     Dilithium2(
         (
@@ -190,38 +220,35 @@ impl TypedSignatureKeyPair {
         }
     }
 
-    /// Returns the public key as a generic byte wrapper.
-    ///
-    /// 以通用字节包装器形式返回公钥。
-    pub fn public_key(&self) -> SignaturePublicKey {
-        let bytes = match self {
-            Self::Dilithium2((pk, _)) => pk.to_bytes(),
-            Self::Dilithium3((pk, _)) => pk.to_bytes(),
-            Self::Dilithium5((pk, _)) => pk.to_bytes(),
-            Self::Ed25519((pk, _)) => pk.to_bytes(),
-            Self::EcdsaP256((pk, _)) => pk.to_bytes(),
-        };
-        SignaturePublicKey::new(bytes)
-    }
-
-    /// Returns the private key as a generic byte wrapper.
-    ///
-    /// 以通用字节包装器形式返回私钥。
-    pub fn private_key(&self) -> AsymmetricPrivateKey {
-        let bytes = match self {
-            Self::Dilithium2((_, sk)) => sk.to_bytes(),
-            Self::Dilithium3((_, sk)) => sk.to_bytes(),
-            Self::Dilithium5((_, sk)) => sk.to_bytes(),
-            Self::Ed25519((_, sk)) => sk.to_bytes(),
-            Self::EcdsaP256((_, sk)) => sk.to_bytes(),
-        };
-        AsymmetricPrivateKey::new(bytes)
+    pub fn into_keypair(self) -> (TypedSignaturePublicKey, TypedSignaturePrivateKey) {
+        match self {
+            Self::Dilithium2((pk, sk)) => (
+                TypedSignaturePublicKey::Dilithium2(pk),
+                TypedSignaturePrivateKey::Dilithium2(sk),
+            ),
+            Self::Dilithium3((pk, sk)) => (
+                TypedSignaturePublicKey::Dilithium3(pk),
+                TypedSignaturePrivateKey::Dilithium3(sk),
+            ),
+            Self::Dilithium5((pk, sk)) => (
+                TypedSignaturePublicKey::Dilithium5(pk),
+                TypedSignaturePrivateKey::Dilithium5(sk),
+            ),
+            Self::Ed25519((pk, sk)) => (
+                TypedSignaturePublicKey::Ed25519(pk),
+                TypedSignaturePrivateKey::Ed25519(sk),
+            ),
+            Self::EcdsaP256((pk, sk)) => (
+                TypedSignaturePublicKey::EcdsaP256(pk),
+                TypedSignaturePrivateKey::EcdsaP256(sk),
+            ),
+        }
     }
 
     /// Returns the algorithm of the key pair.
     ///
     /// 返回密钥对的算法。
-    pub fn get_algorithm(&self) -> SignatureAlgorithmEnum {
+    pub fn algorithm(&self) -> SignatureAlgorithmEnum {
         match self {
             Self::Dilithium2(_) => SignatureAlgorithmEnum::Dilithium2,
             Self::Dilithium3(_) => SignatureAlgorithmEnum::Dilithium3,
@@ -236,6 +263,42 @@ impl TypedSignatureKeyPair {
 ///
 /// 包装了类型化非对称私钥的枚举。
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
+pub enum TypedAsymmetricPublicKey {
+    Rsa2048Sha256(<Rsa2048<Sha256> as AsymmetricKeySet>::PublicKey),
+    Rsa4096Sha256(<Rsa4096<Sha256> as AsymmetricKeySet>::PublicKey),
+    Kyber512(<Kyber512 as AsymmetricKeySet>::PublicKey),
+    Kyber768(<Kyber768 as AsymmetricKeySet>::PublicKey),
+    Kyber1024(<Kyber1024 as AsymmetricKeySet>::PublicKey),
+}
+
+impl TypedAsymmetricPublicKey {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Rsa2048Sha256(pk) => pk.to_bytes(),
+            Self::Rsa4096Sha256(pk) => pk.to_bytes(),
+            Self::Kyber512(pk) => pk.to_bytes(),
+            Self::Kyber768(pk) => pk.to_bytes(),
+            Self::Kyber1024(pk) => pk.to_bytes(),
+        }
+    }
+
+    pub fn algorithm(&self) -> AsymmetricAlgorithmEnum {
+        match self {
+            Self::Rsa2048Sha256(_) => AsymmetricAlgorithmEnum::Rsa2048Sha256,
+            Self::Rsa4096Sha256(_) => AsymmetricAlgorithmEnum::Rsa4096Sha256,
+            Self::Kyber512(_) => AsymmetricAlgorithmEnum::Kyber512,
+            Self::Kyber768(_) => AsymmetricAlgorithmEnum::Kyber768,
+            Self::Kyber1024(_) => AsymmetricAlgorithmEnum::Kyber1024,
+        }
+    }
+}
+
+/// An enum wrapping a typed asymmetric private key.
+///
+/// 包装了类型化非对称私钥的枚举。
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
 pub enum TypedAsymmetricPrivateKey {
     Rsa2048Sha256(<Rsa2048<Sha256> as AsymmetricKeySet>::PrivateKey),
     Rsa4096Sha256(<Rsa4096<Sha256> as AsymmetricKeySet>::PrivateKey),
@@ -244,15 +307,170 @@ pub enum TypedAsymmetricPrivateKey {
     Kyber1024(<Kyber1024 as AsymmetricKeySet>::PrivateKey),
 }
 
+impl TypedAsymmetricPrivateKey {
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Rsa2048Sha256(sk) => sk.to_bytes(),
+            Self::Rsa4096Sha256(sk) => sk.to_bytes(),
+            Self::Kyber512(sk) => sk.to_bytes(),
+            Self::Kyber768(sk) => sk.to_bytes(),
+            Self::Kyber1024(sk) => sk.to_bytes(),
+        }
+    }
+
+    pub fn algorithm(&self) -> AsymmetricAlgorithmEnum {
+        match self {
+            Self::Rsa2048Sha256(_) => AsymmetricAlgorithmEnum::Rsa2048Sha256,
+            Self::Rsa4096Sha256(_) => AsymmetricAlgorithmEnum::Rsa4096Sha256,
+            Self::Kyber512(_) => AsymmetricAlgorithmEnum::Kyber512,
+            Self::Kyber768(_) => AsymmetricAlgorithmEnum::Kyber768,
+            Self::Kyber1024(_) => AsymmetricAlgorithmEnum::Kyber1024,
+        }
+    }
+}
+
+/// An enum wrapping a typed signature public key.
+///
+/// 包装了类型化签名公钥的枚举。
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
+pub enum TypedSignaturePublicKey {
+    Dilithium2(<Dilithium2 as AsymmetricKeySet>::PublicKey),
+    Dilithium3(<Dilithium3 as AsymmetricKeySet>::PublicKey),
+    Dilithium5(<Dilithium5 as AsymmetricKeySet>::PublicKey),
+    Ed25519(<Ed25519 as AsymmetricKeySet>::PublicKey),
+    EcdsaP256(<EcdsaP256 as AsymmetricKeySet>::PublicKey),
+}
+
+impl TypedSignaturePublicKey {
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Dilithium2(pk) => pk.to_bytes(),
+            Self::Dilithium3(pk) => pk.to_bytes(),
+            Self::Dilithium5(pk) => pk.to_bytes(),
+            Self::Ed25519(pk) => pk.to_bytes(),
+            Self::EcdsaP256(pk) => pk.to_bytes(),
+        }
+    }
+
+    pub fn algorithm(&self) -> SignatureAlgorithmEnum {
+        match self {
+            Self::Dilithium2(_) => SignatureAlgorithmEnum::Dilithium2,
+            Self::Dilithium3(_) => SignatureAlgorithmEnum::Dilithium3,
+            Self::Dilithium5(_) => SignatureAlgorithmEnum::Dilithium5,
+            Self::Ed25519(_) => SignatureAlgorithmEnum::Ed25519,
+            Self::EcdsaP256(_) => SignatureAlgorithmEnum::EcdsaP256,
+        }
+    }
+}
+
+/// An enum wrapping a typed signature private key.
+///
+/// 包装了类型化签名私钥的枚举。
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
+pub enum TypedSignaturePrivateKey {
+    Dilithium2(<Dilithium2 as AsymmetricKeySet>::PrivateKey),
+    Dilithium3(<Dilithium3 as AsymmetricKeySet>::PrivateKey),
+    Dilithium5(<Dilithium5 as AsymmetricKeySet>::PrivateKey),
+    Ed25519(<Ed25519 as AsymmetricKeySet>::PrivateKey),
+    EcdsaP256(<EcdsaP256 as AsymmetricKeySet>::PrivateKey),
+}
+
+impl TypedSignaturePrivateKey {
+    pub fn algorithm(&self) -> SignatureAlgorithmEnum {
+        match self {
+            Self::Dilithium2(_) => SignatureAlgorithmEnum::Dilithium2,
+            Self::Dilithium3(_) => SignatureAlgorithmEnum::Dilithium3,
+            Self::Dilithium5(_) => SignatureAlgorithmEnum::Dilithium5,
+            Self::Ed25519(_) => SignatureAlgorithmEnum::Ed25519,
+            Self::EcdsaP256(_) => SignatureAlgorithmEnum::EcdsaP256,
+        }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Dilithium2(sk) => sk.to_bytes(),
+            Self::Dilithium3(sk) => sk.to_bytes(),
+            Self::Dilithium5(sk) => sk.to_bytes(),
+            Self::Ed25519(sk) => sk.to_bytes(),
+            Self::EcdsaP256(sk) => sk.to_bytes(),
+        }
+    }
+}
+
 /// An enum wrapping a typed symmetric key.
 ///
 /// 包装了类型化对称密钥的枚举。
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Clone, Debug)]
 pub enum TypedSymmetricKey {
     Aes128Gcm(<Aes128Gcm as SymmetricKeySet>::Key),
     Aes256Gcm(<Aes256Gcm as SymmetricKeySet>::Key),
     XChaCha20Poly1305(<XChaCha20Poly1305 as SymmetricKeySet>::Key),
     ChaCha20Poly1305(<ChaCha20Poly1305 as SymmetricKeySet>::Key),
+}
+
+impl TypedSymmetricKey {
+    pub fn from_bytes(bytes: &[u8], algorithm: SymmetricAlgorithmEnum) -> Result<Self, Error> {
+        match algorithm {
+            SymmetricAlgorithmEnum::Aes128Gcm => Ok(Self::Aes128Gcm(
+                <Aes128Gcm as SymmetricKeySet>::Key::from_bytes(bytes)?,
+            )),
+            SymmetricAlgorithmEnum::Aes256Gcm => Ok(Self::Aes256Gcm(
+                <Aes256Gcm as SymmetricKeySet>::Key::from_bytes(bytes)?,
+            )),
+            SymmetricAlgorithmEnum::XChaCha20Poly1305 => Ok(Self::XChaCha20Poly1305(
+                <XChaCha20Poly1305 as SymmetricKeySet>::Key::from_bytes(bytes)?,
+            )),
+            SymmetricAlgorithmEnum::ChaCha20Poly1305 => Ok(Self::ChaCha20Poly1305(
+                <ChaCha20Poly1305 as SymmetricKeySet>::Key::from_bytes(bytes)?,
+            )),
+        }
+    }
+
+    pub fn algorithm(&self) -> SymmetricAlgorithmEnum {
+        match self {
+            Self::Aes128Gcm(_) => SymmetricAlgorithmEnum::Aes128Gcm,
+            Self::Aes256Gcm(_) => SymmetricAlgorithmEnum::Aes256Gcm,
+            Self::XChaCha20Poly1305(_) => SymmetricAlgorithmEnum::XChaCha20Poly1305,
+            Self::ChaCha20Poly1305(_) => SymmetricAlgorithmEnum::ChaCha20Poly1305,
+        }
+    }
+
+    pub fn untyped(&self) -> SymmetricKey {
+        SymmetricKey::new(self.as_ref().to_vec())
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Aes128Gcm(key) => key.as_ref(),
+            Self::Aes256Gcm(key) => key.as_ref(),
+            Self::XChaCha20Poly1305(key) => key.as_ref(),
+            Self::ChaCha20Poly1305(key) => key.as_ref(),
+        }
+    }
+
+    pub fn into_bytes(self) -> Vec<u8> {
+        match self {
+            Self::Aes128Gcm(key) => key.to_vec(),
+            Self::Aes256Gcm(key) => key.to_vec(),
+            Self::XChaCha20Poly1305(key) => key.to_vec(),
+            Self::ChaCha20Poly1305(key) => key.to_vec(),
+        }
+    }
+}
+
+impl AsRef<[u8]> for TypedSymmetricKey {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Aes128Gcm(key) => key.as_ref(),
+            Self::Aes256Gcm(key) => key.as_ref(),
+            Self::XChaCha20Poly1305(key) => key.as_ref(),
+            Self::ChaCha20Poly1305(key) => key.as_ref(),
+        }
+    }
 }
 
 /// A byte wrapper for a symmetric encryption key.
@@ -351,18 +569,17 @@ impl SymmetricKey {
     /// * `salt` - An optional salt. While optional in HKDF, providing a salt is highly recommended.
     /// * `info` - Optional context-specific information.
     /// * `output_len` - The desired length of the derived key in bytes.
-    pub fn derive_key<K>(
+    pub fn derive_key(
         &self,
-        deriver: &K,
+        algorithm: KdfKeyAlgorithmEnum,
         salt: Option<&[u8]>,
         info: Option<&[u8]>,
         output_len: usize,
-    ) -> Result<Self, Error>
-    where
-        K: KeyBasedDerivation,
-    {
-        let derived_key_bytes = deriver.derive(self.as_bytes(), salt, info, output_len)?;
-        Ok(SymmetricKey::new(derived_key_bytes.as_bytes().to_vec()))
+    ) -> Result<Self, Error> {
+        use crate::algorithms::traits::KdfKeyAlgorithm;
+
+        let derived_key_bytes = algorithm.into_kdf_key_wrapper().derive(self.as_bytes(), salt, info, output_len)?;
+        Ok(SymmetricKey::new(derived_key_bytes))
     }
 
     /// Derives a symmetric key from a password using a specified password-based KDF.
@@ -381,17 +598,15 @@ impl SymmetricKey {
     /// * `deriver` - An instance of the password-based KDF scheme (e.g., `Pbkdf2Sha256::new(100_000)`).
     /// * `salt` - A salt. This is **required** for password-based derivation to be secure.
     /// * `output_len` - The desired length of the derived key in bytes.
-    pub fn derive_from_password<P>(
+    pub fn derive_from_password(
         password: &SecretBox<[u8]>,
-        deriver: &P,
+        algorithm: KdfPasswordWrapper,
         salt: &[u8],
         output_len: usize,
-    ) -> Result<Self, Error>
-    where
-        P: PasswordBasedDerivation,
-    {
-        let derived_key_bytes = deriver.derive(password, salt, output_len)?;
-        Ok(SymmetricKey::new(derived_key_bytes.as_bytes().to_vec()))
+    ) -> Result<Self, Error> {
+        use crate::algorithms::traits::KdfPasswordAlgorithm;
+        let derived_key_bytes = algorithm.derive(password, salt, output_len)?;
+        Ok(SymmetricKey::new(derived_key_bytes))
     }
 }
 
@@ -486,6 +701,36 @@ impl AsymmetricPublicKey {
     pub fn into_bytes(self) -> zeroize::Zeroizing<Vec<u8>> {
         self.0
     }
+
+    pub fn into_typed(
+        self,
+        algorithm: AsymmetricAlgorithmEnum,
+    ) -> Result<TypedAsymmetricPublicKey, Error> {
+        match algorithm {
+            AsymmetricAlgorithmEnum::Rsa2048Sha256 => {
+                let pk =
+                    <Rsa2048<Sha256> as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPublicKey::Rsa2048Sha256(pk))
+            }
+            AsymmetricAlgorithmEnum::Rsa4096Sha256 => {
+                let pk =
+                    <Rsa4096<Sha256> as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPublicKey::Rsa4096Sha256(pk))
+            }
+            AsymmetricAlgorithmEnum::Kyber512 => {
+                let pk = <Kyber512 as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPublicKey::Kyber512(pk))
+            }
+            AsymmetricAlgorithmEnum::Kyber768 => {
+                let pk = <Kyber768 as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPublicKey::Kyber768(pk))
+            }
+            AsymmetricAlgorithmEnum::Kyber1024 => {
+                let pk = <Kyber1024 as AsymmetricKeySet>::PublicKey::from_bytes(self.as_bytes())?;
+                Ok(TypedAsymmetricPublicKey::Kyber1024(pk))
+            }
+        }
+    }
 }
 
 /// A byte wrapper for a signature public key.
@@ -521,7 +766,7 @@ impl SignaturePublicKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use seal_crypto::schemes::kdf::{hkdf::HkdfSha256, pbkdf2::Pbkdf2Sha256};
+    use crate::algorithms::kdf::passwd::Pbkdf2Sha256Wrapper;
 
     #[test]
     fn test_symmetric_key_generate() {
@@ -552,7 +797,6 @@ mod tests {
     fn test_symmetric_key_derive_key() {
         // 使用HKDF-SHA256进行密钥派生
         let master_key = SymmetricKey::new(vec![0u8; 32]);
-        let deriver = HkdfSha256::default();
 
         // 使用不同的上下文信息派生出不同的子密钥
         let salt = b"salt_value";
@@ -560,15 +804,15 @@ mod tests {
         let info2 = b"signing_key";
 
         let derived_key1 = master_key
-            .derive_key(&deriver, Some(salt), Some(info1), 32)
+            .derive_key(KdfKeyAlgorithmEnum::HkdfSha256, Some(salt), Some(info1), 32)
             .unwrap();
         let derived_key2 = master_key
-            .derive_key(&deriver, Some(salt), Some(info2), 32)
+            .derive_key(KdfKeyAlgorithmEnum::HkdfSha256, Some(salt), Some(info2), 32)
             .unwrap();
 
         // 相同的主密钥和参数应该产生相同的派生密钥
         let derived_key1_again = master_key
-            .derive_key(&deriver, Some(salt), Some(info1), 32)
+            .derive_key(KdfKeyAlgorithmEnum::HkdfSha256, Some(salt), Some(info1), 32)
             .unwrap();
 
         // 不同的上下文信息应该产生不同的派生密钥
@@ -585,28 +829,28 @@ mod tests {
         let salt = b"random_salt_value";
 
         // 设置较少的迭代次数以加速测试（实际应用中应使用更多迭代）
-        let deriver = Pbkdf2Sha256::new(1000);
+        let deriver = KdfPasswordWrapper::new(Box::new(Pbkdf2Sha256Wrapper::new(1000)));
 
         let derived_key1 =
-            SymmetricKey::derive_from_password(&password, &deriver, salt, 32).unwrap();
+            SymmetricKey::derive_from_password(&password, deriver.clone(), salt, 32).unwrap();
 
         // 相同的密码、盐和迭代次数应该产生相同的密钥
         let derived_key2 =
-            SymmetricKey::derive_from_password(&password, &deriver, salt, 32).unwrap();
+            SymmetricKey::derive_from_password(&password, deriver.clone(), salt, 32).unwrap();
 
         assert_eq!(derived_key1.as_bytes(), derived_key2.as_bytes());
 
         // 不同的密码应该产生不同的密钥
         let different_password = SecretBox::new(Box::from(b"different_password".as_slice()));
         let derived_key3 =
-            SymmetricKey::derive_from_password(&different_password, &deriver, salt, 32).unwrap();
+            SymmetricKey::derive_from_password(&different_password, deriver.clone(), salt, 32).unwrap();
 
         assert_ne!(derived_key1.as_bytes(), derived_key3.as_bytes());
 
         // 不同的盐应该产生不同的密钥
         let different_salt = b"different_salt_value";
         let derived_key4 =
-            SymmetricKey::derive_from_password(&password, &deriver, different_salt, 32).unwrap();
+            SymmetricKey::derive_from_password(&password, deriver.clone(), different_salt, 32).unwrap();
 
         assert_ne!(derived_key1.as_bytes(), derived_key4.as_bytes());
     }
@@ -614,19 +858,19 @@ mod tests {
     #[test]
     fn test_key_derivation_output_length() {
         let master_key = SymmetricKey::new(vec![0u8; 32]);
-        let deriver = HkdfSha256::default();
+        let deriver = KdfKeyAlgorithmEnum::HkdfSha256;
         let salt = b"salt";
         let info = b"info";
 
         // 测试不同长度的输出
         let key_16 = master_key
-            .derive_key(&deriver, Some(salt), Some(info), 16)
+            .derive_key(deriver.clone(), Some(salt), Some(info), 16)
             .unwrap();
         let key_32 = master_key
-            .derive_key(&deriver, Some(salt), Some(info), 32)
+            .derive_key(deriver.clone(), Some(salt), Some(info), 32)
             .unwrap();
         let key_64 = master_key
-            .derive_key(&deriver, Some(salt), Some(info), 64)
+            .derive_key(deriver.clone(), Some(salt), Some(info), 64)
             .unwrap();
 
         assert_eq!(key_16.as_bytes().len(), 16);

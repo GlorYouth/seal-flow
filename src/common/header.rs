@@ -1,44 +1,16 @@
 use bincode::{Decode, Encode};
+
 // These enums could also be considered for placement in seal-crypto for sharing.
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享。
 use crate::common::algorithms::{
-    AsymmetricAlgorithm, KdfAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm,
+    AsymmetricAlgorithm, KdfKeyAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm,
 };
 use crate::error::{CryptoError, Error, FormatError, Result};
+use crate::keys::TypedSignaturePublicKey;
 use std::io::Read;
 
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncReadExt};
-
-/// Defines the mode of the encryption operation.
-///
-/// 定义加密操作的模式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Decode, Encode)]
-pub enum SealMode {
-    /// Symmetric encryption mode.
-    ///
-    /// 对称加密模式。
-    Symmetric,
-    /// Hybrid encryption mode.
-    ///
-    /// 混合加密模式。
-    Hybrid,
-}
-
-/// Metadata for streaming processing.
-///
-/// 流式处理的元数据。
-#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
-pub struct StreamInfo {
-    /// The size of each chunk.
-    ///
-    /// 每个数据块的大小。
-    pub chunk_size: u32,
-    /// The base nonce for stream encryption.
-    ///
-    /// 流加密的基础 nonce。
-    pub base_nonce: [u8; 12],
-}
 
 /// Information about the signer.
 ///
@@ -67,7 +39,7 @@ pub struct KdfInfo {
     /// The KDF algorithm.
     ///
     /// KDF 算法。
-    pub kdf_algorithm: KdfAlgorithm,
+    pub kdf_algorithm: KdfKeyAlgorithm,
     /// The salt for the KDF.
     ///
     /// 用于 KDF 的盐。
@@ -76,10 +48,6 @@ pub struct KdfInfo {
     ///
     /// 用于 KDF 的上下文和特定于应用程序的信息。
     pub info: Option<Vec<u8>>,
-    /// The desired length of the derived key.
-    ///
-    /// 派生密钥的期望长度。
-    pub output_len: u32,
 }
 
 /// XOF (Extendable-Output Function) configuration information.
@@ -99,10 +67,6 @@ pub struct XofInfo {
     ///
     /// 用于 XOF 的上下文和特定于应用程序的信息。
     pub info: Option<Vec<u8>>,
-    /// The desired length of the derived output.
-    ///
-    /// 派生输出的期望长度。
-    pub output_len: u32,
 }
 
 /// Information about the key derivation method used.
@@ -120,76 +84,11 @@ pub enum DerivationInfo {
     Xof(XofInfo),
 }
 
-impl DerivationInfo {
-    /// Derives a key from the shared secret using the specified method.
-    ///
-    /// 使用指定的方法从共享秘密派生密钥。
-    pub fn derive_key(
-        &self,
-        shared_secret: &[u8],
-    ) -> Result<seal_crypto::zeroize::Zeroizing<Vec<u8>>> {
-        use seal_crypto::prelude::{DigestXofReader, KeyBasedDerivation, XofDerivation};
-        use seal_crypto::schemes::{
-            kdf::hkdf::{HkdfSha256, HkdfSha384, HkdfSha512},
-            xof::shake::{Shake128, Shake256},
-        };
-        use seal_crypto::zeroize::Zeroizing;
-
-        match self {
-            DerivationInfo::Kdf(kdf_info) => {
-                let derived = match kdf_info.kdf_algorithm {
-                    crate::common::algorithms::KdfAlgorithm::HkdfSha256 => HkdfSha256::default()
-                        .derive(
-                            shared_secret,
-                            kdf_info.salt.as_deref(),
-                            kdf_info.info.as_deref(),
-                            kdf_info.output_len as usize,
-                        )?,
-                    crate::common::algorithms::KdfAlgorithm::HkdfSha384 => HkdfSha384::default()
-                        .derive(
-                            shared_secret,
-                            kdf_info.salt.as_deref(),
-                            kdf_info.info.as_deref(),
-                            kdf_info.output_len as usize,
-                        )?,
-                    crate::common::algorithms::KdfAlgorithm::HkdfSha512 => HkdfSha512::default()
-                        .derive(
-                            shared_secret,
-                            kdf_info.salt.as_deref(),
-                            kdf_info.info.as_deref(),
-                            kdf_info.output_len as usize,
-                        )?,
-                };
-                Ok(Zeroizing::new(derived.as_bytes().to_vec()))
-            }
-            DerivationInfo::Xof(xof_info) => {
-                let mut reader = match xof_info.xof_algorithm {
-                    crate::common::algorithms::XofAlgorithm::Shake256 => Shake256::default()
-                        .reader(
-                            shared_secret,
-                            xof_info.salt.as_deref(),
-                            xof_info.info.as_deref(),
-                        )?,
-                    crate::common::algorithms::XofAlgorithm::Shake128 => Shake128::default()
-                        .reader(
-                            shared_secret,
-                            xof_info.salt.as_deref(),
-                            xof_info.info.as_deref(),
-                        )?,
-                };
-                let mut dek_bytes = vec![0u8; xof_info.output_len as usize];
-                reader.read(&mut dek_bytes);
-                Ok(Zeroizing::new(dek_bytes))
-            }
-        }
-    }
-}
-
-/// `HeaderPayload` contains metadata specific to the encryption mode.
+/// Specific header payload for different encryption modes.
 ///
-/// `HeaderPayload` 包含特定于加密模式的元数据。
+/// 不同加密模式的具体头部有效载荷。
 #[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
-pub enum HeaderPayload {
+pub enum SpecificHeaderPayload {
     /// Payload for symmetric encryption.
     ///
     /// 对称加密的有效载荷。
@@ -202,10 +101,6 @@ pub enum HeaderPayload {
         ///
         /// 使用的对称算法。
         algorithm: SymmetricAlgorithm,
-        /// Streaming metadata, if applicable.
-        ///
-        /// 流式处理元数据（如果适用）。
-        stream_info: Option<StreamInfo>,
     },
     /// Payload for hybrid encryption.
     ///
@@ -227,10 +122,6 @@ pub enum HeaderPayload {
         ///
         /// 加密的数据加密密钥 (DEK)。
         encrypted_dek: Vec<u8>,
-        /// Streaming metadata, theoretically applicable to hybrid mode as well.
-        ///
-        /// 流式处理元数据，理论上也适用于混合模式。
-        stream_info: Option<StreamInfo>,
         /// Signature information, if the header is signed.
         ///
         /// 签名信息，如果头部已签名。
@@ -242,13 +133,32 @@ pub enum HeaderPayload {
     },
 }
 
+/// Header payload for different encryption modes.
+///
+/// 不同加密模式的头有效载荷。
+#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
+pub struct HeaderPayload {
+    /// The chunk size for the symmetric algorithm.
+    ///
+    /// 对称算法的分块大小。
+    pub chunk_size: u32,
+    /// The base nonce for stream encryption.
+    ///
+    /// 流加密的基础 nonce。
+    pub base_nonce: [u8; 12],
+    /// The specific payload for the encryption mode.
+    ///
+    /// 特定于加密模式的有效载荷。
+    pub specific_payload: SpecificHeaderPayload,
+}
+
 impl HeaderPayload {
     /// Returns the key ID if the payload is for symmetric encryption.
     ///
     /// 如果有效载荷用于对称加密，则返回密钥 ID。
     pub fn key_id(&self) -> Option<&str> {
-        match self {
-            HeaderPayload::Symmetric { key_id, .. } => Some(key_id),
+        match &self.specific_payload {
+            SpecificHeaderPayload::Symmetric { key_id, .. } => Some(key_id),
             _ => None,
         }
     }
@@ -257,8 +167,8 @@ impl HeaderPayload {
     ///
     /// 如果有效载荷用于混合加密，则返回密钥加密密钥 (KEK) 的 ID。
     pub fn kek_id(&self) -> Option<&str> {
-        match self {
-            HeaderPayload::Hybrid { kek_id, .. } => Some(kek_id),
+        match &self.specific_payload {
+            SpecificHeaderPayload::Hybrid { kek_id, .. } => Some(kek_id),
             _ => None,
         }
     }
@@ -267,8 +177,8 @@ impl HeaderPayload {
     ///
     /// 如果有效载荷用于混合加密，则返回签名者密钥 ID。
     pub fn signer_key_id(&self) -> Option<&str> {
-        match self {
-            HeaderPayload::Hybrid { signature, .. } => {
+        match &self.specific_payload {
+            SpecificHeaderPayload::Hybrid { signature, .. } => {
                 signature.as_ref().map(|s| s.signer_key_id.as_str())
             }
             _ => None,
@@ -281,9 +191,9 @@ impl HeaderPayload {
     /// 返回用于数据加密的对称算法。
     /// 在混合模式下，这是数据加密密钥 (DEK) 的算法。
     pub fn symmetric_algorithm(&self) -> SymmetricAlgorithm {
-        match self {
-            HeaderPayload::Symmetric { algorithm, .. } => *algorithm,
-            HeaderPayload::Hybrid { dek_algorithm, .. } => *dek_algorithm,
+        match &self.specific_payload {
+            SpecificHeaderPayload::Symmetric { algorithm, .. } => *algorithm,
+            SpecificHeaderPayload::Hybrid { dek_algorithm, .. } => *dek_algorithm,
         }
     }
 
@@ -293,8 +203,8 @@ impl HeaderPayload {
     /// 如果适用，返回用于密钥封装的非对称算法。
     /// 这仅存在于混合模式中。
     pub fn asymmetric_algorithm(&self) -> Option<AsymmetricAlgorithm> {
-        match self {
-            HeaderPayload::Hybrid { kek_algorithm, .. } => Some(*kek_algorithm),
+        match &self.specific_payload {
+            SpecificHeaderPayload::Hybrid { kek_algorithm, .. } => Some(*kek_algorithm),
             _ => None,
         }
     }
@@ -303,8 +213,8 @@ impl HeaderPayload {
     ///
     /// 如果适用，返回签名算法。
     pub fn signer_algorithm(&self) -> Option<SignatureAlgorithm> {
-        match self {
-            HeaderPayload::Hybrid { signature, .. } => {
+        match &self.specific_payload {
+            SpecificHeaderPayload::Hybrid { signature, .. } => {
                 signature.as_ref().map(|s| s.signer_algorithm)
             }
             _ => None,
@@ -315,8 +225,8 @@ impl HeaderPayload {
     ///
     /// 如果适用，返回签名。
     pub fn signature(&self) -> Option<&[u8]> {
-        match self {
-            HeaderPayload::Hybrid { signature, .. } => {
+        match &self.specific_payload {
+            SpecificHeaderPayload::Hybrid { signature, .. } => {
                 signature.as_ref().map(|s| s.signature.as_slice())
             }
             _ => None,
@@ -327,16 +237,16 @@ impl HeaderPayload {
     ///
     /// 获取要签名的有效载荷和签名本身。
     pub(crate) fn get_signed_payload_and_sig(&self) -> Result<(Vec<u8>, Vec<u8>)> {
-        if let HeaderPayload::Hybrid { .. } = self {
+        if let SpecificHeaderPayload::Hybrid { .. } = &self.specific_payload {
             let signature = self
                 .signature()
                 .ok_or(CryptoError::MissingSignature)?
                 .to_vec();
 
             let mut temp_payload = self.clone();
-            if let HeaderPayload::Hybrid {
+            if let SpecificHeaderPayload::Hybrid {
                 ref mut signature, ..
-            } = temp_payload
+            } = &mut temp_payload.specific_payload
             {
                 *signature = None;
             }
@@ -358,10 +268,6 @@ pub struct Header {
     ///
     /// 标头格式的版本。
     pub version: u16,
-    /// The encryption mode used.
-    ///
-    /// 使用的加密模式。
-    pub mode: SealMode,
     /// The payload containing mode-specific metadata.
     ///
     /// 包含特定于模式的元数据的有效载荷。
@@ -453,7 +359,7 @@ impl Header {
     /// 如果提供了验证密钥，则验证标头签名。
     pub fn verify(
         &self,
-        verification_key: Option<crate::keys::SignaturePublicKey>,
+        verification_key: Option<&TypedSignaturePublicKey>,
         aad: Option<&[u8]>,
     ) -> Result<()> {
         // If no verification key is provided, skip verification.
@@ -476,46 +382,15 @@ impl Header {
                 payload_bytes.extend_from_slice(aad_data);
             }
 
-            use seal_crypto::prelude::*;
-            use seal_crypto::schemes::asymmetric::post_quantum::dilithium::{
-                Dilithium2, Dilithium3, Dilithium5,
-            };
-            use seal_crypto::schemes::asymmetric::traditional::ecc::{EcdsaP256, Ed25519};
+            let key_algo = verification_key.algorithm();
+            if algo == key_algo {
+                use crate::algorithms::traits::SignatureAlgorithm;
 
-            // Select the correct verification method based on the signature algorithm and recover the key directly from raw bytes.
-            // 根据签名算法选择正确的验证方法并直接从原始字节恢复密钥。
-            match algo {
-                SignatureAlgorithm::Dilithium2 => {
-                    let pk = <Dilithium2 as AsymmetricKeySet>::PublicKey::from_bytes(
-                        verification_key.as_bytes(),
-                    )?;
-                    Dilithium2::verify(&pk, &payload_bytes, &Signature(signature))?;
-                }
-                SignatureAlgorithm::Dilithium3 => {
-                    let pk = <Dilithium3 as AsymmetricKeySet>::PublicKey::from_bytes(
-                        verification_key.as_bytes(),
-                    )?;
-                    Dilithium3::verify(&pk, &payload_bytes, &Signature(signature))?;
-                }
-                SignatureAlgorithm::Dilithium5 => {
-                    let pk = <Dilithium5 as AsymmetricKeySet>::PublicKey::from_bytes(
-                        verification_key.as_bytes(),
-                    )?;
-                    Dilithium5::verify(&pk, &payload_bytes, &Signature(signature))?;
-                }
-                SignatureAlgorithm::Ed25519 => {
-                    let pk = <Ed25519 as AsymmetricKeySet>::PublicKey::from_bytes(
-                        verification_key.as_bytes(),
-                    )?;
-                    Ed25519::verify(&pk, &payload_bytes, &Signature(signature))?;
-                }
-                SignatureAlgorithm::EcdsaP256 => {
-                    let pk = <EcdsaP256 as AsymmetricKeySet>::PublicKey::from_bytes(
-                        verification_key.as_bytes(),
-                    )?;
-                    EcdsaP256::verify(&pk, &payload_bytes, &Signature(signature))?;
-                }
+                key_algo.into_signature_wrapper().verify(&payload_bytes, verification_key, signature)?;
+            } else {
+                return Err(Error::Format(FormatError::InvalidKeyType));
             }
+            
             Ok(())
         } else {
             // No signature, but a verification key was provided.
