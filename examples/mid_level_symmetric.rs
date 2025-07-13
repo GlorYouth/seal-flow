@@ -46,6 +46,7 @@ async fn main() -> Result<()> {
             key: Cow::Borrowed(key1),
             key_id: KEY_ID.to_string(),
             aad: None,
+            extra_data: None,
             config: ArcConfig::default(),
         },
     )?;
@@ -72,6 +73,7 @@ async fn main() -> Result<()> {
             key: Cow::Borrowed(key2),
             key_id: KEY_ID.to_string(),
             aad: None,
+            extra_data: None,
             config: ArcConfig::default(),
         },
     )?;
@@ -98,6 +100,7 @@ async fn main() -> Result<()> {
             key: Cow::Borrowed(key3),
             key_id: KEY_ID.to_string(),
             aad: None,
+            extra_data: None,
             config: ArcConfig::default(),
         },
     )?;
@@ -130,6 +133,7 @@ async fn main() -> Result<()> {
                     key: Cow::Borrowed(key4),
                     key_id: KEY_ID.to_string(),
                     aad: None,
+                    extra_data: None,
                     config: ArcConfig::default(),
                 },
             )
@@ -166,6 +170,7 @@ async fn main() -> Result<()> {
             key: Cow::Borrowed(key5),
             key_id: KEY_ID.to_string(),
             aad: None,
+            extra_data: None,
             config: ArcConfig::default(),
         },
     )?;
@@ -196,6 +201,7 @@ async fn main() -> Result<()> {
             key: Cow::Borrowed(key6),
             key_id: KEY_ID.to_string(),
             aad: Some(aad.to_vec()),
+            extra_data: None,
             config: ArcConfig::default(),
         },
     )?;
@@ -252,6 +258,7 @@ async fn main() -> Result<()> {
             key: Cow::Borrowed(&algo_key),
             key_id: derived_key_id.to_string(),
             aad: None,
+            extra_data: None,
             config: ArcConfig::default(),
         },
     )?;
@@ -292,6 +299,7 @@ async fn main() -> Result<()> {
             key: Cow::Borrowed(&password_key),
             key_id: password_key_id.to_string(),
             aad: None,
+            extra_data: None,
             config: ArcConfig::default(),
         },
     )?;

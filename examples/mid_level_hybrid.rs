@@ -52,6 +52,7 @@ async fn main() -> Result<()> {
         signer: None,
         aad: None,
         derivation_config: None,
+        extra_data: None,
         config: Default::default(),
     };
     let ciphertext1 = processor1.encrypt_hybrid_in_memory(plaintext, config1)?;
@@ -76,6 +77,7 @@ async fn main() -> Result<()> {
         signer: None,
         aad: None,
         derivation_config: None,
+        extra_data: None,
         config: Default::default(),
     };
     let ciphertext2 = processor2.encrypt_parallel(plaintext, config2)?;
@@ -101,6 +103,7 @@ async fn main() -> Result<()> {
         signer: None,
         aad: None,
         derivation_config: None,
+        extra_data: None,
         config: Default::default(),
     };
     let mut encryptor3 = processor3.encrypt_hybrid_to_stream(Box::new(&mut ciphertext3), config3)?;
@@ -131,6 +134,7 @@ async fn main() -> Result<()> {
             signer: None,
             aad: None,
             derivation_config: None,
+            extra_data: None,
             config: Default::default(),
         };
         let mut encryptor4 = processor4
@@ -166,6 +170,7 @@ async fn main() -> Result<()> {
         signer: None,
         aad: None,
         derivation_config: None,
+        extra_data: None,
         config: Default::default(),
     };
     processor5.encrypt_hybrid_pipeline(
@@ -200,6 +205,7 @@ async fn main() -> Result<()> {
         signer: None,
         aad: Some(aad.to_vec()),
         derivation_config: None,
+        extra_data: None,
         config: Default::default(),
     };
     let ciphertext6 = processor6.encrypt_hybrid_in_memory(plaintext, config6)?;
@@ -255,6 +261,7 @@ async fn main() -> Result<()> {
         signer: None,
         aad: None,
         derivation_config: None,
+        extra_data: None,
         config: Default::default(),
     };
     let ciphertext7 = processor7.encrypt_hybrid_in_memory(plaintext, config7)?;
