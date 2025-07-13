@@ -102,6 +102,7 @@ mod tests {
                         config: config.clone(),
                         key: Cow::Borrowed(&key),
                         aad: aad.clone(),
+                        extra_data: None,
                     },
                 )
                 .unwrap();
@@ -148,6 +149,7 @@ mod tests {
                         config: ArcConfig::default(),
                         key: Cow::Borrowed(&key),
                         aad: aad.clone(),
+                        extra_data: None,
                     },
                 )
                 .unwrap();
@@ -211,6 +213,7 @@ mod tests {
                         config: ArcConfig::default(),
                         key: Cow::Borrowed(&key),
                         aad: None,
+                        extra_data: None,
                     },
                 )
                 .unwrap();
@@ -258,6 +261,7 @@ mod tests {
                         config: ArcConfig::default(),
                         key: Cow::Borrowed(&correct_key),
                         aad: None,
+                        extra_data: None,
                     },
                 )
                 .unwrap();
@@ -308,6 +312,7 @@ mod tests {
                         config: ArcConfig::default(),
                         key: Cow::Borrowed(&key),
                         aad: Some(aad.to_vec()),
+                        extra_data: None,
                     },
                 )
                 .unwrap();

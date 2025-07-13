@@ -117,6 +117,7 @@ mod tests {
                         config: config.clone(),
                         key: Cow::Owned(key.clone()),
                         aad: aad.clone(),
+                        extra_data: None,
                     },
                 )
                 .await
@@ -159,6 +160,7 @@ mod tests {
                         config: config.clone(),
                         key: Cow::Borrowed(&untyped),
                         aad: aad.clone(),
+                        extra_data: None,
                     },
                 )
                 .await
@@ -233,6 +235,7 @@ mod tests {
                         config: config.clone(),
                         key: Cow::Borrowed(&key),
                         aad: None,
+                        extra_data: None,
                     },
                 )
                 .await
@@ -278,6 +281,7 @@ mod tests {
                         config: config.clone(),
                         key: Cow::Borrowed(&correct_key),
                         aad: None,
+                        extra_data: None,
                     },
                 )
                 .await
@@ -325,6 +329,7 @@ mod tests {
                         config: config.clone(),
                         key: Cow::Borrowed(&key),
                         aad: aad.clone(),
+                        extra_data: None,
                     },
                 )
                 .await

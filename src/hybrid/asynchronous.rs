@@ -142,6 +142,7 @@ mod tests {
             signer: None,
             aad: aad.clone(),
             derivation_config: None,
+            extra_data: None,
             config: ArcConfig::default(),
         };
 
@@ -216,6 +217,7 @@ mod tests {
             signer: None,
             aad: None,
             derivation_config: None,
+            extra_data: None,
             config: ArcConfig::default(),
         };
 
@@ -266,6 +268,7 @@ mod tests {
             signer: None,
             aad: None,
             derivation_config: None,
+            extra_data: None,
             config: ArcConfig::default(),
         };
 
@@ -313,6 +316,7 @@ mod tests {
             signer: None,
             aad: Some(aad1.clone()),
             derivation_config: None,
+            extra_data: None,
             config: ArcConfig::default(),
         };
 
@@ -386,6 +390,7 @@ mod tests {
             signer: None,
             aad: None,
             derivation_config: Some(derivation_set),
+            extra_data: None,
             config: ArcConfig::default(),
         };
 

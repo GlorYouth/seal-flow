@@ -2,9 +2,9 @@
 //!
 //! 混合加密模式的通用工具。
 
-use crate::algorithms::traits::{HybridAlgorithm, SignatureAlgorithm};
+use crate::algorithms::traits::HybridAlgorithm;
 use crate::common::header::{
-    DerivationInfo, Header, HeaderPayload, SignerInfo, SpecificHeaderPayload,
+    DerivationInfo, Header, HeaderPayload, SpecificHeaderPayload,
 };
 use crate::common::SignerSet;
 use crate::error::Result;
@@ -32,6 +32,7 @@ pub(super) fn create_header<H: HybridAlgorithm + ?Sized>(
     derivation_info: Option<DerivationInfo>,
     chunk_size: u32,
     aad: Option<&[u8]>,
+    extra_data: Option<Vec<u8>>,
 ) -> Result<(Header, [u8; 12], Zeroizing<Vec<u8>>)> {
     // 1. KEM Encapsulate
     // 1. KEM 封装
@@ -55,38 +56,14 @@ pub(super) fn create_header<H: HybridAlgorithm + ?Sized>(
             signature: None,
             derivation_info,
         },
+        extra_data,
     };
 
-    // 4. Sign the payload and mutate it if a signer is provided
     // 4. 如果提供了签名者，则对有效载荷进行签名并修改
     if let Some(s) = signer {
         // The payload already has signature: None, so we can serialize it directly.
         // 有效载荷的签名字段为 None，所以我们可以直接序列化它。
-        let mut payload_bytes = bincode::encode_to_vec(&payload, bincode::config::standard())?;
-        
-        // Append AAD to payload before signing
-        if let Some(aad_data) = aad {
-            payload_bytes.extend_from_slice(aad_data);
-        }
-
-        let signature_bytes = s.signer.sign(&payload_bytes, &s.signing_key)?;
-
-        // Now, set the signature on the actual payload by mutating it.
-        // 现在，通过修改可变载荷来设置签名。
-        if let HeaderPayload {
-            specific_payload:
-                SpecificHeaderPayload::Hybrid {
-                    ref mut signature, ..
-                },
-            ..
-        } = payload
-        {
-            *signature = Some(SignerInfo {
-                signer_key_id: s.signer_key_id,
-                signer_algorithm: s.signer.algorithm(),
-                signature: signature_bytes,
-            });
-        }
+        payload.sign_and_embed(&s, aad)?;
     }
 
     let header = Header {

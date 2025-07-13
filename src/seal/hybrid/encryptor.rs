@@ -19,7 +19,7 @@ use crate::keys::{TypedAsymmetricPublicKey, TypedSignaturePrivateKey};
 use crate::prelude::{KdfKeyAlgorithmEnum, XofAlgorithmEnum};
 use crate::seal::traits::{
     AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor as StreamingEncryptorTrait,
-    WithAad,
+    WithAad, WithExtraData,
 };
 #[cfg(feature = "async")]
 use async_trait::async_trait;
@@ -68,6 +68,7 @@ impl HybridEncryptorBuilder {
             aad: None,
             signer: None,
             derivation_config: None,
+            extra_data: None,
             key_provider: self.key_provider,
             config: self.config,
         }
@@ -88,6 +89,7 @@ impl HybridEncryptorBuilder {
             aad: None,
             signer: None,
             derivation_config: None,
+            extra_data: None,
             key_provider: self.key_provider,
             config: self.config,
         })
@@ -105,6 +107,7 @@ pub struct HybridEncryptor {
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) signer: Option<SignerSet>,
     pub(crate) derivation_config: Option<DerivationSet>,
+    pub(crate) extra_data: Option<Vec<u8>>,
     key_provider: Option<Arc<dyn EncryptionKeyProvider>>,
     config: ArcConfig,
 }
@@ -115,6 +118,17 @@ impl WithAad for HybridEncryptor {
     /// 为此加密操作设置关联数据 (AAD)。
     fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.aad = Some(aad.into());
+        self
+    }
+}
+
+impl WithExtraData for HybridEncryptor {
+
+    /// Sets the extra data for this encryption operation.
+    ///
+    /// 为此加密操作设置额外数据。
+    fn with_extra_data(mut self, extra_data: impl Into<Vec<u8>>) -> Self {
+        self.extra_data = Some(extra_data.into());
         self
     }
 }
@@ -242,6 +256,7 @@ impl InMemoryEncryptor for HybridEncryptorWithAlgorithms {
             signer: self.inner.signer,
             aad: self.inner.aad,
             derivation_config: self.inner.derivation_config,
+            extra_data: self.inner.extra_data,
             config: self.inner.config,
         };
         processor.encrypt_hybrid_in_memory(plaintext, config)
@@ -261,6 +276,7 @@ impl InMemoryEncryptor for HybridEncryptorWithAlgorithms {
             signer: self.inner.signer,
             aad: self.inner.aad,
             derivation_config: self.inner.derivation_config,
+            extra_data: self.inner.extra_data,
             config: self.inner.config,
         };
         processor.encrypt_parallel(plaintext, config)
@@ -285,6 +301,7 @@ impl StreamingEncryptorTrait for HybridEncryptorWithAlgorithms {
             signer: self.inner.signer,
             aad: self.inner.aad,
             derivation_config: self.inner.derivation_config,
+            extra_data: self.inner.extra_data,
             config: self.inner.config,
         };
         processor.encrypt_hybrid_to_stream(Box::new(writer), config)
@@ -307,6 +324,7 @@ impl StreamingEncryptorTrait for HybridEncryptorWithAlgorithms {
             signer: self.inner.signer,
             aad: self.inner.aad,
             derivation_config: self.inner.derivation_config,
+            extra_data: self.inner.extra_data,
             config: self.inner.config,
         };
         processor.encrypt_hybrid_pipeline(Box::new(reader), Box::new(writer), config)
@@ -332,6 +350,7 @@ impl AsyncStreamingEncryptor for HybridEncryptorWithAlgorithms {
             signer: self.inner.signer,
             aad: self.inner.aad,
             derivation_config: self.inner.derivation_config,
+            extra_data: self.inner.extra_data,
             config: self.inner.config,
         };
         processor

@@ -85,6 +85,10 @@ where
         self.inner.header()
     }
 
+    pub fn extra_data(&self) -> Option<&[u8]> {
+        self.inner.header().extra_data()
+    }
+
     /// Returns the Key-Encrypting-Key ID from the header.
     ///
     /// 从标头返回密钥加密密钥 (KEK) 的 ID。

@@ -10,6 +10,7 @@ pub struct SymmetricConfig<'a> {
     pub key: Cow<'a, TypedSymmetricKey>,
     pub key_id: String,
     pub aad: Option<Vec<u8>>,
+    pub extra_data: Option<Vec<u8>>,
     pub config: ArcConfig,
 }
 
@@ -19,6 +20,7 @@ impl<'a> SymmetricConfig<'a> {
             self.algorithm.as_ref(),
             self.key_id,
             self.config.chunk_size(),
+            self.extra_data,
         )?;
         let header_bytes = header.encode_to_vec()?;
 

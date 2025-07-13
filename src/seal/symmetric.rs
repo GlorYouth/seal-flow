@@ -171,6 +171,7 @@ impl SymmetricSeal {
             key,
             key_id,
             aad: None,
+            extra_data: None,
             config: self.config.clone(),
         }
     }
@@ -199,7 +200,7 @@ mod tests {
     use super::*;
     use crate::prelude::SymmetricAlgorithmEnum;
     use crate::prelude::{InMemoryEncryptor, StreamingEncryptor};
-    use crate::seal::traits::WithAad;
+    use crate::seal::traits::{WithAad, WithExtraData};
     use std::collections::HashMap;
     use std::io::{Cursor, Read, Write};
     #[cfg(feature = "async")]
@@ -224,6 +225,7 @@ mod tests {
             .unwrap();
         let pending = seal.decrypt().slice(&encrypted).unwrap();
         assert_eq!(pending.key_id(), Some(TEST_KEY_ID));
+        assert_eq!(pending.extra_data(), None);
         let decrypted = pending.with_key_to_vec(&typed_key).unwrap();
         assert_eq!(plaintext, decrypted.as_slice());
     }
@@ -346,6 +348,30 @@ mod tests {
         let pending_fail2 = seal.decrypt().slice(&encrypted)?;
         let result2 = pending_fail2.with_key_to_vec(&typed_key);
         assert!(result2.is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_extra_data_roundtrip() -> crate::Result<()> {
+        let typed_key = TheAlgorithmEnum::Aes256Gcm.into_symmetric_wrapper().generate_typed_key()?;
+        let plaintext = get_test_data();
+        let extra_data = b"some extra metadata that is signed but not encrypted";
+        let key_id = "extra-data-key".to_string();
+        let seal = SymmetricSeal::default();
+
+        let encrypted = seal
+            .encrypt(typed_key.clone(), key_id.clone())
+            .with_extra_data(extra_data)
+            .to_vec(plaintext)?;
+
+        // Decrypt and check extra data
+        let pending = seal.decrypt().slice(&encrypted)?;
+        assert_eq!(pending.key_id(), Some(key_id.as_str()));
+        assert_eq!(pending.extra_data(), Some(extra_data.as_slice()));
+
+        let decrypted = pending.with_key_to_vec(&typed_key)?;
+        assert_eq!(plaintext, decrypted.as_slice());
 
         Ok(())
     }

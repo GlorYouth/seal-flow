@@ -15,6 +15,7 @@ pub struct HybridConfig<'a> {
     pub signer: Option<SignerSet>,
     pub aad: Option<Vec<u8>>,
     pub derivation_config: Option<DerivationSet>,
+    pub extra_data: Option<Vec<u8>>,
     pub config: ArcConfig,
 }
 
@@ -30,6 +31,7 @@ impl<'a> HybridConfig<'a> {
                 .map(|d| d.derivation_info.clone()),
             self.config.chunk_size(),
             self.aad.as_deref(),
+            self.extra_data,
         )?;
 
         let dek = if let Some(derivation_set) = self.derivation_config {

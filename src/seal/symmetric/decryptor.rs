@@ -222,6 +222,10 @@ where
     pub fn header(&self) -> &Header {
         self.inner.header()
     }
+
+    pub fn extra_data(&self) -> Option<&[u8]> {
+        self.header().extra_data()
+    }
 }
 
 impl<T> WithAad for PendingDecryptor<T> {

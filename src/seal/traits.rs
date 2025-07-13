@@ -36,6 +36,15 @@ pub trait WithAad {
     fn with_aad(self, aad: impl Into<Vec<u8>>) -> Self;
 }
 
+/// A trait for decryptors that can be configured with extra data.
+///
+/// 用于可以通过额外数据进行配置的解密器的 trait。
+pub trait WithExtraData {
+    /// Sets the extra data for this decryption operation.
+    ///
+    /// 为此解密操作设置额外数据。
+    fn with_extra_data(self, extra_data: impl Into<Vec<u8>>) -> Self;
+}
 /// A trait for decryptors that can be configured with a verification key.
 ///
 /// 用于可以通过验证密钥进行配置的解密器的 trait。

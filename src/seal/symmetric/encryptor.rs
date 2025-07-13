@@ -2,7 +2,7 @@ use crate::body::traits::FinishingWrite;
 use crate::common::config::ArcConfig;
 use crate::keys::TypedSymmetricKey;
 use crate::seal::traits::{
-    AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor, WithAad,
+    AsyncStreamingEncryptor, InMemoryEncryptor, StreamingEncryptor, WithAad, WithExtraData,
 };
 #[cfg(feature = "async")]
 use crate::symmetric::asynchronous::Asynchronous;
@@ -26,6 +26,7 @@ pub struct SymmetricEncryptor {
     pub(crate) key: TypedSymmetricKey,
     pub(crate) key_id: String,
     pub(crate) aad: Option<Vec<u8>>,
+    pub(crate) extra_data: Option<Vec<u8>>,
     pub(crate) config: ArcConfig,
 }
 
@@ -35,6 +36,17 @@ impl WithAad for SymmetricEncryptor {
     /// 为此加密操作设置关联数据 (AAD)。
     fn with_aad(mut self, aad: impl Into<Vec<u8>>) -> Self {
         self.aad = Some(aad.into());
+        self
+    }
+}
+
+impl WithExtraData for SymmetricEncryptor {
+
+    /// Sets the extra data for this encryption operation.
+    ///
+    /// 为此加密操作设置额外数据。
+    fn with_extra_data(mut self, extra_data: impl Into<Vec<u8>>) -> Self {
+        self.extra_data = Some(extra_data.into());
         self
     }
 }
@@ -53,6 +65,7 @@ impl InMemoryEncryptor for SymmetricEncryptor {
                 key_id: self.key_id,
                 aad: self.aad,
                 config: self.config,
+                extra_data: self.extra_data,
             },
         )
     }
@@ -70,6 +83,7 @@ impl InMemoryEncryptor for SymmetricEncryptor {
                 key_id: self.key_id,
                 aad: self.aad,
                 config: self.config,
+                extra_data: self.extra_data,
             },
         )
     }
@@ -92,6 +106,7 @@ impl StreamingEncryptor for SymmetricEncryptor {
                 key_id: self.key_id,
                 aad: self.aad,
                 config: self.config,
+                extra_data: self.extra_data,
             },
         )
     }
@@ -114,6 +129,7 @@ impl StreamingEncryptor for SymmetricEncryptor {
                 key_id: self.key_id,
                 aad: self.aad,
                 config: self.config,
+                extra_data: self.extra_data,
             },
         )
     }
@@ -138,7 +154,8 @@ impl AsyncStreamingEncryptor for SymmetricEncryptor {
                     key: Cow::Owned(self.key),
                     key_id: self.key_id,
                     aad: self.aad,
-                    config: self.config
+                    config: self.config,
+                    extra_data: self.extra_data,
                 },
             )
             .await

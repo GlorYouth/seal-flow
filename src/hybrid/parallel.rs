@@ -141,6 +141,7 @@ mod tests {
                 derivation_info: DerivationInfo::Kdf(kdf_info),
                 wrapper: DerivationWrapper::Kdf(kdf_algorithm.into_kdf_key_wrapper()),
             }),
+            extra_data: None,
             config: ArcConfig::default(),
         };
 
@@ -167,6 +168,7 @@ mod tests {
             signer: None,
             aad: None,
             derivation_config: None,
+            extra_data: None,
             config: ArcConfig::default(),
         };
 
@@ -206,6 +208,7 @@ mod tests {
             signer: None,
             aad: None,
             derivation_config: None,
+            extra_data: None,
             config: ArcConfig::default(),
         };
 
@@ -233,6 +236,7 @@ mod tests {
             signer: None,
             aad: None,
             derivation_config: None,
+            extra_data: None,
             config: ArcConfig::default(),
         };
 
@@ -261,6 +265,7 @@ mod tests {
             signer: None,
             aad: None,
             derivation_config: None,
+            extra_data: None,
             config: ArcConfig::default(),
         };
 
@@ -289,6 +294,7 @@ mod tests {
             signer: None,
             aad: Some(aad.clone()),
             derivation_config: None,
+            extra_data: None,
             config: ArcConfig::default(),
         };
         let encrypted = processor.encrypt_parallel(plaintext, config).unwrap();

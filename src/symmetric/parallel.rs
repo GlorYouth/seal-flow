@@ -110,6 +110,7 @@ mod tests {
                     config: config.clone(),
                     key: Cow::Borrowed(&key),
                     aad: None,
+                    extra_data: None,
                 },
             )
             .unwrap();
@@ -159,6 +160,7 @@ mod tests {
                     config: config.clone(),
                     key: Cow::Borrowed(&key),
                     aad: None,
+                    extra_data: None,
                 },
             )
             .unwrap();
@@ -185,6 +187,7 @@ mod tests {
                     config: config.clone(),
                     key: Cow::Borrowed(&key),
                     aad: None,
+                    extra_data: None,
                 },
             )
             .unwrap();
@@ -213,6 +216,7 @@ mod tests {
                     config: config.clone(),
                     key: Cow::Borrowed(&key),
                     aad: None,
+                    extra_data: None,
                 },
             )
             .unwrap();
@@ -242,6 +246,7 @@ mod tests {
                     config: config.clone(),
                     key: Cow::Borrowed(&key),
                     aad: None,
+                    extra_data: None,
                 },
             )
             .unwrap();
@@ -273,6 +278,7 @@ mod tests {
                     config: config.clone(),
                     key: Cow::Borrowed(&key),
                     aad: None,
+                    extra_data: None,
                 },
             )
             .unwrap();
@@ -306,6 +312,7 @@ mod tests {
                     config: config.clone(),
                     key: Cow::Borrowed(&key),
                     aad: Some(aad.clone()),
+                    extra_data: None,
                 },
             )
             .unwrap();

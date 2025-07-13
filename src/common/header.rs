@@ -2,9 +2,11 @@ use bincode::{Decode, Encode};
 
 // These enums could also be considered for placement in seal-crypto for sharing.
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享。
-use crate::common::algorithms::{
-    AsymmetricAlgorithm, KdfKeyAlgorithm, SignatureAlgorithm, SymmetricAlgorithm, XofAlgorithm,
+use crate::prelude::{
+    AsymmetricAlgorithmEnum, KdfKeyAlgorithmEnum, SignatureAlgorithmEnum, SymmetricAlgorithmEnum, XofAlgorithmEnum,
+    SignatureAlgorithmTrait,
 };
+use crate::common::SignerSet;
 use crate::error::{CryptoError, Error, FormatError, Result};
 use crate::keys::TypedSignaturePublicKey;
 use std::io::Read;
@@ -24,7 +26,7 @@ pub struct SignerInfo {
     /// The signature algorithm used.
     ///
     /// 使用的签名算法。
-    pub signer_algorithm: SignatureAlgorithm,
+    pub signer_algorithm: SignatureAlgorithmEnum,
     /// The digital signature.
     ///
     /// 数字签名。
@@ -39,7 +41,7 @@ pub struct KdfInfo {
     /// The KDF algorithm.
     ///
     /// KDF 算法。
-    pub kdf_algorithm: KdfKeyAlgorithm,
+    pub kdf_algorithm: KdfKeyAlgorithmEnum,
     /// The salt for the KDF.
     ///
     /// 用于 KDF 的盐。
@@ -58,7 +60,7 @@ pub struct XofInfo {
     /// The XOF algorithm.
     ///
     /// XOF 算法。
-    pub xof_algorithm: XofAlgorithm,
+    pub xof_algorithm: XofAlgorithmEnum,
     /// The salt for the XOF.
     ///
     /// 用于 XOF 的盐。
@@ -100,7 +102,7 @@ pub enum SpecificHeaderPayload {
         /// The symmetric algorithm used.
         ///
         /// 使用的对称算法。
-        algorithm: SymmetricAlgorithm,
+        algorithm: SymmetricAlgorithmEnum,
     },
     /// Payload for hybrid encryption.
     ///
@@ -113,11 +115,11 @@ pub enum SpecificHeaderPayload {
         /// The asymmetric algorithm for the KEK.
         ///
         /// 用于 KEK 的非对称算法。
-        kek_algorithm: AsymmetricAlgorithm,
+        kek_algorithm: AsymmetricAlgorithmEnum,
         /// The symmetric algorithm for the Data-Encrypting-Key (DEK).
         ///
         /// 用于数据加密密钥 (DEK) 的对称算法。
-        dek_algorithm: SymmetricAlgorithm,
+        dek_algorithm: SymmetricAlgorithmEnum,
         /// The encrypted Data-Encrypting-Key (DEK).
         ///
         /// 加密的数据加密密钥 (DEK)。
@@ -150,6 +152,12 @@ pub struct HeaderPayload {
     ///
     /// 特定于加密模式的有效载荷。
     pub specific_payload: SpecificHeaderPayload,
+    /// Optional extra data that can be attached by the caller.
+    /// This data is part of the signed payload when a signature is present.
+    ///
+    /// 调用者可以附加的可选额外数据。
+    /// 当存在签名时，此数据是已签名有效负载的一部分。
+    pub extra_data: Option<Vec<u8>>,
 }
 
 impl HeaderPayload {
@@ -190,7 +198,7 @@ impl HeaderPayload {
     ///
     /// 返回用于数据加密的对称算法。
     /// 在混合模式下，这是数据加密密钥 (DEK) 的算法。
-    pub fn symmetric_algorithm(&self) -> SymmetricAlgorithm {
+    pub fn symmetric_algorithm(&self) -> SymmetricAlgorithmEnum {
         match &self.specific_payload {
             SpecificHeaderPayload::Symmetric { algorithm, .. } => *algorithm,
             SpecificHeaderPayload::Hybrid { dek_algorithm, .. } => *dek_algorithm,
@@ -202,7 +210,7 @@ impl HeaderPayload {
     ///
     /// 如果适用，返回用于密钥封装的非对称算法。
     /// 这仅存在于混合模式中。
-    pub fn asymmetric_algorithm(&self) -> Option<AsymmetricAlgorithm> {
+    pub fn asymmetric_algorithm(&self) -> Option<AsymmetricAlgorithmEnum> {
         match &self.specific_payload {
             SpecificHeaderPayload::Hybrid { kek_algorithm, .. } => Some(*kek_algorithm),
             _ => None,
@@ -212,7 +220,7 @@ impl HeaderPayload {
     /// Returns the signature algorithm, if applicable.
     ///
     /// 如果适用，返回签名算法。
-    pub fn signer_algorithm(&self) -> Option<SignatureAlgorithm> {
+    pub fn signer_algorithm(&self) -> Option<SignatureAlgorithmEnum> {
         match &self.specific_payload {
             SpecificHeaderPayload::Hybrid { signature, .. } => {
                 signature.as_ref().map(|s| s.signer_algorithm)
@@ -254,6 +262,48 @@ impl HeaderPayload {
             let payload_bytes = bincode::encode_to_vec(&temp_payload, bincode::config::standard())?;
             Ok((payload_bytes, signature))
         } else {
+            Err(CryptoError::UnsupportedOperation.into())
+        }
+    }
+
+    /// Signs the payload and embeds the signature. This mutation is only valid for Hybrid mode.
+    ///
+    /// 对有效载荷进行签名并嵌入签名。此操作仅对混合模式有效。
+    pub(crate) fn sign_and_embed(&mut self, signer: &SignerSet, aad: Option<&[u8]>) -> Result<()> {
+        // The payload to be signed is a serialization of the header payload with the signature field set to None.
+        // We clone the current payload, set its signature to None, and then serialize it.
+        // This avoids a borrow checker conflict where `self` cannot be borrowed immutably for serialization
+        // while a mutable borrow on `self.specific_payload.signature` exists.
+        let payload_to_sign = {
+            if !matches!(&self.specific_payload, SpecificHeaderPayload::Hybrid { .. }) {
+                return Err(CryptoError::UnsupportedOperation.into());
+            }
+            let mut temp_payload = self.clone();
+            if let SpecificHeaderPayload::Hybrid { signature, .. } =
+                &mut temp_payload.specific_payload
+            {
+                *signature = None;
+            }
+            bincode::encode_to_vec(&temp_payload, bincode::config::standard())?
+        };
+
+        let mut final_payload_bytes = payload_to_sign;
+        if let Some(aad_data) = aad {
+            final_payload_bytes.extend_from_slice(aad_data);
+        }
+
+        let signature_bytes = signer.signer.sign(&final_payload_bytes, &signer.signing_key)?;
+
+        // Now that the signature is created, we can embed it into `self`.
+        if let SpecificHeaderPayload::Hybrid { signature, .. } = &mut self.specific_payload {
+            *signature = Some(SignerInfo {
+                signer_key_id: signer.signer_key_id.clone(),
+                signer_algorithm: signer.signer.algorithm(),
+                signature: signature_bytes,
+            });
+            Ok(())
+        } else {
+            // This case is unreachable due to the `matches!` check at the beginning.
             Err(CryptoError::UnsupportedOperation.into())
         }
     }
@@ -384,7 +434,6 @@ impl Header {
 
             let key_algo = verification_key.algorithm();
             if algo == key_algo {
-                use crate::algorithms::traits::SignatureAlgorithm;
 
                 key_algo.into_signature_wrapper().verify(&payload_bytes, verification_key, signature)?;
             } else {
@@ -397,5 +446,12 @@ impl Header {
             // 没有签名，但提供了验证密钥。
             Err(CryptoError::MissingSignature.into())
         }
+    }
+
+    /// Returns the extra data attached to the header.
+    ///
+    /// 返回附加到头部的额外数据。
+    pub fn extra_data(&self) -> Option<&[u8]> {
+        self.payload.extra_data.as_deref()
     }
 }

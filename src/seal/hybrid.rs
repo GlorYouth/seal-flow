@@ -515,6 +515,7 @@ mod tests {
 
         let pending = seal.decrypt().slice(&encrypted)?;
         assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
+        assert_eq!(pending.extra_data(), None);
         let decrypted = pending.with_key_to_vec(&sk)?;
 
         assert_eq!(plaintext, decrypted.as_slice());
@@ -624,6 +625,31 @@ mod tests {
         let pending_fail2 = seal.decrypt().slice(&encrypted)?;
         let result2 = pending_fail2.with_key_to_vec(&sk);
         assert!(result2.is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_extra_data_roundtrip() -> crate::Result<()> {
+        let (pk, sk) = test_kem().generate_keypair()?.into_keypair();
+        let plaintext = get_test_data();
+        let extra_data = b"some extra metadata for hybrid";
+        let kek_id = "extra-data-kek".to_string();
+        let seal = HybridSeal::new(ArcConfig::default());
+
+        // Encrypt with extra data
+        let encrypted = seal
+            .encrypt(pk, kek_id.clone())
+            .with_extra_data(extra_data)
+            .execute_with(TEST_DEM)
+            .to_vec(plaintext)?;
+
+        // Decrypt and check extra data
+        let pending = seal.decrypt().slice(&encrypted)?;
+        assert_eq!(pending.kek_id(), Some(kek_id.as_str()));
+        assert_eq!(pending.extra_data(), Some(extra_data.as_slice()));
+        let decrypted = pending.with_key_to_vec(&sk)?;
+        assert_eq!(plaintext, decrypted.as_slice());
 
         Ok(())
     }

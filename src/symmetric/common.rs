@@ -18,6 +18,7 @@ pub fn create_header<S: SymmetricAlgorithm>(
     algorithm: &S,
     key_id: String,
     chunk_size: u32,
+    extra_data: Option<Vec<u8>>,
 ) -> crate::Result<(Header, [u8; 12])> {
     let mut base_nonce = [0u8; 12];
     OsRng.try_fill_bytes(&mut base_nonce)?;
@@ -31,6 +32,7 @@ pub fn create_header<S: SymmetricAlgorithm>(
                 key_id,
                 algorithm: algorithm.algorithm(),
             },
+            extra_data,
         },
     };
     Ok((header, base_nonce))
@@ -46,6 +48,7 @@ pub(super) fn prepare_body_decrypt_config(
         base_nonce,
         chunk_size,
         specific_payload: SpecificHeaderPayload::Symmetric { algorithm, .. },
+        ..
     } = header.payload
     {
         if algorithm != key.algorithm() {
