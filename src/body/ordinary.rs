@@ -15,45 +15,83 @@ use std::borrow::Cow;
 pub struct OrdinaryEncryptor<'a> {
     pub symmetric_params: SymmetricParams,
     pub(crate) algorithm: SymmetricAlgorithmWrapper,
-    pub(crate) key: Cow<'a, TypedSymmetricKey>,
     pub(crate) aad: Option<Vec<u8>>,
+    _lifetime: std::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> OrdinaryEncryptor<'a> {
-    pub fn encrypt(self, plaintext: &[u8]) -> Result<Vec<u8>> {
+    pub(crate) fn new(
+        symmetric_params: SymmetricParams,
+        algorithm: SymmetricAlgorithmWrapper,
+        aad: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            symmetric_params,
+            algorithm,
+            aad,
+            _lifetime: std::marker::PhantomData,
+        }
+    }
+
+    pub fn encrypt(self, plaintext: &[u8], key: Cow<'a, TypedSymmetricKey>) -> Result<Vec<u8>> {
+        let mut ciphertext = Vec::with_capacity(plaintext.len() + self.algorithm.tag_size() * (plaintext.len() / self.symmetric_params.chunk_size as usize + 1));
         let chunk_size = self.symmetric_params.chunk_size as usize;
-        let mut encrypted_body = Vec::with_capacity(
-            plaintext.len() + (plaintext.len() / chunk_size + 1) * self.algorithm.tag_size(),
-        );
 
-        let mut temp_chunk_buffer = vec![0u8; chunk_size + self.algorithm.tag_size()];
+        let mut encrypted_chunk_buffer = vec![0u8; chunk_size + self.algorithm.tag_size()];
 
-        for (i, chunk) in plaintext.chunks(chunk_size).enumerate() {
-            let nonce = derive_nonce(&self.symmetric_params.base_nonce, i as u64);
+        let mut cursor = 0;
+        let mut chunk_index = 0;
+        while cursor < plaintext.len() {
+            let remaining_len = plaintext.len() - cursor;
+            let current_chunk_len = std::cmp::min(remaining_len, chunk_size);
+
+            let plain_chunk = &plaintext[cursor..cursor + current_chunk_len];
+
+            let current_nonce = derive_nonce(&self.symmetric_params.base_nonce, chunk_index as u64);
+
             let bytes_written = self.algorithm.encrypt_to_buffer(
-                chunk,
-                &mut temp_chunk_buffer,
-                &self.key,
-                &nonce,
+                plain_chunk,
+                &mut encrypted_chunk_buffer,
+                &key,
+                &current_nonce,
                 self.aad.as_deref(),
             )?;
-            encrypted_body.extend_from_slice(&temp_chunk_buffer[..bytes_written]);
+
+            ciphertext.extend_from_slice(&encrypted_chunk_buffer[..bytes_written]);
+
+            cursor += current_chunk_len;
+            chunk_index += 1;
         }
 
-        Ok(encrypted_body)
+        Ok(ciphertext)
     }
 }
 
 pub struct OrdinaryDecryptor<'a> {
     pub(crate) algorithm: SymmetricAlgorithmWrapper,
-    pub(crate) key: Cow<'a, TypedSymmetricKey>,
     pub(crate) nonce: Box<[u8]>,
     pub(crate) chunk_size: usize,
     pub(crate) aad: Option<Vec<u8>>,
+    _lifetime: std::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> OrdinaryDecryptor<'a> {
-    pub fn decrypt(self, ciphertext: &[u8]) -> Result<Vec<u8>> {
+    pub(crate) fn new(
+        algorithm: SymmetricAlgorithmWrapper,
+        nonce: Box<[u8]>,
+        chunk_size: usize,
+        aad: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            algorithm,
+            nonce,
+            chunk_size,
+            aad,
+            _lifetime: std::marker::PhantomData,
+        }
+    }
+
+    pub fn decrypt(self, ciphertext: &[u8], key: Cow<'a, TypedSymmetricKey>) -> Result<Vec<u8>> {
         let mut plaintext = Vec::with_capacity(ciphertext.len());
         let chunk_size_with_tag = self.chunk_size + self.algorithm.tag_size();
 
@@ -75,7 +113,7 @@ impl<'a> OrdinaryDecryptor<'a> {
             let bytes_written = self.algorithm.decrypt_to_buffer(
                 encrypted_chunk,
                 &mut decrypted_chunk_buffer,
-                &self.key,
+                &key,
                 &current_nonce,
                 self.aad.as_deref(),
             )?;

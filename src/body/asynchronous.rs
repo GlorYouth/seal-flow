@@ -21,6 +21,7 @@ use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BinaryHeap};
 use std::io;
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -32,23 +33,42 @@ use tokio::task::JoinHandle;
 pub struct AsyncEncryptorSetup<'a> {
     pub symmetric_params: SymmetricParams,
     pub(crate) algorithm: SymmetricAlgorithmWrapper,
-    pub(crate) key: Cow<'a, TypedSymmetricKey>,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) channel_bound: usize,
+    _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> AsyncEncryptorSetup<'a> {
+    pub(crate) fn new(
+        symmetric_params: SymmetricParams,
+        algorithm: SymmetricAlgorithmWrapper,
+        aad: Option<Vec<u8>>,
+        channel_bound: usize,
+    ) -> Self {
+        Self {
+            symmetric_params,
+            algorithm,
+            aad,
+            channel_bound,
+            _lifetime: PhantomData,
+        }
+    }
+
     pub fn start<W: AsyncWrite + Send + Unpin + 'a>(
         self,
         writer: W,
+        key: Cow<'a, TypedSymmetricKey>,
     ) -> AsyncEncryptorImpl<'a, W> {
         let chunk_size = self.symmetric_params.chunk_size as usize;
-        let out_pool = Arc::new(BufferPool::new(chunk_size + self.algorithm.tag_size()));
+        let out_pool = Arc::new(BufferPool::new(
+            chunk_size + self.algorithm.tag_size(),
+        ));
+        let key = Arc::new(key.into_owned());
 
         AsyncEncryptorImpl {
             writer,
             algorithm: self.algorithm,
-            key: Arc::new(self.key.into_owned()),
+            key,
             base_nonce: self.symmetric_params.base_nonce,
             channel_bound: self.channel_bound,
             buffer: BytesMut::with_capacity(chunk_size * 2),
@@ -304,22 +324,44 @@ impl<'a, W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptorImpl<'a, W> {
 
 pub struct AsyncDecryptorSetup<'a> {
     pub(crate) algorithm: SymmetricAlgorithmWrapper,
-    pub(crate) key: Cow<'a, TypedSymmetricKey>,
     pub(crate) nonce: Box<[u8]>,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) chunk_size: usize,
     pub(crate) channel_bound: usize,
+    _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> AsyncDecryptorSetup<'a> {
-    pub fn start<R: AsyncRead + Send + Unpin + 'a>(self, reader: R) -> AsyncDecryptorImpl<'a, R> {
+    pub(crate) fn new(
+        algorithm: SymmetricAlgorithmWrapper,
+        nonce: Box<[u8]>,
+        aad: Option<Vec<u8>>,
+        chunk_size: usize,
+        channel_bound: usize,
+    ) -> Self {
+        Self {
+            algorithm,
+            nonce,
+            aad,
+            chunk_size,
+            channel_bound,
+            _lifetime: PhantomData,
+        }
+    }
+
+    pub fn start<R: AsyncRead + Send + Unpin + 'a>(
+        self,
+        reader: R,
+        key: Cow<'a, TypedSymmetricKey>,
+    ) -> AsyncDecryptorImpl<'a, R> {
         let decrypted_chunk_size = self.chunk_size;
         let encrypted_chunk_size = decrypted_chunk_size + self.algorithm.tag_size();
         let out_pool = Arc::new(BufferPool::new(decrypted_chunk_size));
+        let key = Arc::new(key.into_owned());
         AsyncDecryptorImpl {
             reader,
             algorithm: self.algorithm,
-            key: Arc::new(self.key.into_owned()),
+            key,
             base_nonce: self.nonce,
             channel_bound: self.channel_bound,
             encrypted_chunk_size,

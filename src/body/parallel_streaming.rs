@@ -9,32 +9,47 @@ use crate::common::header::SymmetricParams;
 use crate::common::{derive_nonce, OrderedChunk};
 use crate::error::{Error, Result};
 use seal_crypto_wrapper::prelude::TypedSymmetricKey;
-use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use rayon::prelude::*;
 use std::borrow::Cow;
 use std::collections::BinaryHeap;
 use std::io::{Read, Write};
+use std::marker::PhantomData;
 use std::sync::Arc;
-use std::thread;
+use crossbeam_utils::thread;
 
 // --- Encryptor ---
 
 pub struct ParallelStreamingEncryptor<'a> {
     pub symmetric_params: SymmetricParams,
     pub(crate) algorithm: SymmetricAlgorithmWrapper,
-    pub(crate) key: Cow<'a, TypedSymmetricKey>,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) channel_bound: usize,
+    _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> ParallelStreamingEncryptor<'a> {
-    pub fn run<R, W>(self, mut reader: R, mut writer: W) -> Result<()>
+    pub(crate) fn new(
+        symmetric_params: SymmetricParams,
+        algorithm: SymmetricAlgorithmWrapper,
+        aad: Option<Vec<u8>>,
+        channel_bound: usize,
+    ) -> Self {
+        Self {
+            symmetric_params,
+            algorithm,
+            aad,
+            channel_bound,
+            _lifetime: PhantomData,
+        }
+    }
+
+    pub fn run<R, W>(self, mut reader: R, mut writer: W, key: Cow<'a, TypedSymmetricKey>) -> Result<()>
     where
         R: Read + Send,
-        W: Write,
+        W: Write + Send,
     {
-        let key = Arc::new(self.key.into_owned());
+        let key = Arc::new(key.into_owned());
         let aad_arc = Arc::new(self.aad);
         let pool = Arc::new(BufferPool::new(self.symmetric_params.chunk_size as usize));
         let tag_size = self.algorithm.tag_size();
@@ -47,7 +62,7 @@ impl<'a> ParallelStreamingEncryptor<'a> {
         thread::scope(|s| {
             let raw_chunk_tx_clone = raw_chunk_tx.clone();
             let pool_for_reader = Arc::clone(&pool);
-            s.spawn(move || {
+            s.spawn(move |_| {
                 let mut chunk_index = 0u64;
                 loop {
                     let mut buffer = pool_for_reader.acquire();
@@ -90,7 +105,7 @@ impl<'a> ParallelStreamingEncryptor<'a> {
             let out_pool = Arc::new(BufferPool::new(self.symmetric_params.chunk_size as usize + tag_size));
             let writer_pool = Arc::clone(&out_pool);
             let key_clone = Arc::clone(&key);
-            s.spawn(move || {
+            s.spawn(move |_| {
                 raw_chunk_rx
                     .into_iter()
                     .par_bridge()
@@ -171,7 +186,7 @@ impl<'a> ParallelStreamingEncryptor<'a> {
             }
 
             final_result
-        })
+        }).unwrap()
     }
 }
 
@@ -179,21 +194,38 @@ impl<'a> ParallelStreamingEncryptor<'a> {
 
 pub struct ParallelStreamingDecryptor<'a> {
     pub(crate) algorithm: SymmetricAlgorithmWrapper,
-    pub(crate) key: Cow<'a, TypedSymmetricKey>,
     pub(crate) nonce: Box<[u8]>,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) chunk_size: usize,
     pub(crate) channel_bound: usize,
+    _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> ParallelStreamingDecryptor<'a> {
-    pub fn run<R, W>(self, mut reader: R, mut writer: W) -> Result<()>
+    pub(crate) fn new(
+        algorithm: SymmetricAlgorithmWrapper,
+        nonce: Box<[u8]>,
+        aad: Option<Vec<u8>>,
+        chunk_size: usize,
+        channel_bound: usize,
+    ) -> Self {
+        Self {
+            algorithm,
+            nonce,
+            aad,
+            chunk_size,
+            channel_bound,
+            _lifetime: PhantomData,
+        }
+    }
+
+    pub fn run<R, W>(self, mut reader: R, mut writer: W, key: Cow<'a, TypedSymmetricKey>) -> Result<()>
     where
         R: Read + Send,
-        W: Write,
+        W: Write + Send,
     {
         let encrypted_chunk_size = self.chunk_size + self.algorithm.tag_size();
-        let key = Arc::new(self.key.into_owned());
+        let key = Arc::new(key.into_owned());
         let aad_arc = Arc::new(self.aad);
         let pool = Arc::new(BufferPool::new(encrypted_chunk_size));
         let base_nonce = self.nonce;
@@ -205,7 +237,7 @@ impl<'a> ParallelStreamingDecryptor<'a> {
         thread::scope(|s| {
             let enc_chunk_tx_clone = enc_chunk_tx.clone();
             let pool_for_reader = Arc::clone(&pool);
-            s.spawn(move || {
+            s.spawn(move |_| {
                 let mut chunk_index = 0u64;
                 loop {
                     let mut buffer = pool_for_reader.acquire();
@@ -248,7 +280,7 @@ impl<'a> ParallelStreamingDecryptor<'a> {
             let out_pool = Arc::new(BufferPool::new(self.chunk_size));
             let writer_pool = Arc::clone(&out_pool);
             let key_clone = Arc::clone(&key);
-            s.spawn(move || {
+            s.spawn(move |_| {
                 enc_chunk_rx
                     .into_iter()
                     .par_bridge()
@@ -328,6 +360,6 @@ impl<'a> ParallelStreamingDecryptor<'a> {
             }
 
             final_result
-        })
+        }).unwrap()
     }
 }

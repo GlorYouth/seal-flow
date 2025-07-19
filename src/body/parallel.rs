@@ -6,111 +6,115 @@
 
 use crate::common::derive_nonce;
 use crate::common::header::SymmetricParams;
-use crate::error::{Error, FormatError, Result};
+use crate::error::Result;
 use seal_crypto_wrapper::prelude::TypedSymmetricKey;
 use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use rayon::prelude::*;
 use std::borrow::Cow;
+use std::marker::PhantomData;
 
 pub struct ParallelEncryptor<'a> {
     pub symmetric_params: SymmetricParams,
     pub(crate) algorithm: SymmetricAlgorithmWrapper,
-    pub(crate) key: Cow<'a, TypedSymmetricKey>,
     pub(crate) aad: Option<Vec<u8>>,
+    _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> ParallelEncryptor<'a> {
-    pub fn encrypt(self, plaintext: &[u8]) -> Result<Vec<u8>> {
-        let chunk_size = self.symmetric_params.chunk_size as usize;
-        let tag_size = self.algorithm.tag_size();
-        let num_chunks = (plaintext.len() + chunk_size - 1) / chunk_size;
-        let last_chunk_len = if plaintext.len() % chunk_size == 0 {
-            if plaintext.is_empty() { 0 } else { chunk_size }
-        } else {
-            plaintext.len() % chunk_size
-        };
-
-        let total_body_size = if plaintext.is_empty() {
-            0
-        } else {
-            (num_chunks.saturating_sub(1)) * (chunk_size + tag_size) + (last_chunk_len + tag_size)
-        };
-        let mut encrypted_body = vec![0u8; total_body_size];
-
-        if !plaintext.is_empty() {
-            encrypted_body
-                .par_chunks_mut(chunk_size + tag_size)
-                .zip(plaintext.par_chunks(chunk_size))
-                .enumerate()
-                .try_for_each(|(i, (output_chunk, input_chunk))| -> Result<()> {
-                    let nonce = derive_nonce(&self.symmetric_params.base_nonce, i as u64);
-                    let expected_output_len = input_chunk.len() + tag_size;
-                    let buffer_slice = &mut output_chunk[..expected_output_len];
-
-                    self.algorithm.encrypt_to_buffer(
-                        input_chunk,
-                        buffer_slice,
-                        self.key.as_ref(),
-                        &nonce,
-                        self.aad.as_deref(),
-                    )
-                    .map(|_| ())
-                    .map_err(Error::from)
-                })?;
+    pub(crate) fn new(
+        symmetric_params: SymmetricParams,
+        algorithm: SymmetricAlgorithmWrapper,
+        aad: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            symmetric_params,
+            algorithm,
+            aad,
+            _lifetime: PhantomData,
         }
+    }
 
-        Ok(encrypted_body)
+    pub fn encrypt(self, plaintext: &[u8], key: Cow<'a, TypedSymmetricKey>) -> Result<Vec<u8>> {
+        let chunk_size = self.symmetric_params.chunk_size as usize;
+        let aad = self.aad.as_deref();
+        let base_nonce = &self.symmetric_params.base_nonce;
+
+        let chunks: Vec<_> = plaintext.chunks(chunk_size).enumerate().collect();
+
+        let encrypted_chunks: Result<Vec<Vec<u8>>> = chunks
+            .into_par_iter()
+            .map(|(i, chunk)| {
+                let nonce = derive_nonce(base_nonce, i as u64);
+                let mut encrypted_chunk = vec![0; chunk.len() + self.algorithm.tag_size()];
+                let bytes_written = self.algorithm.encrypt_to_buffer(
+                    chunk,
+                    &mut encrypted_chunk,
+                    &key,
+                    &nonce,
+                    aad,
+                )?;
+                encrypted_chunk.truncate(bytes_written);
+                Ok(encrypted_chunk)
+            })
+            .collect();
+
+        Ok(encrypted_chunks?.into_iter().flatten().collect())
     }
 }
 
 pub struct ParallelDecryptor<'a> {
     pub(crate) algorithm: SymmetricAlgorithmWrapper,
-    pub(crate) key: Cow<'a, TypedSymmetricKey>,
     pub(crate) nonce: Box<[u8]>,
     pub(crate) chunk_size: usize,
     pub(crate) aad: Option<Vec<u8>>,
+    _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> ParallelDecryptor<'a> {
-    pub fn decrypt(self, ciphertext_body: &[u8]) -> Result<Vec<u8>> {
-        let tag_len = self.algorithm.tag_size();
-        let encrypted_chunk_size = self.chunk_size + tag_len;
-
-        let num_chunks = (ciphertext_body.len() + encrypted_chunk_size - 1) / encrypted_chunk_size;
-        let last_chunk_len = if ciphertext_body.len() % encrypted_chunk_size == 0 {
-            if ciphertext_body.is_empty() { 0 } else { encrypted_chunk_size }
-        } else {
-            ciphertext_body.len() % encrypted_chunk_size
-        };
-
-        if last_chunk_len > 0 && last_chunk_len <= tag_len {
-            return Err(Error::Format(FormatError::InvalidCiphertext));
+    pub(crate) fn new(
+        algorithm: SymmetricAlgorithmWrapper,
+        nonce: Box<[u8]>,
+        chunk_size: usize,
+        aad: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            algorithm,
+            nonce,
+            chunk_size,
+            aad,
+            _lifetime: PhantomData,
         }
+    }
 
-        let total_size = (num_chunks.saturating_sub(1)) * self.chunk_size
-            + (if last_chunk_len > tag_len { last_chunk_len - tag_len } else { 0 });
-        let mut plaintext = vec![0u8; total_size];
+    pub fn decrypt(self, ciphertext_body: &[u8], key: Cow<'a, TypedSymmetricKey>) -> Result<Vec<u8>> {
+        let chunk_size_with_tag = self.chunk_size + self.algorithm.tag_size();
+        let aad = self.aad.as_deref();
+        let base_nonce = &self.nonce;
 
-        let decrypted_chunk_lengths: Vec<usize> = plaintext
-            .par_chunks_mut(self.chunk_size)
-            .zip(ciphertext_body.par_chunks(encrypted_chunk_size))
-            .enumerate()
-            .map(|(i, (plaintext_chunk, encrypted_chunk))| -> Result<usize> {
-                let nonce = derive_nonce(&self.nonce, i as u64);
-                self.algorithm.decrypt_to_buffer(
-                    encrypted_chunk,
-                    plaintext_chunk,
-                    self.key.as_ref(),
+        let chunks: Vec<_> = ciphertext_body.chunks(chunk_size_with_tag).enumerate().collect();
+
+        let decrypted_chunks: Result<Vec<Vec<u8>>> = chunks
+            .into_par_iter()
+            .map(|(i, chunk)| {
+                let nonce = derive_nonce(base_nonce, i as u64);
+                let mut decrypted_chunk = vec![0; chunk.len()];
+                let bytes_written = self.algorithm.decrypt_to_buffer(
+                    chunk,
+                    &mut decrypted_chunk,
+                    &key,
                     &nonce,
-                    self.aad.as_deref(),
-                )
-                .map_err(Error::from)
+                    aad,
+                )?;
+                decrypted_chunk.truncate(bytes_written);
+                Ok(decrypted_chunk)
             })
-            .collect::<Result<Vec<usize>>>()?;
+            .collect();
 
-        let actual_size = decrypted_chunk_lengths.iter().sum();
-        plaintext.truncate(actual_size);
+        let mut plaintext = Vec::with_capacity(ciphertext_body.len());
+        for chunk in decrypted_chunks? {
+            plaintext.extend_from_slice(&chunk);
+        }
 
         Ok(plaintext)
     }

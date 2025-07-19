@@ -13,31 +13,49 @@ use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use std::borrow::Cow;
 use std::io::{self, Read, Write};
+use std::marker::PhantomData;
 
 // --- Encryptor ---
 
 pub struct StreamingEncryptorSetup<'a> {
     pub symmetric_params: SymmetricParams,
     pub(crate) algorithm: SymmetricAlgorithmWrapper,
-    pub(crate) key: Cow<'a, TypedSymmetricKey>,
     pub(crate) aad: Option<Vec<u8>>,
+    _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> StreamingEncryptorSetup<'a> {
-    pub fn start<W: Write + 'a>(self, writer: W) -> StreamingEncryptor<'a, W> {
-        let encrypted_chunk_buffer =
-            vec![0u8; self.symmetric_params.chunk_size as usize + self.algorithm.tag_size()];
+    pub(crate) fn new(
+        symmetric_params: SymmetricParams,
+        algorithm: SymmetricAlgorithmWrapper,
+        aad: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            symmetric_params,
+            algorithm,
+            aad,
+            _lifetime: PhantomData,
+        }
+    }
+
+    pub fn start<W: Write + 'a>(
+        self,
+        writer: W,
+        key: Cow<'a, TypedSymmetricKey>,
+    ) -> StreamingEncryptor<'a, W> {
+        let chunk_size = self.symmetric_params.chunk_size as usize;
+        let tag_size = self.algorithm.tag_size();
         StreamingEncryptor {
             writer,
-            algorithm: self.algorithm,
-            key: self.key.into_owned(),
+            algorithm: self.algorithm.clone(),
+            key: key.into_owned(),
             base_nonce: self.symmetric_params.base_nonce,
-            chunk_size: self.symmetric_params.chunk_size as usize,
-            buffer: Vec::with_capacity(self.symmetric_params.chunk_size as usize),
+            chunk_size,
+            buffer: Vec::with_capacity(chunk_size),
             chunk_counter: 0,
-            encrypted_chunk_buffer,
+            encrypted_chunk_buffer: vec![0u8; chunk_size + tag_size],
             aad: self.aad,
-            _lifetime: std::marker::PhantomData,
+            _lifetime: PhantomData,
         }
     }
 }
@@ -143,19 +161,39 @@ impl<'a, W: Write> Write for StreamingEncryptor<'a, W> {
 
 pub struct StreamingDecryptorSetup<'a> {
     pub(crate) algorithm: SymmetricAlgorithmWrapper,
-    pub(crate) key: Cow<'a, TypedSymmetricKey>,
     pub(crate) nonce: Box<[u8]>,
     pub(crate) chunk_size: usize,
     pub(crate) aad: Option<Vec<u8>>,
+    _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> StreamingDecryptorSetup<'a> {
-    pub fn start<R: Read + 'a>(self, reader: R) -> StreamingDecryptor<'a, R> {
+    pub(crate) fn new(
+        algorithm: SymmetricAlgorithmWrapper,
+        nonce: Box<[u8]>,
+        chunk_size: usize,
+        aad: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            algorithm,
+            nonce,
+            chunk_size,
+            aad,
+            _lifetime: PhantomData,
+        }
+    }
+
+    pub fn start<R: Read + 'a>(
+        self,
+        reader: R,
+        key: Cow<'a, TypedSymmetricKey>,
+    ) -> StreamingDecryptor<'a, R> {
         let encrypted_chunk_size = self.chunk_size + self.algorithm.tag_size();
+        let algorithm = self.algorithm.clone();
         StreamingDecryptor {
             reader,
-            algorithm: self.algorithm,
-            key: self.key.into_owned(),
+            algorithm,
+            key: key.into_owned(),
             base_nonce: self.nonce,
             encrypted_chunk_size,
             buffer: io::Cursor::new(Vec::new()),
@@ -163,7 +201,7 @@ impl<'a> StreamingDecryptorSetup<'a> {
             chunk_counter: 0,
             is_done: false,
             aad: self.aad,
-            _lifetime: std::marker::PhantomData,
+            _lifetime: PhantomData,
         }
     }
 }

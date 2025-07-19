@@ -1,24 +1,20 @@
-use std::borrow::Cow;
+use std::marker::PhantomData;
 
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use rand::{rngs::OsRng, TryRngCore};
-use seal_crypto_wrapper::prelude::TypedSymmetricKey;
+use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use crate::body::traits::ProcessingMode;
 use crate::error::Result;
 
 pub struct BodyEncryptConfig<'a> {
-    pub(crate) key: Cow<'a, TypedSymmetricKey>,
     pub(crate) nonce: Box<[u8]>,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) config: ArcConfig,
     pub(crate) mode: ProcessingMode,
+    _lifetime: PhantomData<&'a ()>
 }
 
 impl<'a> BodyEncryptConfig<'a> {
-    pub fn key(&self) -> &TypedSymmetricKey {
-        self.key.as_ref()
-    }
-
     pub fn nonce(&self) -> &[u8] {
         &self.nonce
     }
@@ -41,32 +37,33 @@ impl<'a> BodyEncryptConfig<'a> {
 }
 
 pub struct BodyEncryptConfigBuilder<'a> {
-    key: Cow<'a, TypedSymmetricKey>,
+    algorithm: SymmetricAlgorithmWrapper,
     nonce: Option<Box<[u8]>>,
     aad: Option<Vec<u8>>,
     config: ArcConfig,
     mode: ProcessingMode,
+    _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> BodyEncryptConfigBuilder<'a> {
-    pub fn new(key: Cow<'a, TypedSymmetricKey>, config: ArcConfig) -> Self {
+    pub fn new(algorithm: SymmetricAlgorithmWrapper, config: ArcConfig) -> Self {
         Self {
-            key,
+            algorithm,
             nonce: None,
             aad: None,
             config,
             mode: ProcessingMode::Ordinary,
+            _lifetime: PhantomData,
         }
     }
 
-    pub fn nonce(&mut self, mut f: impl FnMut(&mut [u8]) -> Result<()>) -> Result<&mut Self> {
-        let algorithm = self.key.as_ref().algorithm().into_symmetric_wrapper();
-        let mut nonce = Vec::with_capacity(algorithm.nonce_size());
-        nonce.resize(algorithm.nonce_size(), 0);
+    pub fn nonce(&mut self, mut f: impl FnMut(&mut [u8]) -> Result<()>) -> Result<()> {
+        let mut nonce = Vec::with_capacity(self.algorithm.nonce_size());
+        nonce.resize(self.algorithm.nonce_size(), 0);
         let mut nonce = nonce.into_boxed_slice();
         f(&mut nonce)?;
         self.nonce = Some(nonce);
-        Ok(self)
+        Ok(())
     }
 
     pub fn aad(&mut self, aad: Vec<u8>) -> &mut Self {
@@ -88,31 +85,24 @@ impl<'a> BodyEncryptConfigBuilder<'a> {
         }
 
         Ok(BodyEncryptConfig {
-            key: self.key,
             nonce: self.nonce.unwrap(),
             aad: self.aad,
             config: self.config,
             mode: self.mode,
+            _lifetime: PhantomData,
         })
     }
 }
-    
-    
-
 
 pub struct BodyDecryptConfig<'a> {
-    pub key: Cow<'a, TypedSymmetricKey>,
     pub nonce: Box<[u8]>,
     pub aad: Option<Vec<u8>>,
     pub config: DecryptorConfig,
     pub mode: ProcessingMode,
+    _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> BodyDecryptConfig<'a> {
-    pub fn key(&self) -> &TypedSymmetricKey {
-        self.key.as_ref()
-    }
-
     pub fn nonce(&self) -> &[u8] {
         &self.nonce
     }

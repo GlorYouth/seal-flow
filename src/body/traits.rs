@@ -75,7 +75,6 @@ impl<S: SymmetricAlgorithmTrait + ?Sized> BodyProcessor for S {
     ) -> Result<SymmetricEncryptorSetup<'a>> {
         let mode = config.mode();
         let BodyEncryptConfig {
-            key,
             nonce,
             aad,
             config,
@@ -85,51 +84,46 @@ impl<S: SymmetricAlgorithmTrait + ?Sized> BodyProcessor for S {
 
         let processor = match mode {
             ProcessingMode::Ordinary => {
-                let encryptor = OrdinaryEncryptor {
-                    symmetric_params: symmetric_params.clone(),
-                    algorithm: self.algorithm().into_symmetric_wrapper(),
-                    key,
+                let encryptor = OrdinaryEncryptor::new(
+                    symmetric_params.clone(),
+                    self.algorithm().into_symmetric_wrapper(),
                     aad,
-                };
+                );
                 BodyEncryptor::Ordinary(encryptor)
             }
             ProcessingMode::Streaming => {
-                let setup = StreamingEncryptorSetup {
-                    symmetric_params: symmetric_params.clone(),
-                    algorithm: self.algorithm().into_symmetric_wrapper(),
-                    key,
+                let setup = StreamingEncryptorSetup::new(
+                    symmetric_params.clone(),
+                    self.algorithm().into_symmetric_wrapper(),
                     aad,
-                };
+                );
                 BodyEncryptor::Streaming(setup)
             }
             ProcessingMode::Parallel => {
-                let encryptor = ParallelEncryptor {
-                    symmetric_params: symmetric_params.clone(),
-                    algorithm: self.algorithm().into_symmetric_wrapper(),
-                    key,
+                let encryptor = ParallelEncryptor::new(
+                    symmetric_params.clone(),
+                    self.algorithm().into_symmetric_wrapper(),
                     aad,
-                };
+                );
                 BodyEncryptor::Parallel(encryptor)
             }
             ProcessingMode::ParallelStreaming => {
-                let encryptor = ParallelStreamingEncryptor {
-                    symmetric_params: symmetric_params.clone(),
-                    algorithm: self.algorithm().into_symmetric_wrapper(),
-                    key,
+                let encryptor = ParallelStreamingEncryptor::new(
+                    symmetric_params.clone(),
+                    self.algorithm().into_symmetric_wrapper(),
                     aad,
-                    channel_bound: config.channel_bound(),
-                };
+                    config.channel_bound(),
+                );
                 BodyEncryptor::ParallelStreaming(encryptor)
             }
             #[cfg(feature = "async")]
             ProcessingMode::Asynchronous => {
-                let setup = AsyncEncryptorSetup {
-                    symmetric_params: symmetric_params.clone(),
-                    algorithm: self.algorithm().into_symmetric_wrapper(),
-                    key,
+                let setup = AsyncEncryptorSetup::new(
+                    symmetric_params.clone(),
+                    self.algorithm().into_symmetric_wrapper(),
                     aad,
-                    channel_bound: config.channel_bound(),
-                };
+                    config.channel_bound(),
+                );
                 BodyEncryptor::Asynchronous(setup)
             }
         };
@@ -150,56 +144,51 @@ impl<S: SymmetricAlgorithmTrait + ?Sized> BodyProcessor for S {
 
         let processor = match mode {
             ProcessingMode::Ordinary => {
-                let decryptor = OrdinaryDecryptor {
-                    algorithm: self.algorithm().into_symmetric_wrapper(),
-                    key: config.key,
-                    nonce: config.nonce,
+                let decryptor = OrdinaryDecryptor::new(
+                    self.algorithm().into_symmetric_wrapper(),
+                    config.nonce,
                     chunk_size,
-                    aad: config.aad,
-                };
+                    config.aad,
+                );
                 BodyDecryptor::Ordinary(decryptor)
             }
             ProcessingMode::Streaming => {
-                let setup = StreamingDecryptorSetup {
-                    algorithm: self.algorithm().into_symmetric_wrapper(),
-                    key: config.key,
-                    nonce: config.nonce,
+                let setup = StreamingDecryptorSetup::new(
+                    self.algorithm().into_symmetric_wrapper(),
+                    config.nonce,
                     chunk_size,
-                    aad: config.aad,
-                };
+                    config.aad,
+                );
                 BodyDecryptor::Streaming(setup)
             }
             ProcessingMode::Parallel => {
-                let decryptor = ParallelDecryptor {
-                    algorithm: self.algorithm().into_symmetric_wrapper(),
-                    key: config.key,
-                    nonce: config.nonce,
+                let decryptor = ParallelDecryptor::new(
+                    self.algorithm().into_symmetric_wrapper(),
+                    config.nonce,
                     chunk_size,
-                    aad: config.aad,
-                };
+                    config.aad,
+                );
                 BodyDecryptor::Parallel(decryptor)
             }
             ProcessingMode::ParallelStreaming => {
-                let decryptor = ParallelStreamingDecryptor {
-                    algorithm: self.algorithm().into_symmetric_wrapper(),
-                    key: config.key,
-                    nonce: config.nonce,
-                    aad: config.aad,
+                let decryptor = ParallelStreamingDecryptor::new(
+                    self.algorithm().into_symmetric_wrapper(),
+                    config.nonce,
+                    config.aad,
                     chunk_size,
                     channel_bound,
-                };
+                );
                 BodyDecryptor::ParallelStreaming(decryptor)
             }
             #[cfg(feature = "async")]
             ProcessingMode::Asynchronous => {
-                let setup = AsyncDecryptorSetup {
-                    algorithm: self.algorithm().into_symmetric_wrapper(),
-                    key: config.key,
-                    nonce: config.nonce,
-                    aad: config.aad,
+                let setup = AsyncDecryptorSetup::new(
+                    self.algorithm().into_symmetric_wrapper(),
+                    config.nonce,
+                    config.aad,
                     chunk_size,
                     channel_bound,
-                };
+                );
                 BodyDecryptor::Asynchronous(setup)
             }
         };
