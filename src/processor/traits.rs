@@ -2,14 +2,14 @@
 //!
 //! 定义不同消息体处理模式的 trait。
 
-use crate::body::asynchronous::{AsyncDecryptorSetup, AsyncEncryptorSetup};
-use crate::body::config::{BodyDecryptConfig, BodyEncryptConfig};
-use crate::body::ordinary::{OrdinaryDecryptor, OrdinaryEncryptor};
-use crate::body::parallel::{ParallelDecryptor, ParallelEncryptor};
-use crate::body::parallel_streaming::{
+use crate::processor::asynchronous::{AsyncDecryptorSetup, AsyncEncryptorSetup};
+use crate::processor::config::{BodyDecryptConfig, BodyEncryptConfig};
+use crate::processor::ordinary::{OrdinaryDecryptor, OrdinaryEncryptor};
+use crate::processor::parallel::{ParallelDecryptor, ParallelEncryptor};
+use crate::processor::parallel_streaming::{
     ParallelStreamingDecryptor, ParallelStreamingEncryptor,
 };
-use crate::body::streaming::{StreamingDecryptorSetup, StreamingEncryptorSetup};
+use crate::processor::streaming::{StreamingDecryptorSetup, StreamingEncryptorSetup};
 use crate::common::header::SymmetricParams;
 use crate::error::Result;
 use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;

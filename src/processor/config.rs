@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use rand::{rngs::OsRng, TryRngCore};
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
-use crate::body::traits::ProcessingMode;
+use crate::processor::traits::ProcessingMode;
 use crate::error::Result;
 
 pub struct BodyEncryptConfig<'a> {

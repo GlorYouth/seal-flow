@@ -143,6 +143,19 @@ pub struct SealFlowHybridHeader {
     extra_data: Option<Vec<u8>>,
 }
 
+/// A "master" header that wraps specific header types. This allows the decryptor
+/// to determine the encryption mode (symmetric vs. hybrid) by first decoding this
+/// envelope.
+///
+/// 一个“主”标头，用于包装特定的标头类型。这允许解密器
+/// 通过首先解码此信封来确定加密模式（对称与混合）。
+#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
+pub enum SealFlowEnvelopeHeader {
+    Symmetric(SealFlowSymmetricHeader),
+    Hybrid(SealFlowHybridHeader),
+}
+
 /// A trait representing the common interface for all SealFlow headers.
 ///
 /// 代表所有 SealFlow 标头通用接口的 trait。
@@ -257,6 +270,22 @@ pub trait SealFlowHeader: Sized + Serialize + for<'de> Deserialize<'de> + bincod
     ///
     /// 返回附加到头部的额外数据。
     fn extra_data(&self) -> Option<&[u8]>;
+}
+
+impl SealFlowHeader for SealFlowEnvelopeHeader {
+    fn symmetric_params(&self) -> &SymmetricParams {
+        match self {
+            SealFlowEnvelopeHeader::Symmetric(h) => h.symmetric_params(),
+            SealFlowEnvelopeHeader::Hybrid(h) => h.symmetric_params(),
+        }
+    }
+
+    fn extra_data(&self) -> Option<&[u8]> {
+        match self {
+            SealFlowEnvelopeHeader::Symmetric(h) => h.extra_data(),
+            SealFlowEnvelopeHeader::Hybrid(h) => h.extra_data(),
+        }
+    }
 }
 
 impl SealFlowHeader for SealFlowSymmetricHeader {
