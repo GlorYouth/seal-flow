@@ -118,6 +118,16 @@ pub struct SealFlowSymmetricHeader {
     extra_data: Option<Vec<u8>>,
 }
 
+impl SealFlowSymmetricHeader {
+    pub fn new(symmetric_params: SymmetricParams, extra_data: Option<Vec<u8>>) -> Self {
+        Self {
+            version: 1,
+            symmetric_params,
+            extra_data,
+        }
+    }
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 #[bincode(crate = "crate::bincode")]
