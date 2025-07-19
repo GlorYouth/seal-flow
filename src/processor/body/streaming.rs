@@ -4,7 +4,7 @@
 //! 实现同步、流式加密和解密的通用逻辑。
 //! 这是对称和混合流式模式的后端。
 
-use super::traits::FinishingWrite;
+use crate::processor::traits::FinishingWrite;
 use crate::common::derive_nonce;
 use crate::common::header::SymmetricParams;
 use crate::error::{Error, FormatError, Result};
