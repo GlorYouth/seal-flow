@@ -33,18 +33,9 @@
 //! ```
 
 
-pub(crate) mod body;
-pub(crate) mod common;
+pub mod processor;
+pub mod common;
 pub mod error;
-pub mod mid_level {
-    pub mod body {
-        pub use crate::body::*;
-    }
-    pub mod common {
-        pub use crate::common::*;
-    }
-}
-
 pub use error::{Error, Result};
 
 pub mod provider;
