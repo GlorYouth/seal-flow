@@ -6,11 +6,11 @@
 
 use super::config::{BodyDecryptConfig, BodyEncryptConfig};
 use super::traits::OrdinaryBodyProcessor;
-use crate::algorithms::traits::SymmetricAlgorithm;
+use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use crate::common::derive_nonce;
 use crate::error::Result;
 
-impl<S: SymmetricAlgorithm + ?Sized> OrdinaryBodyProcessor for S {
+impl<S: SymmetricAlgorithmTrait + ?Sized> OrdinaryBodyProcessor for S {
     /// Encrypts in-memory data sequentially.
     ///
     /// 顺序加密内存中的数据。
@@ -29,10 +29,10 @@ impl<S: SymmetricAlgorithm + ?Sized> OrdinaryBodyProcessor for S {
         for (i, chunk) in plaintext.chunks(config.chunk_size() as usize).enumerate() {
             let nonce = derive_nonce(config.nonce(), i as u64);
             let bytes_written = self.encrypt_to_buffer(
-                config.key(),
-                &nonce,
                 chunk,
                 &mut temp_chunk_buffer,
+                config.key(),
+                &nonce,
                 config.aad(),
             )?;
             encrypted_body.extend_from_slice(&temp_chunk_buffer[..bytes_written]);
@@ -68,10 +68,10 @@ impl<S: SymmetricAlgorithm + ?Sized> OrdinaryBodyProcessor for S {
 
             let current_nonce = derive_nonce(config.nonce(), chunk_index as u64);
             let bytes_written = self.decrypt_to_buffer(
-                config.key(),
-                &current_nonce,
                 encrypted_chunk,
                 &mut decrypted_chunk_buffer,
+                config.key(),
+                &current_nonce,
                 config.aad(),
             )?;
 

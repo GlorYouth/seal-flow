@@ -1,47 +1,27 @@
-use bincode::{Decode, Encode};
+
 
 // These enums could also be considered for placement in seal-crypto for sharing.
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享。
-use crate::prelude::{
-    AsymmetricAlgorithmEnum, KdfKeyAlgorithmEnum, SignatureAlgorithmEnum, SymmetricAlgorithmEnum, XofAlgorithmEnum,
-    SignatureAlgorithmTrait,
-};
-use crate::common::SignerSet;
-use crate::error::{CryptoError, Error, FormatError, Result};
-use crate::keys::TypedSignaturePublicKey;
+use crate::error::{Error, FormatError, Result};
+use seal_crypto_wrapper::algorithms::kdf::key::KdfKeyAlgorithm;
+use crate::bincode;
+use seal_crypto_wrapper::prelude::{EncapsulatedKey, TypedKemPublicKey, TypedSignaturePublicKey, XofAlgorithm};
 use std::io::Read;
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-/// Information about the signer.
-///
-/// 签名者信息。
-#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
-pub struct SignerInfo {
-    /// The ID of the signer's key.
-    ///
-    /// 签名者密钥的 ID。
-    pub signer_key_id: String,
-    /// The signature algorithm used.
-    ///
-    /// 使用的签名算法。
-    pub signer_algorithm: SignatureAlgorithmEnum,
-    /// The digital signature.
-    ///
-    /// 数字签名。
-    pub signature: Vec<u8>,
-}
-
 /// KDF (Key-based Derivation Function) configuration information.
 ///
 /// KDF (基于密钥的派生函数) 配置信息。
-#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
-pub struct KdfInfo {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
+pub struct KdfBlock {
     /// The KDF algorithm.
     ///
     /// KDF 算法。
-    pub kdf_algorithm: KdfKeyAlgorithmEnum,
+    pub kdf_algorithm: KdfKeyAlgorithm,
     /// The salt for the KDF.
     ///
     /// 用于 KDF 的盐。
@@ -55,12 +35,13 @@ pub struct KdfInfo {
 /// XOF (Extendable-Output Function) configuration information.
 ///
 /// XOF (可扩展输出函数) 配置信息。
-#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
-pub struct XofInfo {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
+pub struct XofBlock {
     /// The XOF algorithm.
     ///
     /// XOF 算法。
-    pub xof_algorithm: XofAlgorithmEnum,
+    pub xof_algorithm: XofAlgorithm,
     /// The salt for the XOF.
     ///
     /// 用于 XOF 的盐。
@@ -74,257 +55,61 @@ pub struct XofInfo {
 /// Information about the key derivation method used.
 ///
 /// 有关所用密钥派生方法的信息。
-#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
-pub enum DerivationInfo {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
+pub enum DerivationBlock {
     /// Uses a standard Key-based Derivation Function (KDF).
     ///
     /// 使用标准的基于密钥的派生函数 (KDF)。
-    Kdf(KdfInfo),
+    Kdf(KdfBlock),
     /// Uses an Extendable-Output Function (XOF).
     ///
     /// 使用可扩展输出函数 (XOF)。
-    Xof(XofInfo),
+    Xof(XofBlock),
 }
 
-/// Specific header payload for different encryption modes.
-///
-/// 不同加密模式的具体头部有效载荷。
-#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
-pub enum SpecificHeaderPayload {
-    /// Payload for symmetric encryption.
-    ///
-    /// 对称加密的有效载荷。
-    Symmetric {
-        /// Identifier for key management.
-        ///
-        /// 用于密钥管理的标识符。
-        key_id: String,
-        /// The symmetric algorithm used.
-        ///
-        /// 使用的对称算法。
-        algorithm: SymmetricAlgorithmEnum,
-    },
-    /// Payload for hybrid encryption.
-    ///
-    /// 混合加密的有效载荷。
-    Hybrid {
-        /// Identifier for the Key-Encrypting-Key (KEK).
-        ///
-        /// 密钥加密密钥 (KEK) 的标识符。
-        kek_id: String,
-        /// The asymmetric algorithm for the KEK.
-        ///
-        /// 用于 KEK 的非对称算法。
-        kek_algorithm: AsymmetricAlgorithmEnum,
-        /// The symmetric algorithm for the Data-Encrypting-Key (DEK).
-        ///
-        /// 用于数据加密密钥 (DEK) 的对称算法。
-        dek_algorithm: SymmetricAlgorithmEnum,
-        /// The encrypted Data-Encrypting-Key (DEK).
-        ///
-        /// 加密的数据加密密钥 (DEK)。
-        encrypted_dek: Vec<u8>,
-        /// Signature information, if the header is signed.
-        ///
-        /// 签名信息，如果头部已签名。
-        signature: Option<SignerInfo>,
-        /// Key derivation information, if used.
-        ///
-        /// 密钥派生信息（如果使用）。
-        derivation_info: Option<DerivationInfo>,
-    },
+#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
+pub struct KemBlock {
+    ephemeral_key: TypedKemPublicKey, // KEM 生成的临时公钥
+    encapsulated_key: EncapsulatedKey, // 封装（加密）后的对称密钥
 }
 
-/// Header payload for different encryption modes.
-///
-/// 不同加密模式的头有效载荷。
-#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
-pub struct HeaderPayload {
-    /// The chunk size for the symmetric algorithm.
-    ///
-    /// 对称算法的分块大小。
-    pub chunk_size: u32,
-    /// The base nonce for stream encryption.
-    ///
-    /// 流加密的基础 nonce。
-    pub base_nonce: [u8; 12],
-    /// The specific payload for the encryption mode.
-    ///
-    /// 特定于加密模式的有效载荷。
-    pub specific_payload: SpecificHeaderPayload,
-    /// Optional extra data that can be attached by the caller.
-    /// This data is part of the signed payload when a signature is present.
-    ///
-    /// 调用者可以附加的可选额外数据。
-    /// 当存在签名时，此数据是已签名有效负载的一部分。
-    pub extra_data: Option<Vec<u8>>,
+#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
+pub struct SignatureBlock {
+    // 公钥标识符，用于接收方查找验证密钥
+    public_key_id: String,
+    signature: TypedSignaturePublicKey, // 对 (kem_block + symmetric_params) 的签名
 }
 
-impl HeaderPayload {
-    /// Returns the key ID if the payload is for symmetric encryption.
-    ///
-    /// 如果有效载荷用于对称加密，则返回密钥 ID。
-    pub fn key_id(&self) -> Option<&str> {
-        match &self.specific_payload {
-            SpecificHeaderPayload::Symmetric { key_id, .. } => Some(key_id),
-            _ => None,
-        }
-    }
-
-    /// Returns the Key-Encrypting-Key (KEK) ID if the payload is for hybrid encryption.
-    ///
-    /// 如果有效载荷用于混合加密，则返回密钥加密密钥 (KEK) 的 ID。
-    pub fn kek_id(&self) -> Option<&str> {
-        match &self.specific_payload {
-            SpecificHeaderPayload::Hybrid { kek_id, .. } => Some(kek_id),
-            _ => None,
-        }
-    }
-
-    /// Returns the signer key ID if the payload is for hybrid encryption.
-    ///
-    /// 如果有效载荷用于混合加密，则返回签名者密钥 ID。
-    pub fn signer_key_id(&self) -> Option<&str> {
-        match &self.specific_payload {
-            SpecificHeaderPayload::Hybrid { signature, .. } => {
-                signature.as_ref().map(|s| s.signer_key_id.as_str())
-            }
-            _ => None,
-        }
-    }
-
-    /// Returns the symmetric algorithm used for data encryption.
-    /// In Hybrid mode, this is the Data-Encrypting-Key (DEK) algorithm.
-    ///
-    /// 返回用于数据加密的对称算法。
-    /// 在混合模式下，这是数据加密密钥 (DEK) 的算法。
-    pub fn symmetric_algorithm(&self) -> SymmetricAlgorithmEnum {
-        match &self.specific_payload {
-            SpecificHeaderPayload::Symmetric { algorithm, .. } => *algorithm,
-            SpecificHeaderPayload::Hybrid { dek_algorithm, .. } => *dek_algorithm,
-        }
-    }
-
-    /// Returns the asymmetric algorithm used for key encapsulation, if applicable.
-    /// This is only present in Hybrid mode.
-    ///
-    /// 如果适用，返回用于密钥封装的非对称算法。
-    /// 这仅存在于混合模式中。
-    pub fn asymmetric_algorithm(&self) -> Option<AsymmetricAlgorithmEnum> {
-        match &self.specific_payload {
-            SpecificHeaderPayload::Hybrid { kek_algorithm, .. } => Some(*kek_algorithm),
-            _ => None,
-        }
-    }
-
-    /// Returns the signature algorithm, if applicable.
-    ///
-    /// 如果适用，返回签名算法。
-    pub fn signer_algorithm(&self) -> Option<SignatureAlgorithmEnum> {
-        match &self.specific_payload {
-            SpecificHeaderPayload::Hybrid { signature, .. } => {
-                signature.as_ref().map(|s| s.signer_algorithm)
-            }
-            _ => None,
-        }
-    }
-
-    /// Returns the signature, if applicable.
-    ///
-    /// 如果适用，返回签名。
-    pub fn signature(&self) -> Option<&[u8]> {
-        match &self.specific_payload {
-            SpecificHeaderPayload::Hybrid { signature, .. } => {
-                signature.as_ref().map(|s| s.signature.as_slice())
-            }
-            _ => None,
-        }
-    }
-
-    /// Gets the payload to be signed and the signature itself.
-    ///
-    /// 获取要签名的有效载荷和签名本身。
-    pub(crate) fn get_signed_payload_and_sig(&self) -> Result<(Vec<u8>, Vec<u8>)> {
-        if let SpecificHeaderPayload::Hybrid { .. } = &self.specific_payload {
-            let signature = self
-                .signature()
-                .ok_or(CryptoError::MissingSignature)?
-                .to_vec();
-
-            let mut temp_payload = self.clone();
-            if let SpecificHeaderPayload::Hybrid {
-                ref mut signature, ..
-            } = &mut temp_payload.specific_payload
-            {
-                *signature = None;
-            }
-
-            let payload_bytes = bincode::encode_to_vec(&temp_payload, bincode::config::standard())?;
-            Ok((payload_bytes, signature))
-        } else {
-            Err(CryptoError::UnsupportedOperation.into())
-        }
-    }
-
-    /// Signs the payload and embeds the signature. This mutation is only valid for Hybrid mode.
-    ///
-    /// 对有效载荷进行签名并嵌入签名。此操作仅对混合模式有效。
-    pub(crate) fn sign_and_embed(&mut self, signer: &SignerSet, aad: Option<&[u8]>) -> Result<()> {
-        // The payload to be signed is a serialization of the header payload with the signature field set to None.
-        // We clone the current payload, set its signature to None, and then serialize it.
-        // This avoids a borrow checker conflict where `self` cannot be borrowed immutably for serialization
-        // while a mutable borrow on `self.specific_payload.signature` exists.
-        let payload_to_sign = {
-            if !matches!(&self.specific_payload, SpecificHeaderPayload::Hybrid { .. }) {
-                return Err(CryptoError::UnsupportedOperation.into());
-            }
-            let mut temp_payload = self.clone();
-            if let SpecificHeaderPayload::Hybrid { signature, .. } =
-                &mut temp_payload.specific_payload
-            {
-                *signature = None;
-            }
-            bincode::encode_to_vec(&temp_payload, bincode::config::standard())?
-        };
-
-        let mut final_payload_bytes = payload_to_sign;
-        if let Some(aad_data) = aad {
-            final_payload_bytes.extend_from_slice(aad_data);
-        }
-
-        let signature_bytes = signer.signer.sign(&final_payload_bytes, &signer.signing_key)?;
-
-        // Now that the signature is created, we can embed it into `self`.
-        if let SpecificHeaderPayload::Hybrid { signature, .. } = &mut self.specific_payload {
-            *signature = Some(SignerInfo {
-                signer_key_id: signer.signer_key_id.clone(),
-                signer_algorithm: signer.signer.algorithm(),
-                signature: signature_bytes,
-            });
-            Ok(())
-        } else {
-            // This case is unreachable due to the `matches!` check at the beginning.
-            Err(CryptoError::UnsupportedOperation.into())
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
+pub struct SymmetricParams {
+    chunk_size: u32,
+    base_nonce: Box<[u8]>, // 用于派生每个 chunk nonce 的基础 nonce
+    // AAD 可以很大，通常不直接放入头部。
+    // 可以选择性地包含它的哈希值，并对该哈希签名。
+    aad_hash: Option<[u8; 32]>, 
 }
 
-/// The metadata envelope for all encrypted data streams.
-///
-/// 所有加密数据流的元数据信封。
-#[derive(Debug, Clone, PartialEq, Eq, Decode, Encode)]
-pub struct Header {
-    /// The version of the header format.
-    ///
-    /// 标头格式的版本。
-    pub version: u16,
-    /// The payload containing mode-specific metadata.
-    ///
-    /// 包含特定于模式的元数据的有效载荷。
-    pub payload: HeaderPayload,
+
+#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
+pub struct SealFlowHybridHeader {
+    // 头部格式版本，用于未来扩展
+    version: u16, 
+    // 非对称加密参数
+    kem_block: KemBlock,
+    signature_block: Option<SignatureBlock>,
+    // 对称加密参数
+    symmetric_params: SymmetricParams,
+    derivation_block: DerivationBlock,
+    extra_data: Option<Vec<u8>>,
 }
 
-impl Header {
+
+impl SealFlowHybridHeader {
     /// Encodes the header into a byte vector.
     ///
     /// 将标头编码为字节向量。
@@ -404,54 +189,10 @@ impl Header {
         Ok(header)
     }
 
-    /// Verifies the header signature if a verification key is provided.
-    ///
-    /// 如果提供了验证密钥，则验证标头签名。
-    pub fn verify(
-        &self,
-        verification_key: Option<&TypedSignaturePublicKey>,
-        aad: Option<&[u8]>,
-    ) -> Result<()> {
-        // If no verification key is provided, skip verification.
-        // 如果没有提供验证密钥，跳过验证。
-        let verification_key = match verification_key {
-            Some(key) => key,
-            None => return Ok(()),
-        };
-
-        // If the header has a signature, verify it.
-        // 如果头部有签名，则进行验证。
-        if let Some(algo) = self.payload.signer_algorithm() {
-            // Get the payload to be signed and the signature itself.
-            // 获取签名载荷和签名本身。
-            let (mut payload_bytes, signature) = self.payload.get_signed_payload_and_sig()?;
-
-            // Append AAD (if it exists) to the payload to be verified.
-            // 将 AAD（如果存在）附加到要验证的负载中。
-            if let Some(aad_data) = aad {
-                payload_bytes.extend_from_slice(aad_data);
-            }
-
-            let key_algo = verification_key.algorithm();
-            if algo == key_algo {
-
-                key_algo.into_signature_wrapper().verify(&payload_bytes, verification_key, signature)?;
-            } else {
-                return Err(Error::Format(FormatError::InvalidKeyType));
-            }
-            
-            Ok(())
-        } else {
-            // No signature, but a verification key was provided.
-            // 没有签名，但提供了验证密钥。
-            Err(CryptoError::MissingSignature.into())
-        }
-    }
-
     /// Returns the extra data attached to the header.
     ///
     /// 返回附加到头部的额外数据。
     pub fn extra_data(&self) -> Option<&[u8]> {
-        self.payload.extra_data.as_deref()
+        self.extra_data.as_deref()
     }
 }

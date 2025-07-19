@@ -1,8 +1,9 @@
 //! Defines the primary error type and result alias for the entire crate.
 //!
 //! 定义了整个 crate 的主要错误类型和结果别名。
-use crate::keys::provider::KeyProviderError;
+use crate::provider::KeyProviderError;
 use thiserror::Error;
+use seal_crypto_wrapper::bincode;
 
 /// An error related to `bincode` serialization or deserialization.
 ///
@@ -157,7 +158,7 @@ pub enum CryptoError {
     ///
     /// 源自底层 `seal-crypto` 后端的错误。
     #[error("底层密码学库错误: {0}")]
-    Backend(#[from] seal_crypto::errors::Error),
+    Backend(#[from] seal_crypto_wrapper::error::Error),
 }
 
 /// The main error type for the `seal-flow` crate.
@@ -219,8 +220,8 @@ impl From<tokio::task::JoinError> for Error {
     }
 }
 
-impl From<seal_crypto::errors::Error> for Error {
-    fn from(e: seal_crypto::errors::Error) -> Self {
+impl From<seal_crypto_wrapper::error::Error> for Error {
+    fn from(e: seal_crypto_wrapper::error::Error) -> Self {
         Error::Crypto(CryptoError::Backend(e))
     }
 }

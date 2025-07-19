@@ -4,12 +4,12 @@
 //! 实现同步、流式加密和解密的通用逻辑。
 //! 这是对称和混合流式模式的后端。
 
-use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
-use crate::algorithms::traits::SymmetricAlgorithm;
+use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use crate::body::config::{BodyDecryptConfig, BodyEncryptConfig};
 use crate::common::derive_nonce;
 use crate::error::Result;
-use crate::keys::TypedSymmetricKey;
+use seal_crypto_wrapper::prelude::TypedSymmetricKey;
+use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use std::io::{self, Read, Write};
 
 use super::traits::FinishingWrite;
@@ -23,7 +23,7 @@ pub(crate) struct EncryptorImpl<W: Write> {
     writer: W,
     algorithm: SymmetricAlgorithmWrapper,
     key: TypedSymmetricKey,
-    base_nonce: [u8; 12],
+    base_nonce: Box<[u8]>,
     chunk_size: usize,
     buffer: Vec<u8>,
     chunk_counter: u64,
@@ -77,10 +77,10 @@ impl<W: Write> FinishingWrite for EncryptorImpl<W> {
             let bytes_written = self
                 .algorithm
                 .encrypt_to_buffer(
-                    &self.key,
-                    &nonce,
                     &self.buffer,
                     &mut self.encrypted_chunk_buffer,
+                    &self.key,
+                    &nonce,
                     self.aad.as_deref(),
                 )
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
@@ -110,10 +110,10 @@ impl<W: Write> Write for EncryptorImpl<W> {
                 let bytes_written = self
                     .algorithm
                     .encrypt_to_buffer(
-                        &self.key,
-                        &nonce,
                         &self.buffer,
                         &mut self.encrypted_chunk_buffer,
+                        &self.key,
+                        &nonce,
                         self.aad.as_deref(),
                     )
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
@@ -131,10 +131,10 @@ impl<W: Write> Write for EncryptorImpl<W> {
             let bytes_written = self
                 .algorithm
                 .encrypt_to_buffer(
-                    &self.key,
-                    &nonce,
                     chunk,
                     &mut self.encrypted_chunk_buffer,
+                    &mut self.key,
+                    &nonce,
                     self.aad.as_deref(),
                 )
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
@@ -166,7 +166,7 @@ pub struct DecryptorImpl<R: Read> {
     reader: R,
     algorithm: SymmetricAlgorithmWrapper,
     key: TypedSymmetricKey,
-    base_nonce: [u8; 12],
+    base_nonce: Box<[u8]>,
     encrypted_chunk_size: usize,
     buffer: io::Cursor<Vec<u8>>,
     encrypted_chunk_buffer: Vec<u8>,
@@ -243,10 +243,10 @@ impl<R: Read> Read for DecryptorImpl<R> {
         let bytes_written = self
             .algorithm
             .decrypt_to_buffer(
-                &self.key,
-                &nonce,
                 &self.encrypted_chunk_buffer[..total_bytes_read],
                 decrypted_buf,
+                &self.key,
+                &nonce,
                 self.aad.as_deref(),
             )
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -264,7 +264,7 @@ impl<R: Read> Read for DecryptorImpl<R> {
 use super::traits::StreamingBodyProcessor;
 // 避免重复导入SymmetricAlgorithm
 
-impl<S: SymmetricAlgorithm + ?Sized> StreamingBodyProcessor for S {
+impl<S: SymmetricAlgorithmTrait + ?Sized> StreamingBodyProcessor for S {
     fn encrypt_body_to_stream<'a>(
         &self,
         writer: Box<dyn Write + 'a>,

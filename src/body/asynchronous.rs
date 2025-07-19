@@ -8,16 +8,16 @@
 
 #![cfg(feature = "async")]
 
-use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
+use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use crate::common::buffer::BufferPool;
 use crate::common::{config::ArcConfig, derive_nonce, OrderedChunk};
 use crate::error::{Error, Result};
-use crate::keys::TypedSymmetricKey;
+use seal_crypto_wrapper::prelude::TypedSymmetricKey;
 use bytes::BytesMut;
 use futures::stream::{FuturesUnordered, StreamExt};
 use pin_project_lite::pin_project;
 use std::collections::{BTreeMap, BinaryHeap};
-use std::io;
+use std::{io, u8};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -65,7 +65,7 @@ pin_project! {
         pub(crate) writer: W,
         pub(crate) key: Arc<TypedSymmetricKey>,
         pub(crate) algorithm: SymmetricAlgorithmWrapper,
-        pub(crate) base_nonce: [u8; 12],
+        pub(crate) base_nonce: Box<[u8]>,
         pub(crate) config: ArcConfig,
         pub(crate) buffer: BytesMut,
         pub(crate) chunk_counter: u64,
@@ -151,10 +151,10 @@ impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
 
                 let result = algo
                     .encrypt_to_buffer(
-                        &key,
-                        &nonce,
                         &in_buffer,
                         &mut out_buffer,
+                        &key,
+                        &nonce,
                         aad_clone.as_deref().map(|v| v.as_slice()),
                     )
                     .map(|bytes_written| {
@@ -343,7 +343,7 @@ pin_project! {
         pub(crate) reader: R,
         pub(crate) algorithm: SymmetricAlgorithmWrapper,
         pub(crate) key: Arc<TypedSymmetricKey>,
-        pub(crate) base_nonce: [u8; 12],
+        pub(crate) base_nonce: Box<[u8]>,
         pub(crate) channel_bound: usize,
         pub(crate) encrypted_chunk_size: usize,
         pub(crate) decrypted_chunk_size: usize,
@@ -454,10 +454,10 @@ impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
 
                     let result = algo
                         .decrypt_to_buffer(
-                            &key,
-                            &nonce,
                             &in_buffer,
                             &mut out_buffer,
+                            &key,
+                            &nonce,
                             aad_clone.as_deref().map(|v| v.as_slice()),
                         )
                         .map(|bytes_written| {
@@ -609,9 +609,9 @@ impl<R: AsyncRead + Unpin> AsyncRead for DecryptorImpl<R> {
 
 use super::config::{BodyDecryptConfig, BodyEncryptConfig};
 use super::traits::AsynchronousBodyProcessor;
-use crate::algorithms::traits::SymmetricAlgorithm;
+use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 
-impl<S: SymmetricAlgorithm + ?Sized> AsynchronousBodyProcessor for S {
+impl<S: SymmetricAlgorithmTrait + ?Sized> AsynchronousBodyProcessor for S {
     fn encrypt_body_async<'a>(
         &self,
         writer: Box<dyn AsyncWrite + Send + Unpin + 'a>,

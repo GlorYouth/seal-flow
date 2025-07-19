@@ -1,14 +1,10 @@
-use crate::{
-    algorithms::signature::SignatureAlgorithmWrapper,
-    keys::TypedSignaturePrivateKey,
-};
-use bytes::BytesMut;
-use seal_crypto::zeroize::Zeroizing;
 
-/// This module re-exports common functionalities from the `common` directory.
-///
-/// 这个模块从 `common` 目录中重新导出公共功能。
-pub mod algorithms;
+use bytes::BytesMut;
+use seal_crypto_wrapper::prelude::{TypedSignaturePrivateKey, Zeroizing};
+use seal_crypto_wrapper::wrappers::asymmetric::signature::SignatureAlgorithmWrapper;
+use seal_crypto_wrapper::wrappers::kdf::key::KdfKeyWrapper;
+use seal_crypto_wrapper::wrappers::xof::XofWrapper;
+
 pub(crate) mod buffer;
 pub mod config;
 pub mod header;
@@ -16,16 +12,25 @@ pub mod header;
 pub const DEFAULT_CHUNK_SIZE: u32 = 65536;
 
 /// Derives a nonce for a specific chunk index from a base nonce.
-pub(crate) fn derive_nonce(base_nonce: &[u8; 12], chunk_index: u64) -> [u8; 12] {
-    let mut nonce_bytes = *base_nonce;
+pub(crate) fn derive_nonce(base_nonce: &[u8], chunk_index: u64) -> Box<[u8]> {
+    let mut nonce_bytes = base_nonce.to_vec();
     let i_bytes = chunk_index.to_le_bytes(); // u64 -> 8 bytes, little-endian
 
-    // XOR the chunk index into the last 8 bytes of the nonce
-    for j in 0..8 {
-        nonce_bytes[4 + j] ^= i_bytes[j];
+    let nonce_len = nonce_bytes.len();
+    if nonce_len < 8 {
+        // If nonce is too short, XOR over the whole nonce, truncating the chunk index.
+        for i in 0..nonce_len {
+            nonce_bytes[i] ^= i_bytes[i];
+        }
+    } else {
+        // XOR the chunk index into the last 8 bytes of the nonce.
+        let offset = nonce_len - 8;
+        for i in 0..8 {
+            nonce_bytes[offset + i] ^= i_bytes[i];
+        }
     }
 
-    nonce_bytes
+    nonce_bytes.into_boxed_slice()
 }
 
 pub const CHANNEL_BOUND: usize = 16;
@@ -63,9 +68,6 @@ pub struct SignerSet {
     pub signing_key: TypedSignaturePrivateKey,
 }
 
-use crate::algorithms::kdf::key::KdfKeyWrapper;
-use crate::algorithms::xof::XofWrapper;
-
 pub enum DerivationWrapper {
     Kdf(KdfKeyWrapper),
     Xof(XofWrapper),
@@ -79,10 +81,10 @@ impl DerivationWrapper {
         info: Option<&[u8]>,
         output_len: usize,
     ) -> crate::Result<Zeroizing<Vec<u8>>> {
-        use crate::algorithms::traits::KdfKeyAlgorithm;
-        use crate::algorithms::traits::XofAlgorithm;
+        use seal_crypto_wrapper::prelude::XofAlgorithmTrait;
+        use crate::error::Error;
         match self {
-            DerivationWrapper::Kdf(kdf_wrapper) => kdf_wrapper.derive(ikm, salt, info, output_len),
+            DerivationWrapper::Kdf(kdf_wrapper) => kdf_wrapper.derive(ikm, salt, info, output_len).map_err(Error::from),
             DerivationWrapper::Xof(xof_wrapper) => {
                 let mut xof_reader = xof_wrapper.reader(ikm, salt, info)?;
                 let dek = xof_reader.read_boxed(output_len);
@@ -93,22 +95,22 @@ impl DerivationWrapper {
 }
 
 pub struct DerivationSet {
-    pub derivation_info: header::DerivationInfo,
+    pub derivation_info: header::DerivationBlock,
     pub wrapper: DerivationWrapper,
 }
 
 impl DerivationSet {
     pub fn salt(&self) -> Option<&[u8]> {
         match &self.derivation_info {
-            header::DerivationInfo::Kdf(kdf_info) => kdf_info.salt.as_deref(),
-            header::DerivationInfo::Xof(xof_info) => xof_info.salt.as_deref(),
+            header::DerivationBlock::Kdf(kdf_info) => kdf_info.salt.as_deref(),
+            header::DerivationBlock::Xof(xof_info) => xof_info.salt.as_deref(),
         }
     }
 
     pub fn info(&self) -> Option<&[u8]> {
         match &self.derivation_info {
-            header::DerivationInfo::Kdf(kdf_info) => kdf_info.info.as_deref(),
-            header::DerivationInfo::Xof(xof_info) => xof_info.info.as_deref(),
+            header::DerivationBlock::Kdf(kdf_info) => kdf_info.info.as_deref(),
+            header::DerivationBlock::Xof(xof_info) => xof_info.info.as_deref(),
         }
     }
 }

@@ -4,7 +4,7 @@
 //! 实现并行、内存中加密和解密的通用逻辑。
 //! 这是对称和混合并行模式的后端。
 
-use crate::algorithms::traits::SymmetricAlgorithm;
+use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use crate::common::derive_nonce;
 use crate::error::{Error, FormatError, Result};
 use rayon::prelude::*;
@@ -12,7 +12,7 @@ use rayon::prelude::*;
 use super::config::{BodyDecryptConfig, BodyEncryptConfig};
 use super::traits::ParallelBodyProcessor;
 
-impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
+impl<S: SymmetricAlgorithmTrait + ?Sized> ParallelBodyProcessor for S {
     /// Encrypts in-memory data in parallel.
     ///
     /// 并行加密内存中的数据。
@@ -63,10 +63,10 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
                     let buffer_slice = &mut output_chunk[..expected_output_len];
 
                     self.encrypt_to_buffer(
-                        key.as_ref(),
-                        &nonce,
                         input_chunk,
                         buffer_slice,
+                        key.as_ref(),
+                        &nonce,
                         aad.as_deref(),
                     )
                     .map(|_| ())
@@ -133,10 +133,10 @@ impl<S: SymmetricAlgorithm + ?Sized> ParallelBodyProcessor for S {
                 // Decrypt the chunk
                 // 解密数据块
                 self.decrypt_to_buffer(
-                    key.as_ref(),
-                    &nonce,
                     encrypted_chunk,
                     plaintext_chunk,
+                    key.as_ref(),
+                    &nonce,
                     aad.as_deref(),
                 )
                 .map_err(Error::from)

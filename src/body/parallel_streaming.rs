@@ -4,11 +4,11 @@
 //! 实现并行流式加密和解密的通用逻辑。
 //! 这是对称和混合并行流式模式的后端。
 
-use crate::algorithms::symmetric::SymmetricAlgorithmWrapper;
-use crate::algorithms::traits::SymmetricAlgorithm;
+use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use crate::common::buffer::BufferPool;
 use crate::common::{derive_nonce, OrderedChunk};
 use crate::error::{Error, Result};
+use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use rayon::prelude::*;
 use std::collections::BinaryHeap;
 use std::io::{Read, Write};
@@ -114,10 +114,10 @@ where
 
                     let result = algo_clone
                         .encrypt_to_buffer(
-                            key_clone.as_ref().as_ref(),
-                            &nonce,
                             &in_buffer,
                             &mut out_buffer,
+                            key_clone.as_ref().as_ref(),
+                            &nonce,
                             aad_val,
                         )
                         .map(|bytes_written| {
@@ -296,10 +296,10 @@ where
 
                     let result = algo_clone
                         .decrypt_to_buffer(
-                            key_clone.as_ref().as_ref(),
-                            &nonce,
                             &in_buffer,
                             &mut out_buffer,
+                            key_clone.as_ref().as_ref(),
+                            &nonce,
                             aad_val,
                         )
                         .map(|bytes_written| {
@@ -379,7 +379,7 @@ where
     })
 }
 
-impl<S: SymmetricAlgorithm + ?Sized> ParallelStreamingBodyProcessor for S {
+impl<S: SymmetricAlgorithmTrait + ?Sized> ParallelStreamingBodyProcessor for S {
     fn encrypt_body_pipeline<'a>(
         &self,
         reader: Box<dyn Read + Send + 'a>,

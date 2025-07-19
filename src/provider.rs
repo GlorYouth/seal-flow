@@ -1,7 +1,11 @@
-use crate::keys::{
-    TypedAsymmetricPrivateKey, TypedAsymmetricPublicKey, TypedSignaturePrivateKey,
-    TypedSignaturePublicKey, TypedSymmetricKey,
+use seal_crypto_wrapper::prelude::{
+    TypedKemPrivateKey,
+    TypedKemPublicKey,
+    TypedSignaturePrivateKey,
+    TypedSignaturePublicKey,
+    TypedSymmetricKey,
 };
+
 
 #[derive(Debug, thiserror::Error)]
 pub enum KeyProviderError {
@@ -31,15 +35,15 @@ pub trait KeyProvider: Send + Sync {
     /// 用于对称解密。
     fn get_symmetric_key(&self, key_id: &str) -> Result<TypedSymmetricKey, KeyProviderError>;
 
-    /// Looks up an asymmetric private key by its ID.
+    /// Looks up a KEM private key by its ID.
     /// Used for key unwrapping in hybrid decryption.
     ///
-    /// 通过 ID 查找非对称私钥。
+    /// 通过 ID 查找 KEM 私钥。
     /// 用于混合解密中的密钥解包。
-    fn get_asymmetric_private_key(
+    fn get_kem_private_key(
         &self,
         key_id: &str,
-    ) -> Result<TypedAsymmetricPrivateKey, KeyProviderError>;
+    ) -> Result<TypedKemPrivateKey, KeyProviderError>;
 
     /// Looks up a signature verification public key by its ID.
     /// Used for verifying metadata signatures during hybrid decryption.
@@ -66,12 +70,12 @@ pub trait EncryptionKeyProvider: Send + Sync {
     ///
     /// 通过 ID 查找非对称公钥。
     /// 用于混合加密（接收方的 KEM 密钥）。
-    fn get_asymmetric_public_key(
+    fn get_kem_public_key(
         &self,
         key_id: &str,
-    ) -> Result<TypedAsymmetricPublicKey, KeyProviderError>;
+    ) -> Result<TypedKemPublicKey, KeyProviderError>;
 
-    /// Looks up an asymmetric private key by its ID.
+    /// Looks up a signature private key by its ID.
     /// Used for signing in hybrid encryption (sender's signing key).
     ///
     /// 通过 ID 查找非对称私钥。

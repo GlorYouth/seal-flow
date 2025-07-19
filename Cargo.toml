@@ -9,11 +9,8 @@ readme = "README.md"
 [dependencies]
 # --- 核心密码学特性 ---
 # 提供了所有密码学操作的 Trait 和基础实现
-seal-crypto = { path = "../seal-crypto", features = ["full"]}
+seal-crypto-wrapper = { path = "../seal-crypto-wrapper", features = ["full"]}
 
-# --- 序列化与错误处理 ---
-# 用于将 Header 结构体序列化为字节流
-bincode = "2.0.1"
 # 提供了方便的宏来创建自定义错误类型
 thiserror = "2.0.12"
 
@@ -45,65 +42,4 @@ num_cpus = "1.16.0"
 default = ["async"]
 # 单独的 feature gate 用于启用异步 API
 async = ["dep:tokio", "dep:futures"]
-serde = ["dep:serde", "seal-crypto/serde"]
-
-[[test]]
-name = "interoperability_matrix"
-path = "tests/interoperability_matrix.rs"
-required-features = ["async"]
-
-[[bench]]
-name = "symmetric_benchmark"
-harness = false
-required-features = ["async"]
-
-[[bench]]
-name = "hybrid_benchmark"
-harness = false
-required-features = ["async"]
-
-[[example]]
-name = "high_level_symmetric"
-required-features = ["async"]
-
-[[example]]
-name = "high_level_hybrid"
-required-features = ["async"]
-
-[[example]]
-name = "mid_level_symmetric"
-required-features = ["async"]
-
-[[example]]
-name = "mid_level_hybrid"
-required-features = ["async"]
-
-[[example]]
-name = "readme_aad"
-path = "examples/readme/aad.rs"
-required-features = ["async"]
-
-[[example]]
-name = "readme_advanced_key_derivation"
-path = "examples/readme/advanced_key_derivation.rs"
-required-features = ["async"]
-
-[[example]]
-name = "readme_digital_signatures"
-path = "examples/readme/digital_signatures.rs"
-required-features = ["async"]
-
-[[example]]
-name = "readme_hybrid_workflow"
-path = "examples/readme/hybrid_workflow.rs"
-required-features = ["async"]
-
-[[example]]
-name = "readme_key_provider"
-path = "examples/readme/key_provider.rs"
-required-features = ["async"]
-
-[[example]]
-name = "readme_symmetric_workflow"
-path = "examples/readme/symmetric_workflow.rs"
-required-features = ["async"]
+serde = ["dep:serde"]
