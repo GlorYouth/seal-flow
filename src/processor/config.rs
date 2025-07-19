@@ -2,7 +2,6 @@ use std::marker::PhantomData;
 
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
-use crate::common::mode::ProcessingMode;
 use crate::common::header::SymmetricParams;
 use crate::error::Result;
 use sha2::{Sha256, Digest};
@@ -31,28 +30,23 @@ impl<'a> BodyEncryptConfig<'a> {
         self.config.channel_bound()
     }
 
-    pub fn mode(&self) -> ProcessingMode {
-        self.symmetric_params.mode
-    }
 }
 
 pub struct BodyEncryptConfigBuilder<'a> {
     pub(crate) algorithm: SymmetricAlgorithmWrapper,
     pub(crate) base_nonce: Option<Box<[u8]>>, // 用于派生每个 chunk nonce 的基础 nonce
     pub(crate) aad: Option<Vec<u8>>,
-    pub(crate) mode: ProcessingMode,
     pub(crate) config: ArcConfig,
     _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> BodyEncryptConfigBuilder<'a> {
 
-    pub fn new(algorithm: SymmetricAlgorithmWrapper, mode: ProcessingMode, config: ArcConfig) -> Self {
+    pub fn new(algorithm: SymmetricAlgorithmWrapper, config: ArcConfig) -> Self {
         Self {
             algorithm,
             base_nonce: None,
             aad: None,
-            mode,
             config,
             _lifetime: PhantomData,
         }
@@ -93,7 +87,6 @@ impl<'a> BodyEncryptConfigBuilder<'a> {
                 chunk_size: self.config.chunk_size(),
                 base_nonce: self.base_nonce.unwrap(),
                 aad_hash,
-                mode: self.mode,
             },
             aad: self.aad,
             config: self.config,
@@ -107,7 +100,6 @@ pub struct BodyDecryptConfig<'a> {
     pub nonce: Box<[u8]>,
     pub aad: Option<Vec<u8>>,
     pub config: DecryptorConfig,
-    pub mode: ProcessingMode,
     _lifetime: PhantomData<&'a ()>,
 }
 
@@ -126,9 +118,5 @@ impl<'a> BodyDecryptConfig<'a> {
 
     pub fn channel_bound(&self) -> usize {
         self.config.channel_bound()
-    }
-
-    pub fn mode(&self) -> ProcessingMode {
-        self.mode
     }
 }

@@ -8,7 +8,6 @@ use seal_crypto_wrapper::wrappers::xof::XofWrapper;
 pub(crate) mod buffer;
 pub mod config;
 pub mod header;
-pub mod mode;
 
 pub const DEFAULT_CHUNK_SIZE: u32 = 65536;
 

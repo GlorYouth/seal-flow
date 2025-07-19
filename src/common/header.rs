@@ -10,7 +10,6 @@ use std::io::{Read, Write};
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 use seal_crypto_wrapper::algorithms::symmetric::SymmetricAlgorithm;
-use crate::common::mode::ProcessingMode;
 
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -94,7 +93,6 @@ pub struct SymmetricParams {
     pub(crate) chunk_size: u32,
     pub(crate) base_nonce: Box<[u8]>, // 用于派生每个 chunk nonce 的基础 nonce
     pub(crate) aad_hash: Option<[u8; 32]>,
-    pub(crate) mode: ProcessingMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
