@@ -105,6 +105,12 @@ pub enum FormatError {
     /// 密钥无效。
     #[error("密钥无效")]
     InvalidKey,
+
+    /// The signature is invalid.
+    ///
+    /// 签名无效。
+    #[error("签名无效")]
+    InvalidSignature,
 }
 
 /// Errors related to key lookup and management.

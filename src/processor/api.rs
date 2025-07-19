@@ -341,4 +341,4 @@ pub async fn read_header_from_async_reader<R: AsyncRead + Unpin + Send>(
     reader: &mut R,
 ) -> Result<SealFlowEnvelopeHeader> {
     SealFlowEnvelopeHeader::decode_from_prefixed_async_reader(reader).await
-} 
+}

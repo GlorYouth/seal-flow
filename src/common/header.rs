@@ -3,13 +3,14 @@
 // These enums could also be considered for placement in seal-crypto for sharing.
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享。
 use crate::error::{Error, FormatError, Result};
-use seal_crypto_wrapper::algorithms::kdf::key::KdfKeyAlgorithm;
+use seal_crypto_wrapper::{algorithms::kdf::key::KdfKeyAlgorithm, prelude::TypedAsymmetricKeyTrait, wrappers::asymmetric::signature::SignatureAlgorithmWrapper};
 use crate::bincode;
 use seal_crypto_wrapper::prelude::{EncapsulatedKey, TypedKemPublicKey, TypedSignaturePublicKey, XofAlgorithm};
 use std::io::{Read, Write};
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 use seal_crypto_wrapper::algorithms::symmetric::SymmetricAlgorithm;
+use seal_crypto_wrapper::keys::asymmetric::signature::TypedSignaturePrivateKey;
 
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -129,6 +130,66 @@ pub struct SealFlowHybridHeader {
     extra_data: Option<Vec<u8>>,
 }
 
+impl SealFlowHybridHeader {
+    fn get_data_for_signing(&self) -> Result<Vec<u8>> {
+        #[derive(Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+        #[bincode(crate = "crate::bincode")]
+        struct HeaderToSign {
+            version: u16,
+            kem_block: KemBlock,
+            symmetric_params: SymmetricParams,
+            derivation_block: DerivationBlock,
+            extra_data: Option<Vec<u8>>,
+        }
+
+        let to_sign = HeaderToSign {
+            version: self.version,
+            kem_block: self.kem_block.clone(),
+            symmetric_params: self.symmetric_params.clone(),
+            derivation_block: self.derivation_block.clone(),
+            extra_data: self.extra_data.clone(),
+        };
+
+        static CONFIG: bincode::config::Configuration = bincode::config::standard();
+        bincode::encode_to_vec(&to_sign, CONFIG).map_err(Error::from)
+    }
+
+    pub fn sign(
+        &mut self,
+        signer: SignatureAlgorithmWrapper,
+        private_key: &TypedSignaturePrivateKey,
+        public_key: TypedSignaturePublicKey,
+        public_key_id: String,
+    ) -> Result<()> {
+        let data_to_sign = self.get_data_for_signing()?;
+        let signature = signer.sign(&data_to_sign, private_key)?;
+
+        self.signature_block = Some(SignatureBlock {
+            public_key_id,
+            signature,
+            signature_key: public_key,
+        });
+
+        Ok(())
+    }
+
+    pub fn verify(&self) -> Result<()> {
+        let signature_block = self
+            .signature_block
+            .as_ref()
+            .ok_or(FormatError::InvalidSignature)?;
+
+        let public_key = &signature_block.signature_key;
+        let signature_scheme = public_key.algorithm().into_signature_wrapper();
+
+        let data_to_verify = self.get_data_for_signing()?;
+
+        signature_scheme
+            .verify(&data_to_verify, public_key, signature_block.signature.clone())
+            .map_err(Error::from)
+    }
+}
+
 /// A "master" header that wraps specific header types. This allows the decryptor
 /// to determine the encryption mode (symmetric vs. hybrid) by first decoding this
 /// envelope.
@@ -161,6 +222,15 @@ pub trait SealFlowHeader: Sized + Serialize + for<'de> Deserialize<'de> + bincod
     fn decode_from_slice(data: &[u8]) -> Result<(Self, usize)> {
         static CONFIG: bincode::config::Configuration = bincode::config::standard();
         bincode::decode_from_slice(data, CONFIG).map_err(Error::from)
+    }
+
+    /// Verifies the signature within the header, if one exists.
+    /// The default implementation does nothing.
+    ///
+    /// 验证标头中的签名（如果存在）。
+    /// 默认实现不执行任何操作。
+    fn verify_signature(&self) -> Result<()> {
+        Ok(())
     }
 
     /// Encodes the header into a byte vector, prefixed with its length.
@@ -211,6 +281,7 @@ pub trait SealFlowHeader: Sized + Serialize + for<'de> Deserialize<'de> + bincod
         let ciphertext_body = &ciphertext[4 + header_len..];
 
         let (header, _) = Self::decode_from_slice(header_bytes)?;
+        header.verify_signature()?;
         Ok((header, ciphertext_body))
     }
 
@@ -225,6 +296,7 @@ pub trait SealFlowHeader: Sized + Serialize + for<'de> Deserialize<'de> + bincod
         let mut header_bytes = vec![0u8; header_len];
         reader.read_exact(&mut header_bytes)?;
         let (header, _) = Self::decode_from_slice(&header_bytes)?;
+        header.verify_signature()?;
 
         Ok(header)
     }
@@ -243,6 +315,7 @@ pub trait SealFlowHeader: Sized + Serialize + for<'de> Deserialize<'de> + bincod
         let mut header_bytes = vec![0u8; header_len];
         reader.read_exact(&mut header_bytes).await?;
         let (header, _) = Self::decode_from_slice(&header_bytes)?;
+        header.verify_signature()?;
 
         Ok(header)
     }
@@ -259,6 +332,13 @@ pub trait SealFlowHeader: Sized + Serialize + for<'de> Deserialize<'de> + bincod
 }
 
 impl SealFlowHeader for SealFlowEnvelopeHeader {
+    fn verify_signature(&self) -> Result<()> {
+        match self {
+            SealFlowEnvelopeHeader::Symmetric(_) => Ok(()), // Symmetric mode has no signature
+            SealFlowEnvelopeHeader::Hybrid(h) => h.verify_signature(),
+        }
+    }
+
     fn symmetric_params(&self) -> &SymmetricParams {
         match self {
             SealFlowEnvelopeHeader::Symmetric(h) => h.symmetric_params(),
@@ -286,6 +366,14 @@ impl SealFlowHeader for SealFlowSymmetricHeader {
 
 
 impl SealFlowHeader for SealFlowHybridHeader {
+    fn verify_signature(&self) -> Result<()> {
+        if self.signature_block.is_some() {
+            self.verify()
+        } else {
+            Ok(())
+        }
+    }
+
     fn symmetric_params(&self) -> &SymmetricParams {
         &self.symmetric_params
     }
