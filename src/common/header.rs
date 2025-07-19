@@ -80,17 +80,27 @@ pub struct KemBlock {
 pub struct SignatureBlock {
     // 公钥标识符，用于接收方查找验证密钥
     public_key_id: String,
-    signature: TypedSignaturePublicKey, // 对 (kem_block + symmetric_params) 的签名
+    signature: Vec<u8>,
+    signature_key: TypedSignaturePublicKey,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 #[bincode(crate = "crate::bincode")]
 pub struct SymmetricParams {
-    chunk_size: u32,
-    base_nonce: Box<[u8]>, // 用于派生每个 chunk nonce 的基础 nonce
+    pub chunk_size: u32,
+    pub base_nonce: Box<[u8]>, // 用于派生每个 chunk nonce 的基础 nonce
     // AAD 可以很大，通常不直接放入头部。
     // 可以选择性地包含它的哈希值，并对该哈希签名。
-    aad_hash: Option<[u8; 32]>, 
+    pub aad_hash: Option<[u8; 32]>, 
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
+pub struct SealFlowSymmetricHeader {
+    // 头部格式版本，用于未来扩展
+    version: u16, 
+    symmetric_params: SymmetricParams,
+    extra_data: Option<Vec<u8>>,
 }
 
 
