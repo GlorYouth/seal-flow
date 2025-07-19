@@ -5,7 +5,7 @@
 //! 这个模块作为 `ordinary`, `streaming`, `parallel` 等模块的外观。
 
 use crate::common::header::{
-    SealFlowEnvelopeHeader, SealFlowHeader,
+    SealFlowEnvelopeHeader, SealFlowHeader, SymmetricParams,
 };
 use crate::error::Result;
 use seal_crypto_wrapper::prelude::TypedSymmetricKey;
@@ -40,12 +40,12 @@ pub fn encrypt_ordinary<'a>(
 /// Decrypts data in-memory using a single thread.
 /// The ciphertext is expected to start with a length-prefixed `SealFlowEnvelopeHeader`.
 /// Returns the parsed header and the decrypted plaintext.
-pub fn decrypt_ordinary<'a>(
-    ciphertext: &[u8],
+pub fn decrypt_ordinary_body<'a>(
+    ciphertext_body: &[u8],
     key: Cow<'a, TypedSymmetricKey>,
+    header: &SealFlowEnvelopeHeader,
     aad: Option<Vec<u8>>,
-) -> Result<(SealFlowEnvelopeHeader, Vec<u8>)> {
-    let (header, ciphertext_body) = SealFlowEnvelopeHeader::decode_from_prefixed_slice(ciphertext)?;
+) -> Result<Vec<u8>> {
     let params = header.symmetric_params();
 
     // TODO: Verify AAD hash if present in header
@@ -57,8 +57,7 @@ pub fn decrypt_ordinary<'a>(
         params.chunk_size as usize,
         aad,
     );
-    let plaintext = decryptor.decrypt(ciphertext_body, key)?;
-    Ok((header, plaintext))
+    decryptor.decrypt(ciphertext_body, key)
 }
 
 // --- Streaming ---
@@ -81,12 +80,12 @@ pub fn encrypt_streaming<'a, W: Write + 'a>(
 /// Returns a reader that decrypts data as it's read.
 /// The reader is expected to start with a length-prefixed `SealFlowEnvelopeHeader`.
 /// Returns the parsed header and a reader for the decrypted plaintext.
-pub fn decrypt_streaming<'a, R: Read + 'a>(
-    mut reader: R,
+pub fn decrypt_streaming_body<'a, R: Read + 'a>(
+    reader: R,
     key: Cow<'a, TypedSymmetricKey>,
+    header: &SealFlowEnvelopeHeader,
     aad: Option<Vec<u8>>,
-) -> Result<(SealFlowEnvelopeHeader, impl Read + 'a)> {
-    let header = SealFlowEnvelopeHeader::decode_from_prefixed_reader(&mut reader)?;
+) -> Result<impl Read + 'a> {
     let params = header.symmetric_params();
 
     // TODO: Verify AAD hash if present in header
@@ -98,7 +97,7 @@ pub fn decrypt_streaming<'a, R: Read + 'a>(
         params.chunk_size as usize,
         aad,
     );
-    Ok((header, setup.start(reader, key)))
+    Ok(setup.start(reader, key))
 }
 
 // --- Parallel ---
@@ -123,12 +122,12 @@ pub fn encrypt_parallel<'a>(
 /// Decrypts data in-memory using multiple threads.
 /// The ciphertext is expected to start with a length-prefixed `SealFlowEnvelopeHeader`.
 /// Returns the parsed header and the decrypted plaintext.
-pub fn decrypt_parallel<'a>(
-    ciphertext: &[u8],
+pub fn decrypt_parallel_body<'a>(
+    ciphertext_body: &[u8],
     key: Cow<'a, TypedSymmetricKey>,
+    header: &SealFlowEnvelopeHeader,
     aad: Option<Vec<u8>>,
-) -> Result<(SealFlowEnvelopeHeader, Vec<u8>)> {
-    let (header, ciphertext_body) = SealFlowEnvelopeHeader::decode_from_prefixed_slice(ciphertext)?;
+) -> Result<Vec<u8>> {
     let params = header.symmetric_params();
 
     // TODO: Verify AAD hash if present in header
@@ -140,8 +139,7 @@ pub fn decrypt_parallel<'a>(
         params.chunk_size as usize,
         aad,
     );
-    let plaintext = decryptor.decrypt(ciphertext_body, key)?;
-    Ok((header, plaintext))
+    decryptor.decrypt(ciphertext_body, key)
 }
 
 // --- Parallel Streaming ---
@@ -171,20 +169,19 @@ pub fn encrypt_parallel_streaming<'a, R, W>(
 }
 
 /// Decrypts a stream in parallel.
-/// The reader is expected to start with a length-prefixed `SealFlowEnvelopeHeader`.
-/// Returns the parsed header upon successful decryption.
-pub fn decrypt_parallel_streaming<'a, R, W>(
-    mut reader: R,
+/// The reader is expected to contain only the ciphertext body, as the header should be pre-parsed.
+pub fn decrypt_parallel_streaming_body<'a, R, W>(
+    reader: R,
     writer: W,
     key: Cow<'a, TypedSymmetricKey>,
+    header: &SealFlowEnvelopeHeader,
     aad: Option<Vec<u8>>,
     channel_bound: usize,
-) -> Result<SealFlowEnvelopeHeader>
+) -> Result<()>
     where
         R: Read + Send,
         W: Write + Send,
 {
-    let header = SealFlowEnvelopeHeader::decode_from_prefixed_reader(&mut reader)?;
     let params = header.symmetric_params();
 
     // TODO: Verify AAD hash if present in header
@@ -197,8 +194,7 @@ pub fn decrypt_parallel_streaming<'a, R, W>(
         params.chunk_size as usize,
         channel_bound,
     );
-    decryptor.run(reader, writer, key)?;
-    Ok(header)
+    decryptor.run(reader, writer, key)
 }
 
 
@@ -221,16 +217,15 @@ pub async fn encrypt_asynchronous<'a, W: AsyncWrite + Send + Unpin + 'a>(
 }
 
 /// Returns a reader that asynchronously decrypts data as it's read.
-/// The reader is expected to start with a length-prefixed `SealFlowEnvelopeHeader`.
-/// Returns the parsed header and a reader for the decrypted plaintext.
+/// The reader is expected to contain only the ciphertext body, as the header should be pre-parsed.
 #[cfg(feature = "async")]
-pub async fn decrypt_asynchronous<'a, R: AsyncRead + Send + Unpin + 'a>(
-    mut reader: R,
+pub fn decrypt_asynchronous_body<'a, R: AsyncRead + Send + Unpin + 'a>(
+    reader: R,
     key: Cow<'a, TypedSymmetricKey>,
+    header: &SealFlowEnvelopeHeader,
     aad: Option<Vec<u8>>,
     channel_bound: usize,
-) -> Result<(SealFlowEnvelopeHeader, AsyncDecryptorImpl<'a, R>)> {
-    let header = SealFlowEnvelopeHeader::decode_from_prefixed_async_reader(&mut reader).await?;
+) -> AsyncDecryptorImpl<'a, R> {
     let params = header.symmetric_params();
 
     // TODO: Verify AAD hash if present in header
@@ -243,5 +238,28 @@ pub async fn decrypt_asynchronous<'a, R: AsyncRead + Send + Unpin + 'a>(
         params.chunk_size as usize,
         channel_bound,
     );
-    Ok((header, setup.start(reader, key)))
+    setup.start(reader, key)
+}
+
+// --- Header Parsing ---
+
+/// Reads a header from a slice.
+/// Returns the parsed header and the remaining ciphertext body.
+pub fn read_header_from_slice(ciphertext: &[u8]) -> Result<(SealFlowEnvelopeHeader, &[u8])> {
+    SealFlowEnvelopeHeader::decode_from_prefixed_slice(ciphertext)
+}
+
+/// Reads a header from a synchronous reader.
+/// The reader will be consumed to the end of the header.
+pub fn read_header_from_reader<R: Read>(reader: &mut R) -> Result<SealFlowEnvelopeHeader> {
+    SealFlowEnvelopeHeader::decode_from_prefixed_reader(reader)
+}
+
+/// Reads a header from an asynchronous reader.
+/// The reader will be consumed to the end of the header.
+#[cfg(feature = "async")]
+pub async fn read_header_from_async_reader<R: AsyncRead + Unpin + Send>(
+    reader: &mut R,
+) -> Result<SealFlowEnvelopeHeader> {
+    SealFlowEnvelopeHeader::decode_from_prefixed_async_reader(reader).await
 } 
