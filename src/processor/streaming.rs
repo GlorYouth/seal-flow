@@ -7,7 +7,7 @@
 use super::traits::FinishingWrite;
 use crate::common::derive_nonce;
 use crate::common::header::SymmetricParams;
-use crate::error::Result;
+use crate::error::{Error, FormatError, Result};
 use seal_crypto_wrapper::prelude::TypedSymmetricKey;
 use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
@@ -19,7 +19,6 @@ use std::marker::PhantomData;
 
 pub struct StreamingEncryptorSetup<'a> {
     pub symmetric_params: SymmetricParams,
-    pub(crate) algorithm: SymmetricAlgorithmWrapper,
     pub(crate) aad: Option<Vec<u8>>,
     _lifetime: PhantomData<&'a ()>,
 }
@@ -27,12 +26,10 @@ pub struct StreamingEncryptorSetup<'a> {
 impl<'a> StreamingEncryptorSetup<'a> {
     pub(crate) fn new(
         symmetric_params: SymmetricParams,
-        algorithm: SymmetricAlgorithmWrapper,
         aad: Option<Vec<u8>>,
     ) -> Self {
         Self {
             symmetric_params,
-            algorithm,
             aad,
             _lifetime: PhantomData,
         }
@@ -42,12 +39,18 @@ impl<'a> StreamingEncryptorSetup<'a> {
         self,
         writer: W,
         key: Cow<'a, TypedSymmetricKey>,
-    ) -> StreamingEncryptor<'a, W> {
+    ) -> Result<StreamingEncryptor<'a, W>> {
+        if self.symmetric_params.algorithm != key.algorithm() {
+            return Err(Error::Format(FormatError::InvalidKeyType.into()));
+        }
+
+        let algorithm = SymmetricAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+
         let chunk_size = self.symmetric_params.chunk_size as usize;
-        let tag_size = self.algorithm.tag_size();
-        StreamingEncryptor {
+        let tag_size = algorithm.tag_size();
+        Ok(StreamingEncryptor {
             writer,
-            algorithm: self.algorithm.clone(),
+            algorithm,
             key: key.into_owned(),
             base_nonce: self.symmetric_params.base_nonce,
             chunk_size,
@@ -56,7 +59,7 @@ impl<'a> StreamingEncryptorSetup<'a> {
             encrypted_chunk_buffer: vec![0u8; chunk_size + tag_size],
             aad: self.aad,
             _lifetime: PhantomData,
-        }
+        })
     }
 }
 

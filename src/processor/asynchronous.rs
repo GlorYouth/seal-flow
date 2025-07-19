@@ -11,7 +11,7 @@
 use crate::common::buffer::BufferPool;
 use crate::common::header::SymmetricParams;
 use crate::common::{derive_nonce, OrderedChunk};
-use crate::error::{Error, Result};
+use crate::error::{Error, FormatError, Result};
 use bytes::BytesMut;
 use futures::stream::{FuturesUnordered, StreamExt};
 use pin_project_lite::pin_project;
@@ -32,7 +32,6 @@ use tokio::task::JoinHandle;
 
 pub struct AsyncEncryptorSetup<'a> {
     pub symmetric_params: SymmetricParams,
-    pub(crate) algorithm: SymmetricAlgorithmWrapper,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) channel_bound: usize,
     _lifetime: PhantomData<&'a ()>,
@@ -41,13 +40,11 @@ pub struct AsyncEncryptorSetup<'a> {
 impl<'a> AsyncEncryptorSetup<'a> {
     pub(crate) fn new(
         symmetric_params: SymmetricParams,
-        algorithm: SymmetricAlgorithmWrapper,
         aad: Option<Vec<u8>>,
         channel_bound: usize,
     ) -> Self {
         Self {
             symmetric_params,
-            algorithm,
             aad,
             channel_bound,
             _lifetime: PhantomData,
@@ -58,16 +55,23 @@ impl<'a> AsyncEncryptorSetup<'a> {
         self,
         writer: W,
         key: Cow<'a, TypedSymmetricKey>,
-    ) -> AsyncEncryptorImpl<'a, W> {
+    ) -> Result<AsyncEncryptorImpl<'a, W>> {
+
+        if self.symmetric_params.algorithm != key.algorithm() {
+            return Err(Error::Format(FormatError::InvalidKeyType.into()));
+        }
+
+        let algorithm = SymmetricAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+        
         let chunk_size = self.symmetric_params.chunk_size as usize;
         let out_pool = Arc::new(BufferPool::new(
-            chunk_size + self.algorithm.tag_size(),
+            chunk_size + algorithm.tag_size(),
         ));
         let key = Arc::new(key.into_owned());
 
-        AsyncEncryptorImpl {
+        Ok(AsyncEncryptorImpl {
             writer,
-            algorithm: self.algorithm,
+            algorithm,
             key,
             base_nonce: self.symmetric_params.base_nonce,
             channel_bound: self.channel_bound,
@@ -81,7 +85,7 @@ impl<'a> AsyncEncryptorSetup<'a> {
             out_pool,
             aad: self.aad.map(Arc::new),
             _lifetime: std::marker::PhantomData,
-        }
+        })
     }
 }
 

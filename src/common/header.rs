@@ -9,6 +9,8 @@ use seal_crypto_wrapper::prelude::{EncapsulatedKey, TypedKemPublicKey, TypedSign
 use std::io::{Read, Write};
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
+use seal_crypto_wrapper::algorithms::symmetric::SymmetricAlgorithm;
+use crate::common::mode::ProcessingMode;
 
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -88,25 +90,11 @@ pub struct SignatureBlock {
 #[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 #[bincode(crate = "crate::bincode")]
 pub struct SymmetricParams {
-    pub chunk_size: u32,
-    pub base_nonce: Box<[u8]>, // 用于派生每个 chunk nonce 的基础 nonce
-    pub aad_hash: Option<[u8; 32]>,
-}
-
-impl SymmetricParams {
-    pub fn new(chunk_size: u32, base_nonce: Box<[u8]>, aad: Option<&[u8]>) -> Self {
-        let aad_hash = aad.map(|data| {
-            use sha2::{Digest, Sha256};
-            let mut hasher = Sha256::new();
-            hasher.update(data);
-            hasher.finalize().into()
-        });
-        Self {
-            chunk_size,
-            base_nonce,
-            aad_hash,
-        }
-    }
+    pub(crate) algorithm: SymmetricAlgorithm,
+    pub(crate) chunk_size: u32,
+    pub(crate) base_nonce: Box<[u8]>, // 用于派生每个 chunk nonce 的基础 nonce
+    pub(crate) aad_hash: Option<[u8; 32]>,
+    pub(crate) mode: ProcessingMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]

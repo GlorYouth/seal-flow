@@ -27,12 +27,6 @@ impl BufferPool {
         }
     }
 
-    /// Returns the size of buffers in this pool.
-    ///
-    /// 返回此池中缓冲区的大小。
-    pub fn buffer_size(&self) -> usize {
-        self.buffer_size
-    }
 
     /// Acquires a buffer from the pool.
     ///

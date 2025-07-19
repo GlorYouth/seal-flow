@@ -1,22 +1,22 @@
 use std::marker::PhantomData;
 
 use crate::common::config::{ArcConfig, DecryptorConfig};
-use rand::{rngs::OsRng, TryRngCore};
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
-use crate::processor::traits::ProcessingMode;
+use crate::common::mode::ProcessingMode;
+use crate::common::header::SymmetricParams;
 use crate::error::Result;
+use sha2::{Sha256, Digest};
 
 pub struct BodyEncryptConfig<'a> {
-    pub(crate) nonce: Box<[u8]>,
+    pub(crate) symmetric_params: SymmetricParams,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) config: ArcConfig,
-    pub(crate) mode: ProcessingMode,
     _lifetime: PhantomData<&'a ()>
 }
 
 impl<'a> BodyEncryptConfig<'a> {
-    pub fn nonce(&self) -> &[u8] {
-        &self.nonce
+    pub fn symmetric_params(&self) -> &SymmetricParams {
+        &self.symmetric_params
     }
 
     pub fn aad(&self) -> Option<&[u8]> {
@@ -32,67 +32,76 @@ impl<'a> BodyEncryptConfig<'a> {
     }
 
     pub fn mode(&self) -> ProcessingMode {
-        self.mode
+        self.symmetric_params.mode
     }
 }
 
 pub struct BodyEncryptConfigBuilder<'a> {
-    algorithm: SymmetricAlgorithmWrapper,
-    nonce: Option<Box<[u8]>>,
-    aad: Option<Vec<u8>>,
-    config: ArcConfig,
-    mode: ProcessingMode,
+    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) base_nonce: Option<Box<[u8]>>, // 用于派生每个 chunk nonce 的基础 nonce
+    pub(crate) aad: Option<Vec<u8>>,
+    pub(crate) mode: ProcessingMode,
+    pub(crate) config: ArcConfig,
     _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> BodyEncryptConfigBuilder<'a> {
-    pub fn new(algorithm: SymmetricAlgorithmWrapper, config: ArcConfig) -> Self {
+
+    pub fn new(algorithm: SymmetricAlgorithmWrapper, mode: ProcessingMode, config: ArcConfig) -> Self {
         Self {
             algorithm,
-            nonce: None,
+            base_nonce: None,
             aad: None,
+            mode,
             config,
-            mode: ProcessingMode::Ordinary,
             _lifetime: PhantomData,
         }
     }
 
-    pub fn nonce(&mut self, mut f: impl FnMut(&mut [u8]) -> Result<()>) -> Result<()> {
-        let mut nonce = Vec::with_capacity(self.algorithm.nonce_size());
-        nonce.resize(self.algorithm.nonce_size(), 0);
-        let mut nonce = nonce.into_boxed_slice();
-        f(&mut nonce)?;
-        self.nonce = Some(nonce);
-        Ok(())
+    pub fn set_base_nonce(&mut self, mut f: impl FnMut(&mut [u8]) -> Result<()>) -> Result<&mut Self> {
+        let nonce_size = self.algorithm.nonce_size();
+        let mut base_nonce = vec![0u8; nonce_size];
+        f(&mut base_nonce)?;
+        self.base_nonce = Some(base_nonce.into_boxed_slice());
+        Ok(self)
     }
 
-    pub fn aad(&mut self, aad: Vec<u8>) -> &mut Self {
+    pub fn set_aad(&mut self, aad: Vec<u8>) -> &mut Self {
         self.aad = Some(aad);
         self
     }
 
-    pub fn mode(&mut self, mode: ProcessingMode) -> &mut Self {
-        self.mode = mode;
-        self
-    }
-
     pub fn build(mut self) -> Result<BodyEncryptConfig<'a>> {
-        if self.nonce.is_none() {
-            self.nonce(|nonce| {
-                OsRng.try_fill_bytes(nonce)?;
-                Ok(())
-            })?;
+        if self.base_nonce.is_none() {
+            let nonce_size = self.algorithm.nonce_size();
+            let mut base_nonce = vec![0u8; nonce_size];
+
+            use crate::error::Error;
+            base_nonce.copy_from_slice(&self.algorithm.generate_nonce().map(Vec::into_boxed_slice).map_err(Error::from)?);
+            self.base_nonce = Some(base_nonce.into_boxed_slice());
         }
 
+        let aad_hash = self.aad.as_ref().map(|aad| {
+            let mut hasher = Sha256::new();
+            hasher.update(aad);
+            hasher.finalize().into()
+        });
+
         Ok(BodyEncryptConfig {
-            nonce: self.nonce.unwrap(),
+            symmetric_params: SymmetricParams {
+                algorithm: self.algorithm.algorithm(),
+                chunk_size: self.config.chunk_size(),
+                base_nonce: self.base_nonce.unwrap(),
+                aad_hash,
+                mode: self.mode,
+            },
             aad: self.aad,
             config: self.config,
-            mode: self.mode,
             _lifetime: PhantomData,
         })
     }
 }
+
 
 pub struct BodyDecryptConfig<'a> {
     pub nonce: Box<[u8]>,

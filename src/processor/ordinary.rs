@@ -6,7 +6,7 @@
 
 use crate::common::derive_nonce;
 use crate::common::header::SymmetricParams;
-use crate::error::Result;
+use crate::error::{Error, FormatError, Result};
 use seal_crypto_wrapper::prelude::{TypedSymmetricKey};
 use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
@@ -14,7 +14,6 @@ use std::borrow::Cow;
 
 pub struct OrdinaryEncryptor<'a> {
     pub symmetric_params: SymmetricParams,
-    pub(crate) algorithm: SymmetricAlgorithmWrapper,
     pub(crate) aad: Option<Vec<u8>>,
     _lifetime: std::marker::PhantomData<&'a ()>,
 }
@@ -22,22 +21,26 @@ pub struct OrdinaryEncryptor<'a> {
 impl<'a> OrdinaryEncryptor<'a> {
     pub(crate) fn new(
         symmetric_params: SymmetricParams,
-        algorithm: SymmetricAlgorithmWrapper,
         aad: Option<Vec<u8>>,
     ) -> Self {
         Self {
             symmetric_params,
-            algorithm,
             aad,
             _lifetime: std::marker::PhantomData,
         }
     }
 
     pub fn encrypt(self, plaintext: &[u8], key: Cow<'a, TypedSymmetricKey>) -> Result<Vec<u8>> {
-        let mut ciphertext = Vec::with_capacity(plaintext.len() + self.algorithm.tag_size() * (plaintext.len() / self.symmetric_params.chunk_size as usize + 1));
+        if self.symmetric_params.algorithm != key.algorithm() {
+            return Err(Error::Format(FormatError::InvalidKeyType.into()));
+        }
+
+        let algorithm = SymmetricAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+
+        let mut ciphertext = Vec::with_capacity(plaintext.len() + algorithm.tag_size() * (plaintext.len() / self.symmetric_params.chunk_size as usize + 1));
         let chunk_size = self.symmetric_params.chunk_size as usize;
 
-        let mut encrypted_chunk_buffer = vec![0u8; chunk_size + self.algorithm.tag_size()];
+        let mut encrypted_chunk_buffer = vec![0u8; chunk_size + algorithm.tag_size()];
 
         let mut cursor = 0;
         let mut chunk_index = 0;
@@ -49,7 +52,7 @@ impl<'a> OrdinaryEncryptor<'a> {
 
             let current_nonce = derive_nonce(&self.symmetric_params.base_nonce, chunk_index as u64);
 
-            let bytes_written = self.algorithm.encrypt_to_buffer(
+            let bytes_written = algorithm.encrypt_to_buffer(
                 plain_chunk,
                 &mut encrypted_chunk_buffer,
                 &key,
@@ -92,8 +95,14 @@ impl<'a> OrdinaryDecryptor<'a> {
     }
 
     pub fn decrypt(self, ciphertext: &[u8], key: Cow<'a, TypedSymmetricKey>) -> Result<Vec<u8>> {
+        if self.algorithm.algorithm() != key.algorithm() {
+            return Err(Error::Format(FormatError::InvalidKeyType.into()));
+        }
+
+        let algorithm = SymmetricAlgorithmWrapper::from_enum(self.algorithm.algorithm());
+
         let mut plaintext = Vec::with_capacity(ciphertext.len());
-        let chunk_size_with_tag = self.chunk_size + self.algorithm.tag_size();
+        let chunk_size_with_tag = self.chunk_size + algorithm.tag_size();
 
         let mut decrypted_chunk_buffer = vec![0u8; chunk_size_with_tag];
 
@@ -110,7 +119,7 @@ impl<'a> OrdinaryDecryptor<'a> {
             let encrypted_chunk = &ciphertext[cursor..cursor + current_chunk_len];
 
             let current_nonce = derive_nonce(&self.nonce, chunk_index as u64);
-            let bytes_written = self.algorithm.decrypt_to_buffer(
+            let bytes_written = algorithm.decrypt_to_buffer(
                 encrypted_chunk,
                 &mut decrypted_chunk_buffer,
                 &key,

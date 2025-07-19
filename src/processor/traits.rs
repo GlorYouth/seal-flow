@@ -11,19 +11,11 @@ use crate::processor::parallel_streaming::{
 };
 use crate::processor::streaming::{StreamingDecryptorSetup, StreamingEncryptorSetup};
 use crate::common::header::SymmetricParams;
+use crate::common::mode::ProcessingMode;
 use crate::error::Result;
 use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use std::io::Write;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProcessingMode {
-    Ordinary,
-    Streaming,
-    Parallel,
-    ParallelStreaming,
-    #[cfg(feature = "async")]
-    Asynchronous,
-}
 
 pub enum BodyEncryptor<'a> {
     Ordinary(OrdinaryEncryptor<'a>),
@@ -75,18 +67,16 @@ impl<S: SymmetricAlgorithmTrait + ?Sized> BodyProcessor for S {
     ) -> Result<SymmetricEncryptorSetup<'a>> {
         let mode = config.mode();
         let BodyEncryptConfig {
-            nonce,
+            symmetric_params,
             aad,
-            config,
+            config: _,
             ..
         } = config;
-        let symmetric_params = SymmetricParams::new(config.chunk_size(), nonce, aad.as_deref());
 
         let processor = match mode {
             ProcessingMode::Ordinary => {
                 let encryptor = OrdinaryEncryptor::new(
                     symmetric_params.clone(),
-                    self.algorithm().into_symmetric_wrapper(),
                     aad,
                 );
                 BodyEncryptor::Ordinary(encryptor)
@@ -94,7 +84,6 @@ impl<S: SymmetricAlgorithmTrait + ?Sized> BodyProcessor for S {
             ProcessingMode::Streaming => {
                 let setup = StreamingEncryptorSetup::new(
                     symmetric_params.clone(),
-                    self.algorithm().into_symmetric_wrapper(),
                     aad,
                 );
                 BodyEncryptor::Streaming(setup)
@@ -102,7 +91,6 @@ impl<S: SymmetricAlgorithmTrait + ?Sized> BodyProcessor for S {
             ProcessingMode::Parallel => {
                 let encryptor = ParallelEncryptor::new(
                     symmetric_params.clone(),
-                    self.algorithm().into_symmetric_wrapper(),
                     aad,
                 );
                 BodyEncryptor::Parallel(encryptor)
@@ -110,9 +98,8 @@ impl<S: SymmetricAlgorithmTrait + ?Sized> BodyProcessor for S {
             ProcessingMode::ParallelStreaming => {
                 let encryptor = ParallelStreamingEncryptor::new(
                     symmetric_params.clone(),
-                    self.algorithm().into_symmetric_wrapper(),
                     aad,
-                    config.channel_bound(),
+                    config.config.channel_bound(),
                 );
                 BodyEncryptor::ParallelStreaming(encryptor)
             }
@@ -120,9 +107,8 @@ impl<S: SymmetricAlgorithmTrait + ?Sized> BodyProcessor for S {
             ProcessingMode::Asynchronous => {
                 let setup = AsyncEncryptorSetup::new(
                     symmetric_params.clone(),
-                    self.algorithm().into_symmetric_wrapper(),
                     aad,
-                    config.channel_bound(),
+                    config.config.channel_bound(),
                 );
                 BodyEncryptor::Asynchronous(setup)
             }

@@ -7,7 +7,7 @@
 use crate::common::buffer::BufferPool;
 use crate::common::header::SymmetricParams;
 use crate::common::{derive_nonce, OrderedChunk};
-use crate::error::{Error, Result};
+use crate::error::{Error, FormatError, Result};
 use seal_crypto_wrapper::prelude::TypedSymmetricKey;
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use rayon::prelude::*;
@@ -22,7 +22,6 @@ use crossbeam_utils::thread;
 
 pub struct ParallelStreamingEncryptor<'a> {
     pub symmetric_params: SymmetricParams,
-    pub(crate) algorithm: SymmetricAlgorithmWrapper,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) channel_bound: usize,
     _lifetime: PhantomData<&'a ()>,
@@ -31,13 +30,11 @@ pub struct ParallelStreamingEncryptor<'a> {
 impl<'a> ParallelStreamingEncryptor<'a> {
     pub(crate) fn new(
         symmetric_params: SymmetricParams,
-        algorithm: SymmetricAlgorithmWrapper,
         aad: Option<Vec<u8>>,
         channel_bound: usize,
     ) -> Self {
         Self {
             symmetric_params,
-            algorithm,
             aad,
             channel_bound,
             _lifetime: PhantomData,
@@ -49,10 +46,16 @@ impl<'a> ParallelStreamingEncryptor<'a> {
         R: Read + Send,
         W: Write + Send,
     {
+        if self.symmetric_params.algorithm != key.algorithm() {
+            return Err(Error::Format(FormatError::InvalidKeyType.into()));
+        }
+
+        let algorithm = SymmetricAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+
         let key = Arc::new(key.into_owned());
         let aad_arc = Arc::new(self.aad);
         let pool = Arc::new(BufferPool::new(self.symmetric_params.chunk_size as usize));
-        let tag_size = self.algorithm.tag_size();
+        let tag_size = algorithm.tag_size();
         let base_nonce = self.symmetric_params.base_nonce;
 
         let (raw_chunk_tx, raw_chunk_rx) = crossbeam_channel::bounded(self.channel_bound);
@@ -99,7 +102,7 @@ impl<'a> ParallelStreamingEncryptor<'a> {
             });
 
             let enc_chunk_tx_clone = enc_chunk_tx.clone();
-            let algo_clone = self.algorithm.clone();
+            let algo_clone = algorithm.clone();
             let aad_clone = Arc::clone(&aad_arc);
             let in_pool = Arc::clone(&pool);
             let out_pool = Arc::new(BufferPool::new(self.symmetric_params.chunk_size as usize + tag_size));
