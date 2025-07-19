@@ -6,52 +6,59 @@
 
 use super::config::{BodyDecryptConfig, BodyEncryptConfig};
 use super::traits::OrdinaryBodyProcessor;
-use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use crate::common::derive_nonce;
+use crate::common::header::SymmetricParams;
 use crate::error::Result;
+use seal_crypto_wrapper::prelude::{TypedSymmetricKey};
+use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
+use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
+use std::borrow::Cow;
 
-impl<S: SymmetricAlgorithmTrait + ?Sized> OrdinaryBodyProcessor for S {
-    /// Encrypts in-memory data sequentially.
-    ///
-    /// 顺序加密内存中的数据。
-    fn encrypt_body_in_memory<'a>(
-        &self,
-        plaintext: &[u8],
-        config: BodyEncryptConfig,
-    ) -> Result<Vec<u8>> {
+pub struct OrdinaryEncryptor<'a> {
+    pub symmetric_params: SymmetricParams,
+    algorithm: SymmetricAlgorithmWrapper,
+    key: Cow<'a, TypedSymmetricKey>,
+    aad: Option<Vec<u8>>,
+}
+
+impl<'a> OrdinaryEncryptor<'a> {
+    pub fn encrypt(self, plaintext: &[u8]) -> Result<Vec<u8>> {
+        let chunk_size = self.symmetric_params.chunk_size as usize;
         let mut encrypted_body = Vec::with_capacity(
-            plaintext.len()
-                + (plaintext.len() / config.chunk_size() as usize + 1) * self.tag_size(),
+            plaintext.len() + (plaintext.len() / chunk_size + 1) * self.algorithm.tag_size(),
         );
 
-        let mut temp_chunk_buffer = vec![0u8; config.chunk_size() as usize + self.tag_size()];
+        let mut temp_chunk_buffer = vec![0u8; chunk_size + self.algorithm.tag_size()];
 
-        for (i, chunk) in plaintext.chunks(config.chunk_size() as usize).enumerate() {
-            let nonce = derive_nonce(config.nonce(), i as u64);
-            let bytes_written = self.encrypt_to_buffer(
+        for (i, chunk) in plaintext.chunks(chunk_size).enumerate() {
+            let nonce = derive_nonce(&self.symmetric_params.base_nonce, i as u64);
+            let bytes_written = self.algorithm.encrypt_to_buffer(
                 chunk,
                 &mut temp_chunk_buffer,
-                config.key(),
+                &self.key,
                 &nonce,
-                config.aad(),
+                self.aad.as_deref(),
             )?;
             encrypted_body.extend_from_slice(&temp_chunk_buffer[..bytes_written]);
         }
 
         Ok(encrypted_body)
     }
-    /// Decrypts a ciphertext body sequentially.
-    ///
-    /// 顺序解密密文体。
-    fn decrypt_body_in_memory<'a>(
-        &self,
-        ciphertext: &[u8],
-        config: BodyDecryptConfig,
-    ) -> Result<Vec<u8>> {
-        let mut plaintext = Vec::with_capacity(ciphertext.len());
-        let chunk_size_with_tag = config.chunk_size() as usize + self.tag_size();
+}
 
-        // Reusable buffer for decrypted chunks, sized for the largest possible chunk.
+pub struct OrdinaryDecryptor<'a> {
+    algorithm: SymmetricAlgorithmWrapper,
+    key: Cow<'a, TypedSymmetricKey>,
+    nonce: Box<[u8]>,
+    chunk_size: usize,
+    aad: Option<Vec<u8>>,
+}
+
+impl<'a> OrdinaryDecryptor<'a> {
+    pub fn decrypt(self, ciphertext: &[u8]) -> Result<Vec<u8>> {
+        let mut plaintext = Vec::with_capacity(ciphertext.len());
+        let chunk_size_with_tag = self.chunk_size + self.algorithm.tag_size();
+
         let mut decrypted_chunk_buffer = vec![0u8; chunk_size_with_tag];
 
         let mut cursor = 0;
@@ -66,13 +73,13 @@ impl<S: SymmetricAlgorithmTrait + ?Sized> OrdinaryBodyProcessor for S {
 
             let encrypted_chunk = &ciphertext[cursor..cursor + current_chunk_len];
 
-            let current_nonce = derive_nonce(config.nonce(), chunk_index as u64);
-            let bytes_written = self.decrypt_to_buffer(
+            let current_nonce = derive_nonce(&self.nonce, chunk_index as u64);
+            let bytes_written = self.algorithm.decrypt_to_buffer(
                 encrypted_chunk,
                 &mut decrypted_chunk_buffer,
-                config.key(),
+                &self.key,
                 &current_nonce,
-                config.aad(),
+                self.aad.as_deref(),
             )?;
 
             plaintext.extend_from_slice(&decrypted_chunk_buffer[..bytes_written]);
@@ -82,5 +89,44 @@ impl<S: SymmetricAlgorithmTrait + ?Sized> OrdinaryBodyProcessor for S {
         }
 
         Ok(plaintext)
+    }
+}
+
+impl<S: SymmetricAlgorithmTrait + ?Sized> OrdinaryBodyProcessor for S {
+    fn setup_encryptor<'a>(
+        &self,
+        config: BodyEncryptConfig<'a>,
+    ) -> Result<OrdinaryEncryptor<'a>> {
+        let BodyEncryptConfig {
+            key,
+            nonce,
+            aad,
+            config,
+        } = config;
+        let symmetric_params = SymmetricParams::new(
+            config.chunk_size(),
+            nonce,
+            aad.as_deref(),
+        );
+        Ok(OrdinaryEncryptor {
+            symmetric_params,
+            algorithm: self.algorithm().into_symmetric_wrapper(),
+            key,
+            aad,
+        })
+    }
+    
+    fn setup_decryptor<'a>(
+        &self,
+        config: BodyDecryptConfig<'a>,
+    ) -> Result<OrdinaryDecryptor<'a>> {
+        let chunk_size = config.chunk_size();
+        Ok(OrdinaryDecryptor {
+            algorithm: self.algorithm().into_symmetric_wrapper(),
+            key: config.key,
+            nonce: config.nonce,
+            chunk_size,
+            aad: config.aad,
+        })
     }
 }

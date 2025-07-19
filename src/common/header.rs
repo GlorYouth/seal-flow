@@ -89,9 +89,23 @@ pub struct SignatureBlock {
 pub struct SymmetricParams {
     pub chunk_size: u32,
     pub base_nonce: Box<[u8]>, // 用于派生每个 chunk nonce 的基础 nonce
-    // AAD 可以很大，通常不直接放入头部。
-    // 可以选择性地包含它的哈希值，并对该哈希签名。
-    pub aad_hash: Option<[u8; 32]>, 
+    pub aad_hash: Option<[u8; 32]>,
+}
+
+impl SymmetricParams {
+    pub fn new(chunk_size: u32, base_nonce: Box<[u8]>, aad: Option<&[u8]>) -> Self {
+        let aad_hash = aad.map(|data| {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(data);
+            hasher.finalize().into()
+        });
+        Self {
+            chunk_size,
+            base_nonce,
+            aad_hash,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]

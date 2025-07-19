@@ -2,35 +2,38 @@
 //!
 //! 定义不同消息体处理模式的 trait。
 
+use crate::body::asynchronous::{AsyncDecryptorSetup, AsyncEncryptorSetup};
 use crate::body::config::{BodyDecryptConfig, BodyEncryptConfig};
+use crate::body::ordinary::{OrdinaryDecryptor, OrdinaryEncryptor};
+use crate::body::parallel::{ParallelDecryptor, ParallelEncryptor};
+use crate::body::parallel_streaming::{
+    ParallelStreamingDecryptor, ParallelStreamingEncryptor,
+};
+use crate::body::streaming::{StreamingDecryptorSetup, StreamingEncryptorSetup};
 use crate::error::Result;
-use std::io::{Read, Write};
+use std::io::Write;
 
 pub trait OrdinaryBodyProcessor {
-    fn encrypt_body_in_memory<'a>(
+    fn setup_encryptor<'a>(
         &self,
-        plaintext: &[u8],
         config: BodyEncryptConfig<'a>,
-    ) -> Result<Vec<u8>>;
-    fn decrypt_body_in_memory<'a>(
+    ) -> Result<OrdinaryEncryptor<'a>>;
+    fn setup_decryptor<'a>(
         &self,
-        ciphertext: &[u8],
         config: BodyDecryptConfig<'a>,
-    ) -> Result<Vec<u8>>;
+    ) -> Result<OrdinaryDecryptor<'a>>;
 }
 
 pub trait StreamingBodyProcessor {
-    fn encrypt_body_to_stream<'a>(
+    fn setup_encryptor<'a>(
         &self,
-        writer: Box<dyn Write + 'a>,
         config: BodyEncryptConfig<'a>,
-    ) -> Result<Box<dyn FinishingWrite + 'a>>;
+    ) -> Result<StreamingEncryptorSetup<'a>>;
 
-    fn decrypt_body_from_stream<'a>(
+    fn setup_decryptor<'a>(
         &self,
-        reader: Box<dyn Read + 'a>,
         config: BodyDecryptConfig<'a>,
-    ) -> Result<Box<dyn Read + 'a>>;
+    ) -> Result<StreamingDecryptorSetup<'a>>;
 }
 
 pub trait FinishingWrite: Write {
@@ -38,44 +41,36 @@ pub trait FinishingWrite: Write {
 }
 
 pub trait ParallelBodyProcessor {
-    fn encrypt_body_parallel<'a>(
+    fn setup_encryptor<'a>(
         &self,
-        plaintext: &[u8],
         config: BodyEncryptConfig<'a>,
-    ) -> Result<Vec<u8>>;
-    fn decrypt_body_parallel<'a>(
+    ) -> Result<ParallelEncryptor<'a>>;
+    fn setup_decryptor<'a>(
         &self,
-        ciphertext: &[u8],
         config: BodyDecryptConfig<'a>,
-    ) -> Result<Vec<u8>>;
+    ) -> Result<ParallelDecryptor<'a>>;
 }
 
 pub trait ParallelStreamingBodyProcessor {
-    fn encrypt_body_pipeline<'a>(
+    fn setup_encryptor<'a>(
         &self,
-        reader: Box<dyn Read + Send + 'a>,
-        writer: Box<dyn Write + Send + 'a>,
         config: BodyEncryptConfig<'a>,
-    ) -> Result<()>;
-    fn decrypt_body_pipeline<'a>(
+    ) -> Result<ParallelStreamingEncryptor<'a>>;
+    fn setup_decryptor<'a>(
         &self,
-        reader: Box<dyn Read + Send + 'a>,
-        writer: Box<dyn Write + Send + 'a>,
         config: BodyDecryptConfig<'a>,
-    ) -> Result<()>;
+    ) -> Result<ParallelStreamingDecryptor<'a>>;
 }
 
 #[cfg(feature = "async")]
 pub trait AsynchronousBodyProcessor {
-    fn encrypt_body_async<'a>(
+    fn setup_encryptor<'a>(
         &self,
-        writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>,
         config: BodyEncryptConfig<'a>,
-    ) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'a>>;
+    ) -> Result<AsyncEncryptorSetup<'a>>;
 
-    fn decrypt_body_async<'a>(
+    fn setup_decryptor<'a>(
         &self,
-        reader: Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>,
         config: BodyDecryptConfig<'a>,
-    ) -> Result<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'a>>;
+    ) -> Result<AsyncDecryptorSetup<'a>>;
 }

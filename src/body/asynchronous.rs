@@ -8,102 +8,51 @@
 
 #![cfg(feature = "async")]
 
-use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
+use super::config::{BodyDecryptConfig, BodyEncryptConfig};
+use super::traits::AsynchronousBodyProcessor;
 use crate::common::buffer::BufferPool;
-use crate::common::{config::ArcConfig, derive_nonce, OrderedChunk};
+use crate::common::header::SymmetricParams;
+use crate::common::{derive_nonce, OrderedChunk};
 use crate::error::{Error, Result};
-use seal_crypto_wrapper::prelude::TypedSymmetricKey;
 use bytes::BytesMut;
 use futures::stream::{FuturesUnordered, StreamExt};
 use pin_project_lite::pin_project;
+use seal_crypto_wrapper::prelude::TypedSymmetricKey;
+use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
+use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BinaryHeap};
-use std::{io, u8};
+use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::task::JoinHandle;
 
-// --- Helper Structs for Encryption ---
+// --- Encryptor ---
 
-/// A handle to a spawned encryption task.
-///
-/// 生成的加密任务的句柄。
-pub(crate) type EncryptTask = JoinHandle<Result<(u64, BytesMut)>>;
-
-/// The state of the writer in the encryption pipeline.
-///
-/// 加密管道中写入器的状态。
-pub(crate) enum WritingState {
-    /// Idle, waiting for a chunk to write.
-    ///
-    /// 空闲，等待要写入的块。
-    Idle,
-    /// Currently writing a chunk.
-    ///
-    /// 正在写入一个块。
-    Writing {
-        /// The chunk being written.
-        ///
-        /// 正在写入的块。
-        chunk: BytesMut,
-        /// The current position within the chunk.
-        ///
-        /// 块内的当前位置。
-        pos: usize,
-    },
+pub struct AsyncEncryptorSetup<'a> {
+    pub symmetric_params: SymmetricParams,
+    algorithm: SymmetricAlgorithmWrapper,
+    key: Cow<'a, TypedSymmetricKey>,
+    aad: Option<Vec<u8>>,
+    channel_bound: usize,
 }
 
-// --- Encryptor Implementation ---
-
-pin_project! {
-    /// The implementation of an asynchronous, streaming encryptor.
-    ///
-    /// 异步、流式加密器的实现。
-    pub struct EncryptorImpl<W: AsyncWrite> {
-        #[pin]
-        pub(crate) writer: W,
-        pub(crate) key: Arc<TypedSymmetricKey>,
-        pub(crate) algorithm: SymmetricAlgorithmWrapper,
-        pub(crate) base_nonce: Box<[u8]>,
-        pub(crate) config: ArcConfig,
-        pub(crate) buffer: BytesMut,
-        pub(crate) chunk_counter: u64,
-        pub(crate) next_chunk_to_write: u64,
-        pub(crate) is_shutdown: bool,
-        pub(crate) encrypt_tasks: FuturesUnordered<EncryptTask>,
-        pub(crate) pending_chunks: BinaryHeap<OrderedChunk>,
-        pub(crate) writing_state: WritingState,
-        pub(crate) out_pool: Arc<BufferPool>,
-        pub(crate) aad: Option<Arc<Vec<u8>>>,
-    }
-}
-
-impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
-    /// Creates a new `EncryptorImpl`.
-    ///
-    /// 创建一个新的 `EncryptorImpl`。
-    pub(crate) fn new<'a>(
+impl<'a> AsyncEncryptorSetup<'a> {
+    pub fn start<W: AsyncWrite + Send + Unpin + 'a>(
+        self,
         writer: W,
-        algorithm: SymmetricAlgorithmWrapper,
-        config: BodyEncryptConfig<'a>,
-    ) -> Self {
-        let BodyEncryptConfig {
-            key,
-            nonce,
-            aad,
-            config,
-            ..
-        } = config;
-        let chunk_size = config.chunk_size() as usize;
-        let out_pool = Arc::new(BufferPool::new(chunk_size + algorithm.tag_size()));
+    ) -> AsyncEncryptorImpl<'a, W> {
+        let chunk_size = self.symmetric_params.chunk_size as usize;
+        let out_pool = Arc::new(BufferPool::new(chunk_size + self.algorithm.tag_size()));
 
-        Self {
+        AsyncEncryptorImpl {
             writer,
-            algorithm,
-            key: Arc::new(key.into_owned()),
-            base_nonce: nonce,
-            config,
+            algorithm: self.algorithm,
+            key: Arc::new(self.key.into_owned()),
+            base_nonce: self.symmetric_params.base_nonce,
+            channel_bound: self.channel_bound,
             buffer: BytesMut::with_capacity(chunk_size * 2),
             chunk_counter: 0,
             next_chunk_to_write: 0,
@@ -112,33 +61,63 @@ impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
             pending_chunks: BinaryHeap::new(),
             writing_state: WritingState::Idle,
             out_pool,
-            aad: aad.map(|d| Arc::new(d.to_vec())),
+            aad: self.aad.map(Arc::new),
+            _lifetime: std::marker::PhantomData,
         }
     }
+}
 
-    /// Polls the encryption pipeline to make progress.
-    ///
-    /// 轮询加密管道以推进进度。
-    pub(crate) fn poll_pipeline_progress(
+type EncryptTask = JoinHandle<Result<(u64, BytesMut)>>;
+
+enum WritingState {
+    Idle,
+    Writing {
+        chunk: BytesMut,
+        pos: usize,
+    },
+}
+
+pin_project! {
+    pub struct AsyncEncryptorImpl<'a, W: AsyncWrite> {
+        #[pin]
+        writer: W,
+        key: Arc<TypedSymmetricKey>,
+        algorithm: SymmetricAlgorithmWrapper,
+        base_nonce: Box<[u8]>,
+        channel_bound: usize,
+        buffer: BytesMut,
+        chunk_counter: u64,
+        next_chunk_to_write: u64,
+        is_shutdown: bool,
+        encrypt_tasks: FuturesUnordered<EncryptTask>,
+        pending_chunks: BinaryHeap<OrderedChunk>,
+        writing_state: WritingState,
+        out_pool: Arc<BufferPool>,
+        aad: Option<Arc<Vec<u8>>>,
+        _lifetime: std::marker::PhantomData<&'a ()>,
+    }
+}
+
+impl<'a, W: AsyncWrite + Unpin> AsyncEncryptorImpl<'a, W> {
+    fn poll_pipeline_progress(
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<bool>> {
         let state_before = self.state_tuple();
+        let chunk_size = self.buffer.capacity() / 2; 
 
-        // Stage 1: Spawn encryption tasks
-        // 阶段 1: 生成加密任务
-        while self.encrypt_tasks.len() < self.config.channel_bound() {
-            if self.buffer.len() < self.config.chunk_size() as usize && !self.is_shutdown {
+        while self.encrypt_tasks.len() < self.channel_bound {
+            if self.buffer.len() < chunk_size && !self.is_shutdown {
                 break;
             }
             if self.buffer.is_empty() {
                 break;
             }
 
-            let chunk_len = std::cmp::min(self.buffer.len(), self.config.chunk_size() as usize);
+            let chunk_len = std::cmp::min(self.buffer.len(), chunk_size);
             let in_buffer = self.buffer.split_to(chunk_len);
 
-            let algo = Arc::new(self.algorithm.clone());
+            let algo = self.algorithm.clone();
             let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
             let index = self.chunk_counter;
             let out_pool = Arc::clone(&self.out_pool);
@@ -169,8 +148,6 @@ impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
             self.chunk_counter += 1;
         }
 
-        // Stage 2: Poll completed encryption tasks
-        // 阶段 2: 轮询已完成的加密任务
         while let Poll::Ready(Some(result)) = self.encrypt_tasks.poll_next_unpin(cx) {
             match result {
                 Ok(Ok((index, data))) => {
@@ -184,8 +161,6 @@ impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
             }
         }
 
-        // Stage 3: Write completed chunks in order
-        // 阶段 3: 按顺序写入已完成的块
         loop {
             if let WritingState::Idle = self.writing_state {
                 if let Some(chunk) = self.pending_chunks.peek() {
@@ -265,7 +240,7 @@ impl<W: AsyncWrite + Unpin> EncryptorImpl<W> {
     }
 }
 
-impl<W: AsyncWrite + Unpin> AsyncWrite for EncryptorImpl<W> {
+impl<'a, W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptorImpl<'a, W> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -327,63 +302,28 @@ impl<W: AsyncWrite + Unpin> AsyncWrite for EncryptorImpl<W> {
     }
 }
 
-// --- Decryptor Implementation ---
+// --- Decryptor ---
 
-/// A handle to a spawned decryption task.
-///
-/// 生成的解密任务的句柄。
-pub(crate) type DecryptTask = JoinHandle<(u64, Result<BytesMut>)>;
-
-pin_project! {
-    /// The implementation of an asynchronous, streaming decryptor.
-    ///
-    /// 异步、流式解密器的实现。
-    pub struct DecryptorImpl<R: AsyncRead> {
-        #[pin]
-        pub(crate) reader: R,
-        pub(crate) algorithm: SymmetricAlgorithmWrapper,
-        pub(crate) key: Arc<TypedSymmetricKey>,
-        pub(crate) base_nonce: Box<[u8]>,
-        pub(crate) channel_bound: usize,
-        pub(crate) encrypted_chunk_size: usize,
-        pub(crate) decrypted_chunk_size: usize,
-        pub(crate) read_buffer: BytesMut,
-        pub(crate) out_cursor: io::Cursor<BytesMut>,
-        pub(crate) chunk_counter: u64,
-        pub(crate) next_chunk_to_read: u64,
-        pub(crate) reader_done: bool,
-        pub(crate) decrypt_tasks: FuturesUnordered<DecryptTask>,
-        pub(crate) pending_chunks: BTreeMap<u64, Result<BytesMut>>,
-        pub(crate) out_pool: Arc<BufferPool>,
-        pub(crate) aad: Option<Arc<Vec<u8>>>,
-    }
+pub struct AsyncDecryptorSetup<'a> {
+    algorithm: SymmetricAlgorithmWrapper,
+    key: Cow<'a, TypedSymmetricKey>,
+    nonce: Box<[u8]>,
+    aad: Option<Vec<u8>>,
+    chunk_size: usize,
+    channel_bound: usize,
 }
 
-impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
-    /// Creates a new `DecryptorImpl`.
-    ///
-    /// 创建一个新的 `DecryptorImpl`。
-    pub(crate) fn new<'a>(
-        reader: R,
-        algorithm: SymmetricAlgorithmWrapper,
-        config: BodyDecryptConfig<'a>,
-    ) -> Self {
-        let BodyDecryptConfig {
-            key,
-            nonce,
-            aad,
-            config,
-            ..
-        } = config;
-        let decrypted_chunk_size = config.chunk_size() as usize;
-        let encrypted_chunk_size = decrypted_chunk_size + algorithm.tag_size();
+impl<'a> AsyncDecryptorSetup<'a> {
+    pub fn start<R: AsyncRead + Send + Unpin + 'a>(self, reader: R) -> AsyncDecryptorImpl<'a, R> {
+        let decrypted_chunk_size = self.chunk_size;
+        let encrypted_chunk_size = decrypted_chunk_size + self.algorithm.tag_size();
         let out_pool = Arc::new(BufferPool::new(decrypted_chunk_size));
-        Self {
+        AsyncDecryptorImpl {
             reader,
-            algorithm,
-            key: Arc::new(key.into_owned()),
-            base_nonce: nonce,
-            channel_bound: config.channel_bound(),
+            algorithm: self.algorithm,
+            key: Arc::new(self.key.into_owned()),
+            base_nonce: self.nonce,
+            channel_bound: self.channel_bound,
             encrypted_chunk_size,
             decrypted_chunk_size,
             read_buffer: BytesMut::with_capacity(encrypted_chunk_size * 2),
@@ -394,21 +334,44 @@ impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
             decrypt_tasks: FuturesUnordered::new(),
             pending_chunks: BTreeMap::new(),
             out_pool,
-            aad: aad.map(|d| Arc::new(d.to_vec())),
+            aad: self.aad.map(Arc::new),
+            _lifetime: std::marker::PhantomData,
         }
     }
+}
 
-    /// Polls the decryption pipeline to make progress.
-    ///
-    /// 轮询解密管道以推进进度。
-    pub(crate) fn poll_pipeline_progress(
+type DecryptTask = JoinHandle<(u64, Result<BytesMut>)>;
+
+pin_project! {
+    pub struct AsyncDecryptorImpl<'a, R: AsyncRead> {
+        #[pin]
+        reader: R,
+        algorithm: SymmetricAlgorithmWrapper,
+        key: Arc<TypedSymmetricKey>,
+        base_nonce: Box<[u8]>,
+        channel_bound: usize,
+        encrypted_chunk_size: usize,
+        decrypted_chunk_size: usize,
+        read_buffer: BytesMut,
+        out_cursor: io::Cursor<BytesMut>,
+        chunk_counter: u64,
+        next_chunk_to_read: u64,
+        reader_done: bool,
+        decrypt_tasks: FuturesUnordered<DecryptTask>,
+        pending_chunks: BTreeMap<u64, Result<BytesMut>>,
+        out_pool: Arc<BufferPool>,
+        aad: Option<Arc<Vec<u8>>>,
+        _lifetime: std::marker::PhantomData<&'a ()>,
+    }
+}
+
+impl<'a, R: AsyncRead + Unpin> AsyncDecryptorImpl<'a, R> {
+    fn poll_pipeline_progress(
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<bool>> {
         let mut made_progress = false;
 
-        // Stage 1: Read from source and spawn decrypt tasks
-        // 阶段 1: 从源读取并生成解密任务
         if !self.reader_done {
             let mut temp_buf = [0u8; 8 * 1024];
             let mut read_buf = ReadBuf::new(&mut temp_buf);
@@ -441,7 +404,7 @@ impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
                 let chunk_len = std::cmp::min(self.read_buffer.len(), self.encrypted_chunk_size);
                 let in_buffer = self.read_buffer.split_to(chunk_len);
 
-                let algo = Arc::new(self.algorithm.clone());
+                let algo = self.algorithm.clone();
                 let nonce = derive_nonce(&self.base_nonce, self.chunk_counter);
                 let index = self.chunk_counter;
                 let out_pool = Arc::clone(&self.out_pool);
@@ -475,8 +438,6 @@ impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
             }
         }
 
-        // Stage 2: Poll completed tasks
-        // 阶段 2: 轮询已完成的任务
         let initial_pending = self.pending_chunks.len();
         while let Poll::Ready(Some(result)) = self.decrypt_tasks.poll_next_unpin(cx) {
             match result {
@@ -490,8 +451,6 @@ impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
             made_progress = true;
         }
 
-        // Stage 3: Check for overall completion
-        // 阶段 3: 检查整体是否完成
         if self.reader_done
             && self.read_buffer.is_empty()
             && self.decrypt_tasks.is_empty()
@@ -524,7 +483,7 @@ impl<R: AsyncRead + Unpin> DecryptorImpl<R> {
     }
 }
 
-impl<R: AsyncRead + Unpin> AsyncRead for DecryptorImpl<R> {
+impl<'a, R: AsyncRead + Unpin> AsyncRead for AsyncDecryptorImpl<'a, R> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -534,7 +493,6 @@ impl<R: AsyncRead + Unpin> AsyncRead for DecryptorImpl<R> {
             let pre_len = buf.filled().len();
             let state_before = self.as_ref().state_tuple();
 
-            // Try to satisfy read from the current output buffer
             {
                 let this = self.as_mut().project();
                 let pos = this.out_cursor.position() as usize;
@@ -552,7 +510,6 @@ impl<R: AsyncRead + Unpin> AsyncRead for DecryptorImpl<R> {
                 return Poll::Ready(Ok(()));
             }
 
-            // If buffer is empty, try to get the next decrypted chunk
             let next_chunk_opt = {
                 let this = self.as_mut().project();
                 this.pending_chunks.remove(this.next_chunk_to_read)
@@ -574,7 +531,6 @@ impl<R: AsyncRead + Unpin> AsyncRead for DecryptorImpl<R> {
                 }
             }
 
-            // If no chunk is ready, poll the pipeline to make progress
             match self.as_mut().poll_pipeline_progress(cx) {
                 Poll::Ready(Ok(true)) => continue,
                 Poll::Ready(Ok(false)) => {}
@@ -582,7 +538,6 @@ impl<R: AsyncRead + Unpin> AsyncRead for DecryptorImpl<R> {
                 Poll::Pending => return Poll::Pending,
             }
 
-            // Check for completion
             {
                 let this = self.as_mut().project();
                 let pos = this.out_cursor.position() as usize;
@@ -607,28 +562,44 @@ impl<R: AsyncRead + Unpin> AsyncRead for DecryptorImpl<R> {
 
 // --- AsynchronousBodyProcessor Implementation ---
 
-use super::config::{BodyDecryptConfig, BodyEncryptConfig};
-use super::traits::AsynchronousBodyProcessor;
-use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
-
 impl<S: SymmetricAlgorithmTrait + ?Sized> AsynchronousBodyProcessor for S {
-    fn encrypt_body_async<'a>(
+    fn setup_encryptor<'a>(
         &self,
-        writer: Box<dyn AsyncWrite + Send + Unpin + 'a>,
         config: BodyEncryptConfig<'a>,
-    ) -> Result<Box<dyn AsyncWrite + Send + Unpin + 'a>> {
-        let encryptor =
-            EncryptorImpl::new(writer, self.algorithm().into_symmetric_wrapper(), config);
-        Ok(Box::new(encryptor))
+    ) -> Result<AsyncEncryptorSetup<'a>> {
+        let BodyEncryptConfig {
+            key,
+            nonce,
+            aad,
+            config,
+        } = config;
+        let symmetric_params = SymmetricParams::new(
+            config.chunk_size(),
+            nonce,
+            aad.as_deref(),
+        );
+        Ok(AsyncEncryptorSetup {
+            symmetric_params,
+            algorithm: self.algorithm().into_symmetric_wrapper(),
+            key,
+            aad,
+            channel_bound: config.channel_bound(),
+        })
     }
 
-    fn decrypt_body_async<'a>(
+    fn setup_decryptor<'a>(
         &self,
-        reader: Box<dyn AsyncRead + Send + Unpin + 'a>,
         config: BodyDecryptConfig<'a>,
-    ) -> Result<Box<dyn AsyncRead + Send + Unpin + 'a>> {
-        let decryptor =
-            DecryptorImpl::new(reader, self.algorithm().into_symmetric_wrapper(), config);
-        Ok(Box::new(decryptor))
+    ) -> Result<AsyncDecryptorSetup<'a>> {
+        let chunk_size = config.chunk_size();
+        let channel_bound = config.channel_bound();
+        Ok(AsyncDecryptorSetup {
+            algorithm: self.algorithm().into_symmetric_wrapper(),
+            key: config.key,
+            nonce: config.nonce,
+            aad: config.aad,
+            chunk_size,
+            channel_bound,
+        })
     }
 }
