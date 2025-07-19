@@ -4,8 +4,6 @@
 //! 实现并行流式加密和解密的通用逻辑。
 //! 这是对称和混合并行流式模式的后端。
 
-use super::config::{BodyDecryptConfig, BodyEncryptConfig};
-use super::traits::ParallelStreamingBodyProcessor;
 use crate::common::buffer::BufferPool;
 use crate::common::header::SymmetricParams;
 use crate::common::{derive_nonce, OrderedChunk};
@@ -24,10 +22,10 @@ use std::thread;
 
 pub struct ParallelStreamingEncryptor<'a> {
     pub symmetric_params: SymmetricParams,
-    algorithm: SymmetricAlgorithmWrapper,
-    key: Cow<'a, TypedSymmetricKey>,
-    aad: Option<Vec<u8>>,
-    channel_bound: usize,
+    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) key: Cow<'a, TypedSymmetricKey>,
+    pub(crate) aad: Option<Vec<u8>>,
+    pub(crate) channel_bound: usize,
 }
 
 impl<'a> ParallelStreamingEncryptor<'a> {
@@ -180,12 +178,12 @@ impl<'a> ParallelStreamingEncryptor<'a> {
 // --- Decryptor ---
 
 pub struct ParallelStreamingDecryptor<'a> {
-    algorithm: SymmetricAlgorithmWrapper,
-    key: Cow<'a, TypedSymmetricKey>,
-    nonce: Box<[u8]>,
-    aad: Option<Vec<u8>>,
-    chunk_size: usize,
-    channel_bound: usize,
+    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) key: Cow<'a, TypedSymmetricKey>,
+    pub(crate) nonce: Box<[u8]>,
+    pub(crate) aad: Option<Vec<u8>>,
+    pub(crate) chunk_size: usize,
+    pub(crate) channel_bound: usize,
 }
 
 impl<'a> ParallelStreamingDecryptor<'a> {
@@ -330,48 +328,6 @@ impl<'a> ParallelStreamingDecryptor<'a> {
             }
 
             final_result
-        })
-    }
-}
-
-impl<S: SymmetricAlgorithmTrait + ?Sized> ParallelStreamingBodyProcessor for S {
-    fn setup_encryptor<'a>(
-        &self,
-        config: BodyEncryptConfig<'a>,
-    ) -> Result<ParallelStreamingEncryptor<'a>> {
-        let BodyEncryptConfig {
-            key,
-            nonce,
-            aad,
-            config,
-        } = config;
-        let symmetric_params = SymmetricParams::new(
-            config.chunk_size(),
-            nonce,
-            aad.as_deref(),
-        );
-        Ok(ParallelStreamingEncryptor {
-            symmetric_params,
-            algorithm: self.algorithm().into_symmetric_wrapper(),
-            key,
-            aad,
-            channel_bound: config.channel_bound(),
-        })
-    }
-
-    fn setup_decryptor<'a>(
-        &self,
-        config: BodyDecryptConfig<'a>,
-    ) -> Result<ParallelStreamingDecryptor<'a>> {
-        let chunk_size = config.chunk_size();
-        let channel_bound = config.channel_bound();
-        Ok(ParallelStreamingDecryptor {
-            algorithm: self.algorithm().into_symmetric_wrapper(),
-            key: config.key,
-            nonce: config.nonce,
-            aad: config.aad,
-            chunk_size,
-            channel_bound,
         })
     }
 }

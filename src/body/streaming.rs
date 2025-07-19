@@ -4,8 +4,7 @@
 //! 实现同步、流式加密和解密的通用逻辑。
 //! 这是对称和混合流式模式的后端。
 
-use super::config::{BodyDecryptConfig, BodyEncryptConfig};
-use super::traits::{FinishingWrite, StreamingBodyProcessor};
+use super::traits::FinishingWrite;
 use crate::common::derive_nonce;
 use crate::common::header::SymmetricParams;
 use crate::error::Result;
@@ -19,9 +18,9 @@ use std::io::{self, Read, Write};
 
 pub struct StreamingEncryptorSetup<'a> {
     pub symmetric_params: SymmetricParams,
-    algorithm: SymmetricAlgorithmWrapper,
-    key: Cow<'a, TypedSymmetricKey>,
-    aad: Option<Vec<u8>>,
+    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) key: Cow<'a, TypedSymmetricKey>,
+    pub(crate) aad: Option<Vec<u8>>,
 }
 
 impl<'a> StreamingEncryptorSetup<'a> {
@@ -143,11 +142,11 @@ impl<'a, W: Write> Write for StreamingEncryptor<'a, W> {
 // --- Decryptor ---
 
 pub struct StreamingDecryptorSetup<'a> {
-    algorithm: SymmetricAlgorithmWrapper,
-    key: Cow<'a, TypedSymmetricKey>,
-    nonce: Box<[u8]>,
-    chunk_size: usize,
-    aad: Option<Vec<u8>>,
+    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) key: Cow<'a, TypedSymmetricKey>,
+    pub(crate) nonce: Box<[u8]>,
+    pub(crate) chunk_size: usize,
+    pub(crate) aad: Option<Vec<u8>>,
 }
 
 impl<'a> StreamingDecryptorSetup<'a> {
@@ -236,47 +235,6 @@ impl<'a, R: Read> Read for StreamingDecryptor<'a, R> {
         self.chunk_counter += 1;
 
         self.buffer.read(buf)
-    }
-}
-
-// --- StreamingBodyProcessor Implementation ---
-
-impl<S: SymmetricAlgorithmTrait + ?Sized> StreamingBodyProcessor for S {
-    fn setup_encryptor<'a>(
-        &self,
-        config: BodyEncryptConfig<'a>,
-    ) -> Result<StreamingEncryptorSetup<'a>> {
-        let BodyEncryptConfig {
-            key,
-            nonce,
-            aad,
-            config,
-        } = config;
-        let symmetric_params = SymmetricParams::new(
-            config.chunk_size(),
-            nonce,
-            aad.as_deref(),
-        );
-        Ok(StreamingEncryptorSetup {
-            symmetric_params,
-            algorithm: self.algorithm().into_symmetric_wrapper(),
-            key,
-            aad,
-        })
-    }
-
-    fn setup_decryptor<'a>(
-        &self,
-        config: BodyDecryptConfig<'a>,
-    ) -> Result<StreamingDecryptorSetup<'a>> {
-        let chunk_size = config.chunk_size();
-        Ok(StreamingDecryptorSetup {
-            algorithm: self.algorithm().into_symmetric_wrapper(),
-            key: config.key,
-            nonce: config.nonce,
-            chunk_size,
-            aad: config.aad,
-        })
     }
 }
 

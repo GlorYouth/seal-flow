@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use crate::common::config::{ArcConfig, DecryptorConfig};
 use rand::{rngs::OsRng, TryRngCore};
 use seal_crypto_wrapper::prelude::TypedSymmetricKey;
+use crate::body::traits::ProcessingMode;
 use crate::error::Result;
 
 pub struct BodyEncryptConfig<'a> {
@@ -10,6 +11,7 @@ pub struct BodyEncryptConfig<'a> {
     pub(crate) nonce: Box<[u8]>,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) config: ArcConfig,
+    pub(crate) mode: ProcessingMode,
 }
 
 impl<'a> BodyEncryptConfig<'a> {
@@ -32,6 +34,10 @@ impl<'a> BodyEncryptConfig<'a> {
     pub fn channel_bound(&self) -> usize {
         self.config.channel_bound()
     }
+
+    pub fn mode(&self) -> ProcessingMode {
+        self.mode
+    }
 }
 
 pub struct BodyEncryptConfigBuilder<'a> {
@@ -39,6 +45,7 @@ pub struct BodyEncryptConfigBuilder<'a> {
     nonce: Option<Box<[u8]>>,
     aad: Option<Vec<u8>>,
     config: ArcConfig,
+    mode: ProcessingMode,
 }
 
 impl<'a> BodyEncryptConfigBuilder<'a> {
@@ -48,6 +55,7 @@ impl<'a> BodyEncryptConfigBuilder<'a> {
             nonce: None,
             aad: None,
             config,
+            mode: ProcessingMode::Ordinary,
         }
     }
 
@@ -66,6 +74,11 @@ impl<'a> BodyEncryptConfigBuilder<'a> {
         self
     }
 
+    pub fn mode(&mut self, mode: ProcessingMode) -> &mut Self {
+        self.mode = mode;
+        self
+    }
+
     pub fn build(mut self) -> Result<BodyEncryptConfig<'a>> {
         if self.nonce.is_none() {
             self.nonce(|nonce| {
@@ -79,6 +92,7 @@ impl<'a> BodyEncryptConfigBuilder<'a> {
             nonce: self.nonce.unwrap(),
             aad: self.aad,
             config: self.config,
+            mode: self.mode,
         })
     }
 }
@@ -91,6 +105,7 @@ pub struct BodyDecryptConfig<'a> {
     pub nonce: Box<[u8]>,
     pub aad: Option<Vec<u8>>,
     pub config: DecryptorConfig,
+    pub mode: ProcessingMode,
 }
 
 impl<'a> BodyDecryptConfig<'a> {
@@ -112,5 +127,9 @@ impl<'a> BodyDecryptConfig<'a> {
 
     pub fn channel_bound(&self) -> usize {
         self.config.channel_bound()
+    }
+
+    pub fn mode(&self) -> ProcessingMode {
+        self.mode
     }
 }

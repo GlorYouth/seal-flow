@@ -4,8 +4,6 @@
 //! 实现普通（单线程、内存中）加密和解密的通用逻辑。
 //! 这是对称和混合普通模式的后端。
 
-use super::config::{BodyDecryptConfig, BodyEncryptConfig};
-use super::traits::OrdinaryBodyProcessor;
 use crate::common::derive_nonce;
 use crate::common::header::SymmetricParams;
 use crate::error::Result;
@@ -16,9 +14,9 @@ use std::borrow::Cow;
 
 pub struct OrdinaryEncryptor<'a> {
     pub symmetric_params: SymmetricParams,
-    algorithm: SymmetricAlgorithmWrapper,
-    key: Cow<'a, TypedSymmetricKey>,
-    aad: Option<Vec<u8>>,
+    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) key: Cow<'a, TypedSymmetricKey>,
+    pub(crate) aad: Option<Vec<u8>>,
 }
 
 impl<'a> OrdinaryEncryptor<'a> {
@@ -47,11 +45,11 @@ impl<'a> OrdinaryEncryptor<'a> {
 }
 
 pub struct OrdinaryDecryptor<'a> {
-    algorithm: SymmetricAlgorithmWrapper,
-    key: Cow<'a, TypedSymmetricKey>,
-    nonce: Box<[u8]>,
-    chunk_size: usize,
-    aad: Option<Vec<u8>>,
+    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) key: Cow<'a, TypedSymmetricKey>,
+    pub(crate) nonce: Box<[u8]>,
+    pub(crate) chunk_size: usize,
+    pub(crate) aad: Option<Vec<u8>>,
 }
 
 impl<'a> OrdinaryDecryptor<'a> {
@@ -89,44 +87,5 @@ impl<'a> OrdinaryDecryptor<'a> {
         }
 
         Ok(plaintext)
-    }
-}
-
-impl<S: SymmetricAlgorithmTrait + ?Sized> OrdinaryBodyProcessor for S {
-    fn setup_encryptor<'a>(
-        &self,
-        config: BodyEncryptConfig<'a>,
-    ) -> Result<OrdinaryEncryptor<'a>> {
-        let BodyEncryptConfig {
-            key,
-            nonce,
-            aad,
-            config,
-        } = config;
-        let symmetric_params = SymmetricParams::new(
-            config.chunk_size(),
-            nonce,
-            aad.as_deref(),
-        );
-        Ok(OrdinaryEncryptor {
-            symmetric_params,
-            algorithm: self.algorithm().into_symmetric_wrapper(),
-            key,
-            aad,
-        })
-    }
-    
-    fn setup_decryptor<'a>(
-        &self,
-        config: BodyDecryptConfig<'a>,
-    ) -> Result<OrdinaryDecryptor<'a>> {
-        let chunk_size = config.chunk_size();
-        Ok(OrdinaryDecryptor {
-            algorithm: self.algorithm().into_symmetric_wrapper(),
-            key: config.key,
-            nonce: config.nonce,
-            chunk_size,
-            aad: config.aad,
-        })
     }
 }

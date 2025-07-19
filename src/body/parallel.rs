@@ -4,8 +4,6 @@
 //! 实现并行、内存中加密和解密的通用逻辑。
 //! 这是对称和混合并行模式的后端。
 
-use super::config::{BodyDecryptConfig, BodyEncryptConfig};
-use super::traits::ParallelBodyProcessor;
 use crate::common::derive_nonce;
 use crate::common::header::SymmetricParams;
 use crate::error::{Error, FormatError, Result};
@@ -17,9 +15,9 @@ use std::borrow::Cow;
 
 pub struct ParallelEncryptor<'a> {
     pub symmetric_params: SymmetricParams,
-    algorithm: SymmetricAlgorithmWrapper,
-    key: Cow<'a, TypedSymmetricKey>,
-    aad: Option<Vec<u8>>,
+    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) key: Cow<'a, TypedSymmetricKey>,
+    pub(crate) aad: Option<Vec<u8>>,
 }
 
 impl<'a> ParallelEncryptor<'a> {
@@ -67,11 +65,11 @@ impl<'a> ParallelEncryptor<'a> {
 }
 
 pub struct ParallelDecryptor<'a> {
-    algorithm: SymmetricAlgorithmWrapper,
-    key: Cow<'a, TypedSymmetricKey>,
-    nonce: Box<[u8]>,
-    chunk_size: usize,
-    aad: Option<Vec<u8>>,
+    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) key: Cow<'a, TypedSymmetricKey>,
+    pub(crate) nonce: Box<[u8]>,
+    pub(crate) chunk_size: usize,
+    pub(crate) aad: Option<Vec<u8>>,
 }
 
 impl<'a> ParallelDecryptor<'a> {
@@ -115,44 +113,5 @@ impl<'a> ParallelDecryptor<'a> {
         plaintext.truncate(actual_size);
 
         Ok(plaintext)
-    }
-}
-
-impl<S: SymmetricAlgorithmTrait + ?Sized> ParallelBodyProcessor for S {
-    fn setup_encryptor<'a>(
-        &self,
-        config: BodyEncryptConfig<'a>,
-    ) -> Result<ParallelEncryptor<'a>> {
-        let BodyEncryptConfig {
-            key,
-            nonce,
-            aad,
-            config,
-        } = config;
-        let symmetric_params = SymmetricParams::new(
-            config.chunk_size(),
-            nonce,
-            aad.as_deref(),
-        );
-        Ok(ParallelEncryptor {
-            symmetric_params,
-            algorithm: self.algorithm().into_symmetric_wrapper(),
-            key,
-            aad,
-        })
-    }
-
-    fn setup_decryptor<'a>(
-        &self,
-        config: BodyDecryptConfig<'a>,
-    ) -> Result<ParallelDecryptor<'a>> {
-        let chunk_size = config.chunk_size();
-        Ok(ParallelDecryptor {
-            algorithm: self.algorithm().into_symmetric_wrapper(),
-            key: config.key,
-            nonce: config.nonce,
-            chunk_size,
-            aad: config.aad,
-        })
     }
 }

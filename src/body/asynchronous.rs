@@ -8,8 +8,6 @@
 
 #![cfg(feature = "async")]
 
-use super::config::{BodyDecryptConfig, BodyEncryptConfig};
-use super::traits::AsynchronousBodyProcessor;
 use crate::common::buffer::BufferPool;
 use crate::common::header::SymmetricParams;
 use crate::common::{derive_nonce, OrderedChunk};
@@ -33,10 +31,10 @@ use tokio::task::JoinHandle;
 
 pub struct AsyncEncryptorSetup<'a> {
     pub symmetric_params: SymmetricParams,
-    algorithm: SymmetricAlgorithmWrapper,
-    key: Cow<'a, TypedSymmetricKey>,
-    aad: Option<Vec<u8>>,
-    channel_bound: usize,
+    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) key: Cow<'a, TypedSymmetricKey>,
+    pub(crate) aad: Option<Vec<u8>>,
+    pub(crate) channel_bound: usize,
 }
 
 impl<'a> AsyncEncryptorSetup<'a> {
@@ -305,12 +303,12 @@ impl<'a, W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptorImpl<'a, W> {
 // --- Decryptor ---
 
 pub struct AsyncDecryptorSetup<'a> {
-    algorithm: SymmetricAlgorithmWrapper,
-    key: Cow<'a, TypedSymmetricKey>,
-    nonce: Box<[u8]>,
-    aad: Option<Vec<u8>>,
-    chunk_size: usize,
-    channel_bound: usize,
+    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) key: Cow<'a, TypedSymmetricKey>,
+    pub(crate) nonce: Box<[u8]>,
+    pub(crate) aad: Option<Vec<u8>>,
+    pub(crate) chunk_size: usize,
+    pub(crate) channel_bound: usize,
 }
 
 impl<'a> AsyncDecryptorSetup<'a> {
@@ -557,49 +555,5 @@ impl<'a, R: AsyncRead + Unpin> AsyncRead for AsyncDecryptorImpl<'a, R> {
                 return Poll::Pending;
             }
         }
-    }
-}
-
-// --- AsynchronousBodyProcessor Implementation ---
-
-impl<S: SymmetricAlgorithmTrait + ?Sized> AsynchronousBodyProcessor for S {
-    fn setup_encryptor<'a>(
-        &self,
-        config: BodyEncryptConfig<'a>,
-    ) -> Result<AsyncEncryptorSetup<'a>> {
-        let BodyEncryptConfig {
-            key,
-            nonce,
-            aad,
-            config,
-        } = config;
-        let symmetric_params = SymmetricParams::new(
-            config.chunk_size(),
-            nonce,
-            aad.as_deref(),
-        );
-        Ok(AsyncEncryptorSetup {
-            symmetric_params,
-            algorithm: self.algorithm().into_symmetric_wrapper(),
-            key,
-            aad,
-            channel_bound: config.channel_bound(),
-        })
-    }
-
-    fn setup_decryptor<'a>(
-        &self,
-        config: BodyDecryptConfig<'a>,
-    ) -> Result<AsyncDecryptorSetup<'a>> {
-        let chunk_size = config.chunk_size();
-        let channel_bound = config.channel_bound();
-        Ok(AsyncDecryptorSetup {
-            algorithm: self.algorithm().into_symmetric_wrapper(),
-            key: config.key,
-            nonce: config.nonce,
-            aad: config.aad,
-            chunk_size,
-            channel_bound,
-        })
     }
 }
