@@ -52,7 +52,6 @@ seal-flow = "0.1.0" # 请替换为最新版本
 ```rust,ignore
 use seal_flow::prelude::*;
 use seal_flow::common::header::{SealFlowHeader, SymmetricParams, SymmetricParamsBuilder};
-use seal_flow::processor::api::{EncryptionConfigurator, prepare_decryption_from_slice};
 use seal_flow::sha2::{Digest, Sha256};
 use std::borrow::Cow;
 
@@ -153,7 +152,7 @@ let plaintext = pending.decrypt_ordinary(Cow::Owned(symmetric_key), ...)?;
 
 该库主要暴露了两个 API 层级：
 
--   **中层 API (`processor::api` 模块):** 这是为大多数用户推荐的入口点。它提供了对加密工作流（`EncryptionConfigurator`, `PendingDecryption`）的直接、精细的控制。
+-   **中层 API (`seal_flow::prelude` 模块):** 这是为大多数用户推荐的入口点。它提供了对加密工作流（`EncryptionConfigurator`, `PendingDecryption`）的直接、精细的控制。
 -   **底层 API (`seal-crypto-wrapper`):** 直接暴露底层的密码学原语。这适用于需要在核心算法之上构建自定义逻辑的专家。
 
 ## 运行示例

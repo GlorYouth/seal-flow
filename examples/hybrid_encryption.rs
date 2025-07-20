@@ -15,7 +15,7 @@ use seal_crypto_wrapper::bincode;
 use seal_crypto_wrapper::traits::KemAlgorithmTrait;
 use seal_flow::common::header::{SealFlowHeader, SymmetricParams, SymmetricParamsBuilder};
 use seal_flow::crypto::prelude::*;
-use seal_flow::processor::api::{EncryptionConfigurator, prepare_decryption_from_slice};
+use seal_flow::prelude::{EncryptionConfigurator, prepare_decryption_from_slice};
 use seal_flow::sha2::{Digest, Sha256};
 use std::borrow::Cow;
 

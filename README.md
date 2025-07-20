@@ -52,7 +52,6 @@ The most common use case: encrypting and decrypting data with a shared key.
 ```rust,ignore
 use seal_flow::prelude::*;
 use seal_flow::common::header::{SealFlowHeader, SymmetricParams, SymmetricParamsBuilder};
-use seal_flow::processor::api::{EncryptionConfigurator, prepare_decryption_from_slice};
 use seal_flow::sha2::{Digest, Sha256};
 use std::borrow::Cow;
 
@@ -153,7 +152,7 @@ This is guaranteed by a unified data format and is validated by our comprehensiv
 
 The library primarily exposes two API layers:
 
--   **Mid-Level API (`processor::api` module):** This is the recommended entry point for most users. It provides direct, fine-grained control over the cryptographic workflows (`EncryptionConfigurator`, `PendingDecryption`).
+-   **Mid-Level API (`seal_flow::prelude` module):** This is the recommended entry point for most users. It provides direct, fine-grained control over the cryptographic workflows (`EncryptionConfigurator`, `PendingDecryption`).
 -   **Low-Level API (`seal-crypto-wrapper`):** Exposes the underlying cryptographic primitives directly. This is for experts who need to build custom logic on top of the core algorithms.
 
 ## Running Examples
