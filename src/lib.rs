@@ -37,10 +37,7 @@ pub mod processor;
 pub mod common;
 pub mod error;
 pub use error::{Error, Result};
-
-pub mod provider;
-
 #[cfg(feature = "async")]
 pub use {::futures, ::tokio};
 
-pub use seal_crypto_wrapper::bincode;
+pub use ::seal_crypto_wrapper;

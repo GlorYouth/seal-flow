@@ -1,108 +1,25 @@
-
+//! 这个模块包含所有 SealFlow 标头相关的定义。
+//!
+//! 这些标头定义了 SealFlow 加密和解密过程中使用的各种参数和元数据。
+//! 它们是加密和解密过程中的关键组成部分，用于确保数据的安全性和完整性。
+//!
+//! 这个模块还提供了一些辅助函数，用于处理标头的编码和解码，以及验证标头的签名。
+//!
+//! 这些标头定义了 SealFlow 加密和解密过程中使用的各种参数和元数据。
 
 // These enums could also be considered for placement in seal-crypto for sharing.
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享。
 use crate::error::{Error, FormatError, Result};
-use seal_crypto_wrapper::{algorithms::kdf::key::KdfKeyAlgorithm, prelude::{TypedAsymmetricKeyTrait, TypedKeyAgreementPublicKey}, wrappers::asymmetric::signature::SignatureAlgorithmWrapper};
-use crate::bincode;
-use seal_crypto_wrapper::prelude::{EncapsulatedKey, TypedKemPublicKey, TypedSignaturePublicKey, XofAlgorithm};
+use crate::seal_crypto_wrapper::bincode;
 use std::io::{Read, Write};
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 use seal_crypto_wrapper::algorithms::symmetric::SymmetricAlgorithm;
-use seal_crypto_wrapper::keys::asymmetric::signature::TypedSignaturePrivateKey;
-
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// KDF (Key-based Derivation Function) configuration information.
-///
-/// KDF (基于密钥的派生函数) 配置信息。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
-#[bincode(crate = "crate::bincode")]
-pub struct KdfBlock {
-    /// The KDF algorithm.
-    ///
-    /// KDF 算法。
-    pub kdf_algorithm: KdfKeyAlgorithm,
-    /// The salt for the KDF.
-    ///
-    /// 用于 KDF 的盐。
-    pub salt: Option<Vec<u8>>,
-    /// Context and application-specific information for the KDF.
-    ///
-    /// 用于 KDF 的上下文和特定于应用程序的信息。
-    pub info: Option<Vec<u8>>,
-}
-
-/// XOF (Extendable-Output Function) configuration information.
-///
-/// XOF (可扩展输出函数) 配置信息。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
-#[bincode(crate = "crate::bincode")]
-pub struct XofBlock {
-    /// The XOF algorithm.
-    ///
-    /// XOF 算法。
-    pub xof_algorithm: XofAlgorithm,
-    /// The salt for the XOF.
-    ///
-    /// 用于 XOF 的盐。
-    pub salt: Option<Vec<u8>>,
-    /// Context and application-specific information for the XOF.
-    ///
-    /// 用于 XOF 的上下文和特定于应用程序的信息。
-    pub info: Option<Vec<u8>>,
-}
-
-/// Information about the key derivation method used.
-///
-/// 有关所用密钥派生方法的信息。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
-#[bincode(crate = "crate::bincode")]
-pub enum DerivationBlock {
-    /// Uses a standard Key-based Derivation Function (KDF).
-    ///
-    /// 使用标准的基于密钥的派生函数 (KDF)。
-    Kdf(KdfBlock),
-    /// Uses an Extendable-Output Function (XOF).
-    ///
-    /// 使用可扩展输出函数 (XOF)。
-    Xof(XofBlock),
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
-#[bincode(crate = "crate::bincode")]
-pub struct KemBlock {
-    ephemeral_key: TypedKemPublicKey, // KEM 生成的临时公钥
-    encapsulated_key: EncapsulatedKey, // 封装（加密）后的对称密钥
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
-#[bincode(crate = "crate::bincode")]
-pub struct KeyExchangeBlock {
-    pub public_key: TypedKeyAgreementPublicKey, // Key Exchange 的公钥
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
-#[bincode(crate = "crate::bincode")]
-pub enum KeyAgreementBlock {
-    Kem(KemBlock),
-    KeyExchange(KeyExchangeBlock),
-    Both(KemBlock, KeyExchangeBlock),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
-#[bincode(crate = "crate::bincode")]
-pub struct SignatureBlock {
-    // 公钥标识符，用于接收方查找验证密钥
-    public_key_id: String,
-    signature: Vec<u8>,
-    signature_key: TypedSignaturePublicKey,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
-#[bincode(crate = "crate::bincode")]
+#[bincode(crate = "seal_crypto_wrapper::bincode")]
 pub struct SymmetricParams {
     pub(crate) algorithm: SymmetricAlgorithm,
     pub(crate) chunk_size: u32,
@@ -110,112 +27,6 @@ pub struct SymmetricParams {
     pub(crate) aad_hash: Option<[u8; 32]>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
-#[bincode(crate = "crate::bincode")]
-pub struct SealFlowSymmetricHeader {
-    // 头部格式版本，用于未来扩展
-    version: u16, 
-    symmetric_params: SymmetricParams,
-    extra_data: Option<Vec<u8>>,
-}
-
-impl SealFlowSymmetricHeader {
-    pub fn new(symmetric_params: SymmetricParams, extra_data: Option<Vec<u8>>) -> Self {
-        Self {
-            version: 1,
-            symmetric_params,
-            extra_data,
-        }
-    }
-}
-
-
-#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
-#[bincode(crate = "crate::bincode")]
-pub struct SealFlowHybridHeader {
-    // 头部格式版本，用于未来扩展
-    version: u16, 
-    // 非对称加密参数
-    key_agreement_block: KeyAgreementBlock,
-    signature_block: Option<SignatureBlock>,
-    // 对称加密参数
-    symmetric_params: SymmetricParams,
-    derivation_block: DerivationBlock,
-    extra_data: Option<Vec<u8>>,
-}
-
-impl SealFlowHybridHeader {
-    fn get_data_for_signing(&self) -> Result<Vec<u8>> {
-        #[derive(Serialize, Deserialize, bincode::Encode, bincode::Decode)]
-        #[bincode(crate = "crate::bincode")]
-        struct HeaderToSign {
-            version: u16,
-            key_agreement_block: KeyAgreementBlock,
-            symmetric_params: SymmetricParams,
-            derivation_block: DerivationBlock,
-            extra_data: Option<Vec<u8>>,
-        }
-
-        let to_sign = HeaderToSign {
-            version: self.version,
-            key_agreement_block: self.key_agreement_block.clone(),
-            symmetric_params: self.symmetric_params.clone(),
-            derivation_block: self.derivation_block.clone(),
-            extra_data: self.extra_data.clone(),
-        };
-
-        static CONFIG: bincode::config::Configuration = bincode::config::standard();
-        bincode::encode_to_vec(&to_sign, CONFIG).map_err(Error::from)
-    }
-
-    pub fn sign(
-        &mut self,
-        signer: SignatureAlgorithmWrapper,
-        private_key: &TypedSignaturePrivateKey,
-        public_key: TypedSignaturePublicKey,
-        public_key_id: String,
-    ) -> Result<()> {
-        let data_to_sign = self.get_data_for_signing()?;
-        let signature = signer.sign(&data_to_sign, private_key)?;
-
-        self.signature_block = Some(SignatureBlock {
-            public_key_id,
-            signature,
-            signature_key: public_key,
-        });
-
-        Ok(())
-    }
-
-    pub fn verify(&self) -> Result<()> {
-        let signature_block = self
-            .signature_block
-            .as_ref()
-            .ok_or(FormatError::InvalidSignature)?;
-
-        let public_key = &signature_block.signature_key;
-        let signature_scheme = public_key.algorithm().into_signature_wrapper();
-
-        let data_to_verify = self.get_data_for_signing()?;
-
-        signature_scheme
-            .verify(&data_to_verify, public_key, signature_block.signature.clone())
-            .map_err(Error::from)
-    }
-}
-
-/// A "master" header that wraps specific header types. This allows the decryptor
-/// to determine the encryption mode (symmetric vs. hybrid) by first decoding this
-/// envelope.
-///
-/// 一个“主”标头，用于包装特定的标头类型。这允许解密器
-/// 通过首先解码此信封来确定加密模式（对称与混合）。
-#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
-#[bincode(crate = "crate::bincode")]
-pub enum SealFlowEnvelopeHeader {
-    Symmetric(SealFlowSymmetricHeader),
-    Hybrid(SealFlowHybridHeader),
-}
 
 /// A trait representing the common interface for all SealFlow headers.
 ///
@@ -328,41 +139,5 @@ pub trait SealFlowHeader:
         header.verify_signature()?;
 
         Ok(header)
-    }
-}
-
-impl SealFlowHeader for SealFlowEnvelopeHeader {
-    fn symmetric_params(&self) -> &SymmetricParams {
-        match self {
-            SealFlowEnvelopeHeader::Symmetric(h) => h.symmetric_params(),
-            SealFlowEnvelopeHeader::Hybrid(h) => h.symmetric_params(),
-        }
-    }
-
-    fn extra_data(&self) -> Option<&[u8]> {
-        match self {
-            SealFlowEnvelopeHeader::Symmetric(h) => h.extra_data(),
-            SealFlowEnvelopeHeader::Hybrid(h) => h.extra_data(),
-        }
-    }
-}
-
-impl SealFlowHeader for SealFlowSymmetricHeader {
-    fn symmetric_params(&self) -> &SymmetricParams {
-        &self.symmetric_params
-    }
-
-    fn extra_data(&self) -> Option<&[u8]> {
-        self.extra_data.as_deref()
-    }
-}
-
-impl SealFlowHeader for SealFlowHybridHeader {
-    fn symmetric_params(&self) -> &SymmetricParams {
-        &self.symmetric_params
-    }
-
-    fn extra_data(&self) -> Option<&[u8]> {
-        self.extra_data.as_deref()
     }
 }
