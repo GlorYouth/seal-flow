@@ -184,14 +184,14 @@ impl<'a, W: AsyncWrite + Send + Unpin + 'a, H: SealFlowHeader> AsyncEncryptionSt
 /// Returns a `PendingDecryption` instance and the remaining ciphertext body.
 pub fn prepare_decryption_from_slice<H: SealFlowHeader>(
     ciphertext: &[u8],
-) -> Result<(PendingDecryption<&[u8], H>, &[u8])> {
+) -> Result<PendingDecryption<&[u8], H>> {
     let (header, body) = H::decode_from_prefixed_slice(ciphertext)?;
     let pending = PendingDecryption {
         header,
         source: body,
         _phantom: PhantomData
     };
-    Ok((pending, body))
+    Ok(pending)
 }
 
 /// Prepares for decryption by reading the header from a reader.
@@ -207,6 +207,20 @@ pub fn prepare_decryption_from_reader<R: Read, H: SealFlowHeader>(
     })
 }
 
+/// Prepares for decryption by reading the header from an asynchronous reader.
+/// Returns a `PendingDecryption` instance, leaving the reader positioned at the start of the body.
+#[cfg(feature = "async")]
+pub async fn prepare_decryption_from_async_reader<R: AsyncRead + Unpin + Send, H: SealFlowHeader>(
+    mut reader: R,
+) -> Result<PendingDecryption<R, H>> {
+    let header = H::decode_from_prefixed_async_reader(&mut reader).await?;
+    Ok(PendingDecryption {
+        header,
+        source: reader,
+        _phantom: PhantomData,
+    })
+}
+
 /// Represents a decryption operation that is ready to be executed.
 /// The header has been parsed, and the ciphertext source is available.
 pub struct PendingDecryption<S, H> {
@@ -219,6 +233,16 @@ impl<S, H: SealFlowHeader> PendingDecryption<S, H> {
     /// Returns a reference to the parsed header.
     pub fn header(&self) -> &H {
         &self.header
+    }
+
+    /// Returns a reference to the source of the ciphertext.
+    pub fn source(&self) -> &S {
+        &self.source
+    }
+
+    /// Consumes the `PendingDecryption` and returns the source.
+    pub fn into_source(self) -> S {
+        self.source
     }
 }
 
