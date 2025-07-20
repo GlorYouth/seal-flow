@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 use seal_crypto_wrapper::algorithms::symmetric::SymmetricAlgorithm;
 use seal_crypto_wrapper::keys::asymmetric::signature::TypedSignaturePrivateKey;
-use crate::processor::traits::SealFlowHeaderExt;
 
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -228,8 +227,10 @@ pub trait SealFlowHeader:
     + for<'de> Deserialize<'de>
     + bincode::Encode
     + bincode::Decode<()>
-    + SealFlowHeaderExt
     + Clone
+    + Send
+    + Sync
+    + 'static
 {
     /// Encodes the header into a raw byte vector.
     ///
@@ -255,14 +256,11 @@ pub trait SealFlowHeader:
     fn verify_signature(&self) -> Result<()> {
         Ok(())
     }
-}
 
-#[async_trait]
-impl<T> SealFlowHeaderExt for T
-where
-    T: SealFlowHeader + SealFlowHeaderPrivate,
-{
-    fn ext_encode_to_prefixed_vec(&self) -> Result<Vec<u8>> {
+    fn symmetric_params(&self) -> &SymmetricParams;
+    fn extra_data(&self) -> Option<&[u8]>;
+
+    fn encode_to_prefixed_vec(&self) -> Result<Vec<u8>> {
         let header_bytes = self.encode_to_vec()?;
         let header_len = header_bytes.len() as u32;
         let mut prefixed_header = Vec::with_capacity(4 + header_bytes.len());
@@ -271,23 +269,23 @@ where
         Ok(prefixed_header)
     }
 
-    fn ext_write_to_prefixed_writer<W: Write>(&self, writer: &mut W) -> Result<()> {
-        let prefixed_bytes = self.ext_encode_to_prefixed_vec()?;
+    fn write_to_prefixed_writer<W: Write>(&self, writer: &mut W) -> Result<()> {
+        let prefixed_bytes = self.encode_to_prefixed_vec()?;
         writer.write_all(&prefixed_bytes)?;
         Ok(())
     }
 
     #[cfg(feature = "async")]
-    async fn ext_write_to_prefixed_async_writer<W: AsyncWrite + Unpin + Send>(
+    async fn write_to_prefixed_async_writer<W: AsyncWrite + Unpin + Send>(
         &self,
         writer: &mut W,
     ) -> Result<()> {
-        let prefixed_bytes = self.ext_encode_to_prefixed_vec()?;
+        let prefixed_bytes = self.encode_to_prefixed_vec()?;
         writer.write_all(&prefixed_bytes).await?;
         Ok(())
     }
 
-    fn ext_decode_from_prefixed_slice(ciphertext: &[u8]) -> Result<(Self, &[u8])> {
+    fn decode_from_prefixed_slice(ciphertext: &[u8]) -> Result<(Self, &[u8])> {
         if ciphertext.len() < 4 {
             return Err(FormatError::InvalidCiphertext.into());
         }
@@ -303,7 +301,7 @@ where
         Ok((header, ciphertext_body))
     }
 
-    fn ext_decode_from_prefixed_reader<R: Read>(reader: &mut R) -> Result<Self> {
+    fn decode_from_prefixed_reader<R: Read>(reader: &mut R) -> Result<Self> {
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf)?;
         let header_len = u32::from_le_bytes(len_buf) as usize;
@@ -317,7 +315,7 @@ where
     }
 
     #[cfg(feature = "async")]
-    async fn ext_decode_from_prefixed_async_reader<R: AsyncRead + Unpin + Send>(
+    async fn decode_from_prefixed_async_reader<R: AsyncRead + Unpin + Send>(
         reader: &mut R,
     ) -> Result<Self> {
         let mut len_buf = [0u8; 4];
@@ -331,22 +329,9 @@ where
 
         Ok(header)
     }
-
-    fn ext_symmetric_params(&self) -> &SymmetricParams {
-        self.symmetric_params()
-    }
-
-    fn ext_extra_data(&self) -> Option<&[u8]> {
-        self.extra_data()
-    }
 }
 
-pub trait SealFlowHeaderPrivate {
-    fn symmetric_params(&self) -> &SymmetricParams;
-    fn extra_data(&self) -> Option<&[u8]>;
-}
-
-impl SealFlowHeaderPrivate for SealFlowEnvelopeHeader {
+impl SealFlowHeader for SealFlowEnvelopeHeader {
     fn symmetric_params(&self) -> &SymmetricParams {
         match self {
             SealFlowEnvelopeHeader::Symmetric(h) => h.symmetric_params(),
@@ -362,7 +347,7 @@ impl SealFlowHeaderPrivate for SealFlowEnvelopeHeader {
     }
 }
 
-impl SealFlowHeaderPrivate for SealFlowSymmetricHeader {
+impl SealFlowHeader for SealFlowSymmetricHeader {
     fn symmetric_params(&self) -> &SymmetricParams {
         &self.symmetric_params
     }
@@ -372,7 +357,7 @@ impl SealFlowHeaderPrivate for SealFlowSymmetricHeader {
     }
 }
 
-impl SealFlowHeaderPrivate for SealFlowHybridHeader {
+impl SealFlowHeader for SealFlowHybridHeader {
     fn symmetric_params(&self) -> &SymmetricParams {
         &self.symmetric_params
     }
