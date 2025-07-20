@@ -95,7 +95,7 @@ Hybrid encryption uses a recipient's public key to encrypt a one-time symmetric 
 
 ```rust,ignore
 // (Requires "crypto-asymmetric-kem" and "crypto-kdf" features)
-use seal_crypto_wrapper::traits::KemAlgorithmTrait;
+use seal_flow::crypto::traits::KemAlgorithmTrait;
 
 // Recipient generates a key pair
 let kem = KemAlgorithm::build().kyber1024().into_asymmetric_wrapper();

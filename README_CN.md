@@ -95,7 +95,7 @@ assert_eq!(plaintext, b"my secret data");
 
 ```rust,ignore
 // (需要 "crypto-asymmetric-kem" 和 "crypto-kdf" features)
-use seal_crypto_wrapper::traits::KemAlgorithmTrait;
+use seal_flow::crypto::traits::KemAlgorithmTrait;
 
 // 接收方生成密钥对
 let kem = KemAlgorithm::build().kyber1024().into_asymmetric_wrapper();
