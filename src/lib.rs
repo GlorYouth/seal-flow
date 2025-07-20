@@ -41,5 +41,8 @@ pub use error::{Error, Result};
 pub use {::futures, ::tokio};
 
 pub use ::seal_crypto_wrapper as crypto;
-pub use crate::processor::api::*;
+pub mod prelude {
+    pub use crate::processor::api::*;
+    pub use crate::common::header::*;
+}
 pub use ::sha2;
