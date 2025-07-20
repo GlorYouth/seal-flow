@@ -1,7 +1,7 @@
 //! Defines the primary error type and result alias for the entire crate.
 //!
 //! 定义了整个 crate 的主要错误类型和结果别名。
-use crate::keys::provider::KeyProviderError;
+use seal_crypto_wrapper::bincode;
 use thiserror::Error;
 
 /// An error related to `bincode` serialization or deserialization.
@@ -82,8 +82,8 @@ pub enum FormatError {
     ///
     /// 密文头部无效、缺失或格式不正确。
     /// 这会阻止解密器读取必要的元数据。
-    #[error("头部信息无效、缺失或格式不正确")]
-    InvalidHeader,
+    #[error("头部信息无效、缺失或格式不正确: {0}")]
+    InvalidHeader(&'static str),
 
     /// The ciphertext stream is incomplete or its format is incorrect.
     /// This often indicates data corruption or truncation.
@@ -104,6 +104,12 @@ pub enum FormatError {
     /// 密钥无效。
     #[error("密钥无效")]
     InvalidKey,
+
+    /// The signature is invalid.
+    ///
+    /// 签名无效。
+    #[error("签名无效")]
+    InvalidSignature,
 }
 
 /// Errors related to key lookup and management.
@@ -157,7 +163,7 @@ pub enum CryptoError {
     ///
     /// 源自底层 `seal-crypto` 后端的错误。
     #[error("底层密码学库错误: {0}")]
-    Backend(#[from] seal_crypto::errors::Error),
+    Backend(#[from] seal_crypto_wrapper::error::Error),
 }
 
 /// The main error type for the `seal-flow` crate.
@@ -194,12 +200,6 @@ pub enum Error {
     #[error("密钥管理错误: {0}")]
     KeyManagement(#[from] KeyManagementError),
 
-    /// An error related to key provider.
-    ///
-    /// 与密钥提供者相关的错误。
-    #[error("密钥提供者错误: {0}")]
-    KeyProvider(#[from] KeyProviderError),
-
     /// An error indicating invalid configuration or API misuse.
     ///
     /// 表示无效配置或 API 滥用的错误。
@@ -219,8 +219,8 @@ impl From<tokio::task::JoinError> for Error {
     }
 }
 
-impl From<seal_crypto::errors::Error> for Error {
-    fn from(e: seal_crypto::errors::Error) -> Self {
+impl From<seal_crypto_wrapper::error::Error> for Error {
+    fn from(e: seal_crypto_wrapper::error::Error) -> Self {
         Error::Crypto(CryptoError::Backend(e))
     }
 }

@@ -32,69 +32,16 @@
 //! use seal_flow::prelude::*;
 //! ```
 
-pub mod prelude {
-    //! A "prelude" for users of the `seal-flow` crate.
-    pub use crate::common::algorithms::{
-        AsymmetricAlgorithm as AsymmetricAlgorithmEnum, KdfKeyAlgorithm as KdfKeyAlgorithmEnum,
-        KdfPasswordAlgorithm as KdfPasswordAlgorithmEnum,
-        SignatureAlgorithm as SignatureAlgorithmEnum, SymmetricAlgorithm as SymmetricAlgorithmEnum,
-        XofAlgorithm as XofAlgorithmEnum,
-    };
-    pub use crate::algorithms::traits::{
-        AsymmetricAlgorithm as AsymmetricAlgorithmTrait, KdfKeyAlgorithm as KdfKeyAlgorithmTrait,
-        KdfPasswordAlgorithm as KdfPasswordAlgorithmTrait,
-        SignatureAlgorithm as SignatureAlgorithmTrait, SymmetricAlgorithm as SymmetricAlgorithmTrait,
-        XofAlgorithm as XofAlgorithmTrait,
-    };
-    pub use crate::keys::provider::{EncryptionKeyProvider, KeyProvider, KeyProviderError};
-    pub use crate::keys::{
-        AsymmetricPrivateKey, AsymmetricPublicKey, SignaturePublicKey, SymmetricKey,
-    };
-    pub use crate::seal::hybrid::{encryptor::HybridEncryptorBuilder, HybridEncryptionOptions};
-    pub use crate::seal::traits::*;
-    pub use crate::seal::{HybridSeal, SymmetricSeal};
-}
-
-pub(crate) mod body;
-pub(crate) mod common;
+pub mod common;
 pub mod error;
-pub(crate) mod seal;
-
-pub(crate) mod algorithms;
-pub mod base {
-    pub mod algorithms {
-        pub use crate::algorithms::*;
-    }
-    pub mod keys {
-        pub use crate::keys::*;
-    }
-    pub mod seal {
-        pub use crate::seal::*;
-    }
-}
-pub mod mid_level {
-    pub mod body {
-        pub use crate::body::*;
-    }
-    pub mod hybrid {
-        pub use crate::hybrid::*;
-    }
-    pub mod symmetric {
-        pub use crate::symmetric::*;
-    }
-    pub mod common {
-        pub use crate::common::*;
-    }
-}
-pub mod high_level {
-    pub use crate::seal::*;
-}
-
+pub mod processor;
 pub use error::{Error, Result};
-
-mod hybrid;
-pub(crate) mod keys;
-pub(crate) mod symmetric;
-
 #[cfg(feature = "async")]
 pub use {::futures, ::tokio};
+
+pub use ::seal_crypto_wrapper as crypto;
+pub mod prelude {
+    pub use crate::common::header::*;
+    pub use crate::processor::api::*;
+}
+pub use ::sha2;

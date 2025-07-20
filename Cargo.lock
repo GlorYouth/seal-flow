@@ -74,6 +74,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "862ed96ca487e809f1c8e5a8447f6ee2cf102f846893800b20cebdf541fc6bbd"
 
 [[package]]
+name = "anyhow"
+version = "1.0.98"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
+
+[[package]]
 name = "argon2"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -205,9 +211,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.2.27"
+version = "1.2.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d487aa071b5f64da6f19a3e848e3578944b726ee5a4854b82172f02aa876bfdc"
+checksum = "deec109607ca693028562ed836a5f1c4b8bd77755c4e132fc5ce11b0b6211ae7"
 dependencies = [
  "jobserver",
  "libc",
@@ -509,9 +515,9 @@ dependencies = [
 
 [[package]]
 name = "ed25519-dalek"
-version = "2.1.1"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a3daa8e81a3963a60642bcc1f90a670680bd4a77535faa384e9d1c79d620871"
+checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
@@ -1345,6 +1351,8 @@ dependencies = [
 [[package]]
 name = "seal-crypto"
 version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "006c0ff15d8ef0298a9ed3c3e96e9e8d282f7573018d9804433637b0676b3480"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1375,21 +1383,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "seal-crypto-wrapper"
+version = "0.1.2"
+dependencies = [
+ "bincode",
+ "rand 0.9.1",
+ "seal-crypto",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "seal-flow"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
- "bincode",
  "bytes",
  "criterion",
  "crossbeam-channel",
+ "crossbeam-utils",
  "futures",
  "num_cpus",
  "pin-project-lite",
  "rand 0.9.1",
  "rayon",
- "seal-crypto",
+ "seal-crypto-wrapper",
  "serde",
+ "sha2",
  "thiserror",
  "tokio",
 ]
@@ -1569,9 +1590,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.46.0"
+version = "1.46.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1140bb80481756a8cbe10541f37433b459c5aa1e727b4c020fbfebdc25bf3ec4"
+checksum = "0cc3a2344dafbe23a245241fe8b09735b521110d30fcefbbd5feb1797ca35d17"
 dependencies = [
  "backtrace",
  "bytes",
