@@ -3,7 +3,7 @@
 // These enums could also be considered for placement in seal-crypto for sharing.
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享。
 use crate::error::{Error, FormatError, Result};
-use seal_crypto_wrapper::{algorithms::kdf::key::KdfKeyAlgorithm, prelude::TypedAsymmetricKeyTrait, wrappers::asymmetric::signature::SignatureAlgorithmWrapper};
+use seal_crypto_wrapper::{algorithms::kdf::key::KdfKeyAlgorithm, prelude::{TypedAsymmetricKeyTrait, TypedKeyAgreementPublicKey}, wrappers::asymmetric::signature::SignatureAlgorithmWrapper};
 use crate::bincode;
 use seal_crypto_wrapper::prelude::{EncapsulatedKey, TypedKemPublicKey, TypedSignaturePublicKey, XofAlgorithm};
 use std::io::{Read, Write};
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 use seal_crypto_wrapper::algorithms::symmetric::SymmetricAlgorithm;
 use seal_crypto_wrapper::keys::asymmetric::signature::TypedSignaturePrivateKey;
+use crate::processor::traits::SealFlowHeaderExt;
 
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -80,6 +81,20 @@ pub struct KemBlock {
 
 #[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 #[bincode(crate = "crate::bincode")]
+pub struct KeyExchangeBlock {
+    pub public_key: TypedKeyAgreementPublicKey, // Key Exchange 的公钥
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
+pub enum KeyAgreementBlock {
+    Kem(KemBlock),
+    KeyExchange(KeyExchangeBlock),
+    Both(KemBlock, KeyExchangeBlock),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
+#[bincode(crate = "crate::bincode")]
 pub struct SignatureBlock {
     // 公钥标识符，用于接收方查找验证密钥
     public_key_id: String,
@@ -122,7 +137,7 @@ pub struct SealFlowHybridHeader {
     // 头部格式版本，用于未来扩展
     version: u16, 
     // 非对称加密参数
-    kem_block: KemBlock,
+    key_agreement_block: KeyAgreementBlock,
     signature_block: Option<SignatureBlock>,
     // 对称加密参数
     symmetric_params: SymmetricParams,
@@ -136,7 +151,7 @@ impl SealFlowHybridHeader {
         #[bincode(crate = "crate::bincode")]
         struct HeaderToSign {
             version: u16,
-            kem_block: KemBlock,
+            key_agreement_block: KeyAgreementBlock,
             symmetric_params: SymmetricParams,
             derivation_block: DerivationBlock,
             extra_data: Option<Vec<u8>>,
@@ -144,7 +159,7 @@ impl SealFlowHybridHeader {
 
         let to_sign = HeaderToSign {
             version: self.version,
-            kem_block: self.kem_block.clone(),
+            key_agreement_block: self.key_agreement_block.clone(),
             symmetric_params: self.symmetric_params.clone(),
             derivation_block: self.derivation_block.clone(),
             extra_data: self.extra_data.clone(),
@@ -207,7 +222,15 @@ pub enum SealFlowEnvelopeHeader {
 ///
 /// 代表所有 SealFlow 标头通用接口的 trait。
 #[async_trait]
-pub trait SealFlowHeader: Sized + Serialize + for<'de> Deserialize<'de> + bincode::Encode + bincode::Decode<()> {
+pub trait SealFlowHeader:
+    Sized
+    + Serialize
+    + for<'de> Deserialize<'de>
+    + bincode::Encode
+    + bincode::Decode<()>
+    + SealFlowHeaderExt
+    + Clone
+{
     /// Encodes the header into a raw byte vector.
     ///
     /// 将标头编码为原始字节向量。
@@ -232,13 +255,14 @@ pub trait SealFlowHeader: Sized + Serialize + for<'de> Deserialize<'de> + bincod
     fn verify_signature(&self) -> Result<()> {
         Ok(())
     }
+}
 
-    /// Encodes the header into a byte vector, prefixed with its length.
-    /// The format is `[4-byte length (u32 LE)][bincode-encoded Header]`.
-    ///
-    /// 将标头编码为带有长度前缀的字节向量。
-    /// 格式是 `[4字节长度(u32 LE)][bincode编码的Header]`。
-    fn encode_to_prefixed_vec(&self) -> Result<Vec<u8>> {
+#[async_trait]
+impl<T> SealFlowHeaderExt for T
+where
+    T: SealFlowHeader + SealFlowHeaderPrivate,
+{
+    fn ext_encode_to_prefixed_vec(&self) -> Result<Vec<u8>> {
         let header_bytes = self.encode_to_vec()?;
         let header_len = header_bytes.len() as u32;
         let mut prefixed_header = Vec::with_capacity(4 + header_bytes.len());
@@ -247,29 +271,23 @@ pub trait SealFlowHeader: Sized + Serialize + for<'de> Deserialize<'de> + bincod
         Ok(prefixed_header)
     }
 
-    /// Writes a length-prefixed header to a synchronous writer.
-    ///
-    /// 将带有长度前缀的标头写入同步写入器。
-    fn write_to_prefixed_writer<W: Write>(&self, writer: &mut W) -> Result<()> {
-        let prefixed_bytes = self.encode_to_prefixed_vec()?;
+    fn ext_write_to_prefixed_writer<W: Write>(&self, writer: &mut W) -> Result<()> {
+        let prefixed_bytes = self.ext_encode_to_prefixed_vec()?;
         writer.write_all(&prefixed_bytes)?;
         Ok(())
     }
 
-    /// Writes a length-prefixed header to an asynchronous writer.
-    ///
-    /// 将带有长度前缀的标头写入异步写入器。
     #[cfg(feature = "async")]
-    async fn write_to_prefixed_async_writer<W: AsyncWrite + Unpin + Send>(&self, writer: &mut W) -> Result<()> {
-        let prefixed_bytes = self.encode_to_prefixed_vec()?;
+    async fn ext_write_to_prefixed_async_writer<W: AsyncWrite + Unpin + Send>(
+        &self,
+        writer: &mut W,
+    ) -> Result<()> {
+        let prefixed_bytes = self.ext_encode_to_prefixed_vec()?;
         writer.write_all(&prefixed_bytes).await?;
         Ok(())
     }
 
-    /// Decodes a length-prefixed header from a byte slice.
-    ///
-    /// 从带有长度前缀的字节切片解码标头。
-    fn decode_from_prefixed_slice(ciphertext: &[u8]) -> Result<(Self, &[u8])> {
+    fn ext_decode_from_prefixed_slice(ciphertext: &[u8]) -> Result<(Self, &[u8])> {
         if ciphertext.len() < 4 {
             return Err(FormatError::InvalidCiphertext.into());
         }
@@ -285,10 +303,7 @@ pub trait SealFlowHeader: Sized + Serialize + for<'de> Deserialize<'de> + bincod
         Ok((header, ciphertext_body))
     }
 
-    /// Reads and decodes a length-prefixed header from a synchronous reader.
-    ///
-    /// 从同步读取器中读取并解码带有长度前缀的标头。
-    fn decode_from_prefixed_reader<R: Read>(reader: &mut R) -> Result<Self> {
+    fn ext_decode_from_prefixed_reader<R: Read>(reader: &mut R) -> Result<Self> {
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf)?;
         let header_len = u32::from_le_bytes(len_buf) as usize;
@@ -301,11 +316,8 @@ pub trait SealFlowHeader: Sized + Serialize + for<'de> Deserialize<'de> + bincod
         Ok(header)
     }
 
-    /// Reads and decodes a length-prefixed header from an asynchronous reader.
-    ///
-    /// 从异步读取器中读取并解码带有长度前缀的标头。
     #[cfg(feature = "async")]
-    async fn decode_from_prefixed_async_reader<R: AsyncRead + Unpin + Send>(
+    async fn ext_decode_from_prefixed_async_reader<R: AsyncRead + Unpin + Send>(
         reader: &mut R,
     ) -> Result<Self> {
         let mut len_buf = [0u8; 4];
@@ -320,25 +332,21 @@ pub trait SealFlowHeader: Sized + Serialize + for<'de> Deserialize<'de> + bincod
         Ok(header)
     }
 
-    /// Returns the symmetric parameters for this header.
-    ///
-    /// 返回此标头的对称参数。
-    fn symmetric_params(&self) -> &SymmetricParams;
+    fn ext_symmetric_params(&self) -> &SymmetricParams {
+        self.symmetric_params()
+    }
 
-    /// Returns the extra data attached to the header.
-    ///
-    /// 返回附加到头部的额外数据。
+    fn ext_extra_data(&self) -> Option<&[u8]> {
+        self.extra_data()
+    }
+}
+
+pub trait SealFlowHeaderPrivate {
+    fn symmetric_params(&self) -> &SymmetricParams;
     fn extra_data(&self) -> Option<&[u8]>;
 }
 
-impl SealFlowHeader for SealFlowEnvelopeHeader {
-    fn verify_signature(&self) -> Result<()> {
-        match self {
-            SealFlowEnvelopeHeader::Symmetric(_) => Ok(()), // Symmetric mode has no signature
-            SealFlowEnvelopeHeader::Hybrid(h) => h.verify_signature(),
-        }
-    }
-
+impl SealFlowHeaderPrivate for SealFlowEnvelopeHeader {
     fn symmetric_params(&self) -> &SymmetricParams {
         match self {
             SealFlowEnvelopeHeader::Symmetric(h) => h.symmetric_params(),
@@ -354,7 +362,7 @@ impl SealFlowHeader for SealFlowEnvelopeHeader {
     }
 }
 
-impl SealFlowHeader for SealFlowSymmetricHeader {
+impl SealFlowHeaderPrivate for SealFlowSymmetricHeader {
     fn symmetric_params(&self) -> &SymmetricParams {
         &self.symmetric_params
     }
@@ -364,16 +372,7 @@ impl SealFlowHeader for SealFlowSymmetricHeader {
     }
 }
 
-
-impl SealFlowHeader for SealFlowHybridHeader {
-    fn verify_signature(&self) -> Result<()> {
-        if self.signature_block.is_some() {
-            self.verify()
-        } else {
-            Ok(())
-        }
-    }
-
+impl SealFlowHeaderPrivate for SealFlowHybridHeader {
     fn symmetric_params(&self) -> &SymmetricParams {
         &self.symmetric_params
     }

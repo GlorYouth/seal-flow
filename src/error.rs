@@ -83,8 +83,8 @@ pub enum FormatError {
     ///
     /// 密文头部无效、缺失或格式不正确。
     /// 这会阻止解密器读取必要的元数据。
-    #[error("头部信息无效、缺失或格式不正确")]
-    InvalidHeader,
+    #[error("头部信息无效、缺失或格式不正确: {0}")]
+    InvalidHeader( &'static str),
 
     /// The ciphertext stream is incomplete or its format is incorrect.
     /// This often indicates data corruption or truncation.
