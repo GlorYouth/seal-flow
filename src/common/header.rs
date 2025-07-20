@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use seal_crypto_wrapper::algorithms::symmetric::SymmetricAlgorithm;
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use sha2::Digest;
 
 #[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 #[bincode(crate = "seal_crypto_wrapper::bincode")]
@@ -24,7 +25,49 @@ pub struct SymmetricParams {
     pub(crate) algorithm: SymmetricAlgorithm,
     pub(crate) chunk_size: u32,
     pub(crate) base_nonce: Box<[u8]>, // 用于派生每个 chunk nonce 的基础 nonce
-    pub(crate) aad_hash: Option<[u8; 32]>,
+    pub(crate) aad_hash: Option<Box<[u8]>>,
+}
+
+pub struct SymmetricParamsBuilder {
+    algorithm: SymmetricAlgorithm,
+    chunk_size: u32,
+    base_nonce: Option<Box<[u8]>>,
+    aad_hash: Option<Box<[u8]>>,
+}
+
+impl SymmetricParamsBuilder {
+
+    pub fn new(algorithm: SymmetricAlgorithm, chunk_size: u32) -> Self {
+        Self {
+            algorithm,
+            chunk_size,
+            base_nonce: None,
+            aad_hash: None,
+        }
+    }
+
+    pub fn base_nonce(mut self, f: impl FnOnce(&mut [u8])) -> Self {
+        let mut nonce = vec![0u8; self.algorithm.into_symmetric_wrapper().nonce_size()];
+        f(&mut nonce);
+        self.base_nonce = Some(nonce.into());
+        self
+    }
+
+    pub fn aad_hash(mut self, aad: &[u8], mut hasher: impl Digest) -> Self {
+        hasher.update(aad);
+        let hash = hasher.finalize();
+        self.aad_hash = Some(hash.to_vec().into());
+        self
+    }
+
+    pub fn build(self) -> SymmetricParams {
+        SymmetricParams {
+            algorithm: self.algorithm,
+            chunk_size: self.chunk_size,
+            base_nonce: self.base_nonce.unwrap_or_default(),
+            aad_hash: self.aad_hash,
+        }
+    }
 }
 
 

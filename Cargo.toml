@@ -24,7 +24,7 @@ crossbeam-channel = "0.5.15"
 
 # --- 异步支持 (可选，通过 feature gate 控制) ---
 # 异步运行时和 I/O Trait
-tokio = { version = "1.46.0", features = ["io-util", "macros", "rt-multi-thread", "sync"], optional = true }
+tokio = { version = "1.46.1", features = ["io-util", "macros", "rt-multi-thread", "sync"], optional = true }
 # 异步编程的辅助工具
 futures = { version = "0.3", optional = true }
 pin-project-lite = "0.2.16"
