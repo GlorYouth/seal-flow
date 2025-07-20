@@ -10,7 +10,7 @@
 // These enums could also be considered for placement in seal-crypto for sharing.
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享。
 use crate::error::{Error, FormatError, Result};
-use crate::seal_crypto_wrapper::bincode;
+use seal_crypto_wrapper::bincode;
 use std::io::{Read, Write};
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
