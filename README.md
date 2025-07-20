@@ -7,9 +7,11 @@ A high-level cryptographic workflow library built on top of `seal-crypto-wrapper
 
 [中文文档 (Chinese README)](./README_CN.md)
 
-## Core Philosophy: The Configure-Execute Pattern
+## Core Philosophy: The Data "Flow" and Configure-Execute Pattern
 
-`seal-flow` follows a clear, two-phase model: **Configure-then-Execute**. This ensures that parameters for cryptographic operations are explicitly set before execution, reducing the potential for errors.
+The name `seal-flow` reflects its core design: **`seal`** represents the secure encapsulation of cryptography, while **`flow`** refers to the transformation of data within a well-defined cryptographic workflow. Whether processing in-memory bytes or on-disk file streams, data flows through one or more processors (`ordinary`, `streaming`, `parallel`, etc.) to be encrypted or decrypted.
+
+To that end, `seal-flow` follows a clear, two-phase model: **Configure-then-Execute**. This ensures that parameters for cryptographic operations are explicitly set before execution, reducing the potential for errors.
 
 -   **Encryption Flow**:
     1.  **Configure (`EncryptionConfigurator`)**: This is the starting point for all encryption operations. You create a custom header that implements the `SealFlowHeader` trait and use it to initialize the `EncryptionConfigurator`.

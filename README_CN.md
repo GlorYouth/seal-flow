@@ -7,9 +7,11 @@
 
 [English README](./README.md)
 
-## 核心理念：配置-执行模式
+## 核心理念：数据流 (Flow) 与配置-执行模式
 
-`seal-flow` 遵循一个清晰的两阶段模型：**配置-然后-执行（Configure-then-Execute）**。这确保了密码学操作的参数在执行前被明确设定，减少了出错的可能。
+`seal-flow` 的名字体现了其核心设计：**`seal`** 代表密码学的安全封装，而 **`flow`** 则指代数据在一个明确定义的密码学工作**流**程中的转换。无论是处理内存中的字节，还是处理磁盘上的文件流，数据都会流经一个或多个处理器（`ordinary`, `streaming`, `parallel` 等），最终完成加密或解密。
+
+为此，`seal-flow` 遵循一个清晰的两阶段模型：**配置-然后-执行（Configure-then-Execute）**。这确保了密码学操作的参数在执行前被明确设定，减少了出错的可能。
 
 -   **加密流程**:
     1.  **配置 (`EncryptionConfigurator`)**: 这是所有加密操作的起点。您需要创建一个实现了 `SealFlowHeader` trait 的自定义标头，并用它来初始化 `EncryptionConfigurator`。
