@@ -1,7 +1,7 @@
 [package]
 name = "seal-flow"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "A stateless, high-level cryptographic workflow library."
 repository = "https://github.com/seal-io/seal-flow"
 readme = "README.md"
@@ -9,7 +9,7 @@ readme = "README.md"
 [dependencies]
 # --- 核心密码学特性 ---
 # 提供了所有密码学操作的 Trait 和基础实现
-seal-crypto-wrapper = { path = "../seal-crypto-wrapper", features = ["full"]}
+seal-crypto-wrapper = { path = "../seal-crypto-wrapper", features = ["symmetric"]}
 
 # 提供了方便的宏来创建自定义错误类型
 thiserror = "2.0.12"
@@ -39,8 +39,24 @@ anyhow = "1.0.98"
 criterion = { version = "0.6.0", features = ["async_tokio"] }
 num_cpus = "1.16.0"
 
+[[example]]
+name = "hybrid_encryption"
+required-features = ["crypto-asymmetric-kem", "crypto-kdf", "async"]
+
 [features]
-# 默认启用所有功能
+# 默认启用异步 API
 default = ["async"]
 # 单独的 feature gate 用于启用异步 API
 async = ["dep:tokio", "dep:futures"]
+
+full = ["crypto-full", "async"]
+
+# seal-crypto-wrapper 的 feature gate
+crypto-asymmetric-kem = ["seal-crypto-wrapper/asymmetric-kem"]
+crypto-asymmetric-signature = ["seal-crypto-wrapper/asymmetric-signature"]
+crypto-asymmetric-key-agreement = ["seal-crypto-wrapper/asymmetric-key-agreement"]
+crypto-asymmetric = ["seal-crypto-wrapper/asymmetric"]
+crypto-kdf = ["seal-crypto-wrapper/kdf"]
+crypto-xof = ["seal-crypto-wrapper/xof"]
+
+crypto-full = ["seal-crypto-wrapper/full"]

@@ -4,20 +4,18 @@
 //! 为不同的处理模式提供了一个简化的、统一的 API。
 //! 这个模块作为 `ordinary`, `streaming`, `parallel` 等模块的外观。
 
-use crate::common::header::{
-    SealFlowHeader, 
-};
+use crate::common::header::SealFlowHeader;
 use crate::error::Result;
+#[cfg(feature = "async")]
+use crate::processor::body::asynchronous::{AsyncDecryptorImpl, AsyncEncryptorImpl};
+use crate::processor::traits::FinishingWrite;
 use seal_crypto_wrapper::prelude::TypedSymmetricKey;
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use std::borrow::Cow;
 use std::io::{Read, Write};
-use crate::processor::traits::{FinishingWrite};
 use std::marker::PhantomData;
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncWrite};
-#[cfg(feature = "async")]
-use crate::processor::body::asynchronous::{AsyncDecryptorImpl, AsyncEncryptorImpl};
 
 // --- Encryption Flow ---
 
@@ -36,19 +34,12 @@ impl<'a, H: SealFlowHeader> EncryptionConfigurator<'a, H> {
     /// * `header`: The `SealFlowEnvelopeHeader` containing all metadata for the encryption.
     /// * `key`: The symmetric key for encryption.
     /// * `aad`: Optional Additional Authenticated Data.
-    pub fn new(
-        header: H,
-        key: Cow<'a, TypedSymmetricKey>,
-        aad: Option<Vec<u8>>,
-    ) -> Self {
+    pub fn new(header: H, key: Cow<'a, TypedSymmetricKey>, aad: Option<Vec<u8>>) -> Self {
         Self { header, key, aad }
     }
 
     /// Writes the header to a synchronous writer and transitions to a streaming encryption flow.
-    pub fn into_writer<W: Write + 'a>(
-        self,
-        mut writer: W,
-    ) -> Result<EncryptionFlow<'a, W, H>> {
+    pub fn into_writer<W: Write + 'a>(self, mut writer: W) -> Result<EncryptionFlow<'a, W, H>> {
         self.header.write_to_prefixed_writer(&mut writer)?;
         Ok(EncryptionFlow {
             writer,
@@ -97,7 +88,8 @@ pub struct EncryptionFlow<'a, W: Write + 'a, H: SealFlowHeader> {
 impl<'a, W: Write + 'a, H: SealFlowHeader> EncryptionFlow<'a, W, H> {
     pub fn encrypt_ordinary(self, plaintext: &[u8]) -> Result<Vec<u8>> {
         let symmetric_params = self.config.header.symmetric_params().clone();
-        let encryptor = super::body::ordinary::OrdinaryEncryptor::new(symmetric_params, self.config.aad);
+        let encryptor =
+            super::body::ordinary::OrdinaryEncryptor::new(symmetric_params, self.config.aad);
         let mut ciphertext = encryptor.encrypt(plaintext, self.config.key)?;
 
         let mut header_bytes = self.config.header.encode_to_prefixed_vec()?;
@@ -107,7 +99,8 @@ impl<'a, W: Write + 'a, H: SealFlowHeader> EncryptionFlow<'a, W, H> {
 
     pub fn encrypt_parallel(self, plaintext: &[u8]) -> Result<Vec<u8>> {
         let symmetric_params = self.config.header.symmetric_params().clone();
-        let encryptor = super::body::parallel::ParallelEncryptor::new(symmetric_params, self.config.aad);
+        let encryptor =
+            super::body::parallel::ParallelEncryptor::new(symmetric_params, self.config.aad);
         let mut ciphertext = encryptor.encrypt(plaintext, self.config.key)?;
 
         let mut header_bytes = self.config.header.encode_to_prefixed_vec()?;
@@ -177,7 +170,6 @@ impl<'a, W: AsyncWrite + Send + Unpin + 'a, H: SealFlowHeader> AsyncEncryptionSt
     }
 }
 
-
 // --- Decryption Body ---
 
 /// Prepares for decryption by reading the header from a slice.
@@ -189,7 +181,7 @@ pub fn prepare_decryption_from_slice<H: SealFlowHeader>(
     let pending = PendingDecryption {
         header,
         source: body,
-        _phantom: PhantomData
+        _phantom: PhantomData,
     };
     Ok(pending)
 }
@@ -203,14 +195,17 @@ pub fn prepare_decryption_from_reader<R: Read, H: SealFlowHeader>(
     Ok(PendingDecryption {
         header,
         source: reader,
-        _phantom: PhantomData
+        _phantom: PhantomData,
     })
 }
 
 /// Prepares for decryption by reading the header from an asynchronous reader.
 /// Returns a `PendingDecryption` instance, leaving the reader positioned at the start of the body.
 #[cfg(feature = "async")]
-pub async fn prepare_decryption_from_async_reader<R: AsyncRead + Unpin + Send, H: SealFlowHeader>(
+pub async fn prepare_decryption_from_async_reader<
+    R: AsyncRead + Unpin + Send,
+    H: SealFlowHeader,
+>(
     mut reader: R,
 ) -> Result<PendingDecryption<R, H>> {
     let header = H::decode_from_prefixed_async_reader(&mut reader).await?;

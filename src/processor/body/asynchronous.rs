@@ -10,7 +10,7 @@
 
 use crate::common::buffer::BufferPool;
 use crate::common::header::SymmetricParams;
-use crate::common::{derive_nonce, OrderedChunk};
+use crate::common::{OrderedChunk, derive_nonce};
 use crate::error::{Error, FormatError, Result};
 use bytes::BytesMut;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -56,17 +56,14 @@ impl<'a> AsyncEncryptorSetup<'a> {
         writer: W,
         key: Cow<'a, TypedSymmetricKey>,
     ) -> Result<AsyncEncryptorImpl<'a, W>> {
-
         if self.symmetric_params.algorithm != key.algorithm() {
             return Err(Error::Format(FormatError::InvalidKeyType.into()));
         }
 
         let algorithm = SymmetricAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
-        
+
         let chunk_size = self.symmetric_params.chunk_size as usize;
-        let out_pool = Arc::new(BufferPool::new(
-            chunk_size + algorithm.tag_size(),
-        ));
+        let out_pool = Arc::new(BufferPool::new(chunk_size + algorithm.tag_size()));
         let key = Arc::new(key.into_owned());
 
         Ok(AsyncEncryptorImpl {
@@ -93,10 +90,7 @@ type EncryptTask = JoinHandle<Result<(u64, BytesMut)>>;
 
 enum WritingState {
     Idle,
-    Writing {
-        chunk: BytesMut,
-        pos: usize,
-    },
+    Writing { chunk: BytesMut, pos: usize },
 }
 
 pin_project! {
@@ -121,12 +115,9 @@ pin_project! {
 }
 
 impl<'a, W: AsyncWrite + Unpin> AsyncEncryptorImpl<'a, W> {
-    fn poll_pipeline_progress(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<bool>> {
+    fn poll_pipeline_progress(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<bool>> {
         let state_before = self.state_tuple();
-        let chunk_size = self.buffer.capacity() / 2; 
+        let chunk_size = self.buffer.capacity() / 2;
 
         while self.encrypt_tasks.len() < self.channel_bound {
             if self.buffer.len() < chunk_size && !self.is_shutdown {
@@ -196,7 +187,7 @@ impl<'a, W: AsyncWrite + Unpin> AsyncEncryptorImpl<'a, W> {
                                 }
                             }
                             Err(e) => {
-                                return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)))
+                                return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)));
                             }
                         }
                     } else {
@@ -410,10 +401,7 @@ pin_project! {
 }
 
 impl<'a, R: AsyncRead + Unpin> AsyncDecryptorImpl<'a, R> {
-    fn poll_pipeline_progress(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<io::Result<bool>> {
+    fn poll_pipeline_progress(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<bool>> {
         let mut made_progress = false;
 
         if !self.reader_done {
@@ -570,7 +558,7 @@ impl<'a, R: AsyncRead + Unpin> AsyncRead for AsyncDecryptorImpl<'a, R> {
                         continue;
                     }
                     Err(e) => {
-                        return Poll::Ready(Err(io::Error::new(io::ErrorKind::InvalidData, e)))
+                        return Poll::Ready(Err(io::Error::new(io::ErrorKind::InvalidData, e)));
                     }
                 }
             }

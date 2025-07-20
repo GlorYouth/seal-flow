@@ -6,17 +6,17 @@
 
 use crate::common::buffer::BufferPool;
 use crate::common::header::SymmetricParams;
-use crate::common::{derive_nonce, OrderedChunk};
+use crate::common::{OrderedChunk, derive_nonce};
 use crate::error::{Error, FormatError, Result};
+use crossbeam_utils::thread;
+use rayon::prelude::*;
 use seal_crypto_wrapper::prelude::TypedSymmetricKey;
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
-use rayon::prelude::*;
 use std::borrow::Cow;
 use std::collections::BinaryHeap;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::sync::Arc;
-use crossbeam_utils::thread;
 
 // --- Encryptor ---
 
@@ -41,7 +41,12 @@ impl<'a> ParallelStreamingEncryptor<'a> {
         }
     }
 
-    pub fn run<R, W>(self, mut reader: R, mut writer: W, key: Cow<'a, TypedSymmetricKey>) -> Result<()>
+    pub fn run<R, W>(
+        self,
+        mut reader: R,
+        mut writer: W,
+        key: Cow<'a, TypedSymmetricKey>,
+    ) -> Result<()>
     where
         R: Read + Send,
         W: Write + Send,
@@ -105,7 +110,9 @@ impl<'a> ParallelStreamingEncryptor<'a> {
             let algo_clone = algorithm.clone();
             let aad_clone = Arc::clone(&aad_arc);
             let in_pool = Arc::clone(&pool);
-            let out_pool = Arc::new(BufferPool::new(self.symmetric_params.chunk_size as usize + tag_size));
+            let out_pool = Arc::new(BufferPool::new(
+                self.symmetric_params.chunk_size as usize + tag_size,
+            ));
             let writer_pool = Arc::clone(&out_pool);
             let key_clone = Arc::clone(&key);
             s.spawn(move |_| {
@@ -146,7 +153,10 @@ impl<'a> ParallelStreamingEncryptor<'a> {
 
             let mut next_chunk_to_write = 0;
             while let Ok((index, result)) = enc_chunk_rx.recv() {
-                pending_chunks.push(OrderedChunk { index, data: result });
+                pending_chunks.push(OrderedChunk {
+                    index,
+                    data: result,
+                });
 
                 while let Some(top_chunk) = pending_chunks.peek() {
                     if top_chunk.index == next_chunk_to_write {
@@ -189,7 +199,8 @@ impl<'a> ParallelStreamingEncryptor<'a> {
             }
 
             final_result
-        }).unwrap()
+        })
+        .unwrap()
     }
 }
 
@@ -222,7 +233,12 @@ impl<'a> ParallelStreamingDecryptor<'a> {
         }
     }
 
-    pub fn run<R, W>(self, mut reader: R, mut writer: W, key: Cow<'a, TypedSymmetricKey>) -> Result<()>
+    pub fn run<R, W>(
+        self,
+        mut reader: R,
+        mut writer: W,
+        key: Cow<'a, TypedSymmetricKey>,
+    ) -> Result<()>
     where
         R: Read + Send,
         W: Write + Send,
@@ -321,7 +337,10 @@ impl<'a> ParallelStreamingDecryptor<'a> {
 
             let mut next_chunk_to_write = 0;
             while let Ok((index, result)) = dec_chunk_rx.recv() {
-                pending_chunks.push(OrderedChunk { index, data: result });
+                pending_chunks.push(OrderedChunk {
+                    index,
+                    data: result,
+                });
 
                 while let Some(top_chunk) = pending_chunks.peek() {
                     if top_chunk.index == next_chunk_to_write {
@@ -363,6 +382,7 @@ impl<'a> ParallelStreamingDecryptor<'a> {
             }
 
             final_result
-        }).unwrap()
+        })
+        .unwrap()
     }
 }

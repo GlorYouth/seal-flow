@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 const POOL_SIZE: usize = 16;
 
 /// A simple, thread-safe memory pool for `BytesMut` buffers.
@@ -26,7 +26,6 @@ impl BufferPool {
             buffer_size,
         }
     }
-
 
     /// Acquires a buffer from the pool.
     ///

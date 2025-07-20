@@ -1,10 +1,7 @@
-
 use bytes::BytesMut;
 
 pub(crate) mod buffer;
 pub mod header;
-
-
 
 /// Derives a nonce for a specific chunk index from a base nonce.
 pub(crate) fn derive_nonce(base_nonce: &[u8], chunk_index: u64) -> Box<[u8]> {
@@ -27,8 +24,6 @@ pub(crate) fn derive_nonce(base_nonce: &[u8], chunk_index: u64) -> Box<[u8]> {
 
     nonce_bytes.into_boxed_slice()
 }
-
-
 
 /// A wrapper for chunks to allow ordering in a min-heap.
 pub(crate) struct OrderedChunk {

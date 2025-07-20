@@ -7,10 +7,10 @@
 use crate::common::derive_nonce;
 use crate::common::header::SymmetricParams;
 use crate::error::{Error, FormatError, Result};
+use rayon::prelude::*;
 use seal_crypto_wrapper::prelude::TypedSymmetricKey;
 use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
-use rayon::prelude::*;
 use std::borrow::Cow;
 use std::marker::PhantomData;
 
@@ -21,10 +21,7 @@ pub struct ParallelEncryptor<'a> {
 }
 
 impl<'a> ParallelEncryptor<'a> {
-    pub(crate) fn new(
-        symmetric_params: SymmetricParams,
-        aad: Option<Vec<u8>>,
-    ) -> Self {
+    pub(crate) fn new(symmetric_params: SymmetricParams, aad: Option<Vec<u8>>) -> Self {
         Self {
             symmetric_params,
             aad,
@@ -50,13 +47,8 @@ impl<'a> ParallelEncryptor<'a> {
             .map(|(i, chunk)| {
                 let nonce = derive_nonce(base_nonce, i as u64);
                 let mut encrypted_chunk = vec![0; chunk.len() + algorithm.tag_size()];
-                let bytes_written = algorithm.encrypt_to_buffer(
-                    chunk,
-                    &mut encrypted_chunk,
-                    &key,
-                    &nonce,
-                    aad,
-                )?;
+                let bytes_written =
+                    algorithm.encrypt_to_buffer(chunk, &mut encrypted_chunk, &key, &nonce, aad)?;
                 encrypted_chunk.truncate(bytes_written);
                 Ok(encrypted_chunk)
             })
@@ -90,12 +82,19 @@ impl<'a> ParallelDecryptor<'a> {
         }
     }
 
-    pub fn decrypt(self, ciphertext_body: &[u8], key: Cow<'a, TypedSymmetricKey>) -> Result<Vec<u8>> {
+    pub fn decrypt(
+        self,
+        ciphertext_body: &[u8],
+        key: Cow<'a, TypedSymmetricKey>,
+    ) -> Result<Vec<u8>> {
         let chunk_size_with_tag = self.chunk_size + self.algorithm.tag_size();
         let aad = self.aad.as_deref();
         let base_nonce = &self.nonce;
 
-        let chunks: Vec<_> = ciphertext_body.chunks(chunk_size_with_tag).enumerate().collect();
+        let chunks: Vec<_> = ciphertext_body
+            .chunks(chunk_size_with_tag)
+            .enumerate()
+            .collect();
 
         let decrypted_chunks: Result<Vec<Vec<u8>>> = chunks
             .into_par_iter()

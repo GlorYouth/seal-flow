@@ -10,14 +10,14 @@
 // These enums could also be considered for placement in seal-crypto for sharing.
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享。
 use crate::error::{Error, FormatError, Result};
-use seal_crypto_wrapper::bincode;
-use std::io::{Read, Write};
-use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 use seal_crypto_wrapper::algorithms::symmetric::SymmetricAlgorithm;
+use seal_crypto_wrapper::bincode;
+use serde::{Deserialize, Serialize};
+use sha2::Digest;
+use std::io::{Read, Write};
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use sha2::Digest;
 
 #[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 #[bincode(crate = "seal_crypto_wrapper::bincode")]
@@ -28,6 +28,24 @@ pub struct SymmetricParams {
     pub(crate) aad_hash: Option<Box<[u8]>>,
 }
 
+impl SymmetricParams {
+    pub fn algorithm(&self) -> SymmetricAlgorithm {
+        self.algorithm
+    }
+
+    pub fn chunk_size(&self) -> u32 {
+        self.chunk_size
+    }
+
+    pub fn base_nonce(&self) -> &[u8] {
+        &self.base_nonce
+    }
+
+    pub fn aad_hash(&self) -> Option<&[u8]> {
+        self.aad_hash.as_deref()
+    }
+}
+
 pub struct SymmetricParamsBuilder {
     algorithm: SymmetricAlgorithm,
     chunk_size: u32,
@@ -36,7 +54,6 @@ pub struct SymmetricParamsBuilder {
 }
 
 impl SymmetricParamsBuilder {
-
     pub fn new(algorithm: SymmetricAlgorithm, chunk_size: u32) -> Self {
         Self {
             algorithm,
@@ -69,7 +86,6 @@ impl SymmetricParamsBuilder {
         }
     }
 }
-
 
 /// A trait representing the common interface for all SealFlow headers.
 ///

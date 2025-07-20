@@ -7,7 +7,7 @@
 use crate::common::derive_nonce;
 use crate::common::header::SymmetricParams;
 use crate::error::{Error, FormatError, Result};
-use seal_crypto_wrapper::prelude::{TypedSymmetricKey};
+use seal_crypto_wrapper::prelude::TypedSymmetricKey;
 use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
 use std::borrow::Cow;
@@ -19,10 +19,7 @@ pub struct OrdinaryEncryptor<'a> {
 }
 
 impl<'a> OrdinaryEncryptor<'a> {
-    pub(crate) fn new(
-        symmetric_params: SymmetricParams,
-        aad: Option<Vec<u8>>,
-    ) -> Self {
+    pub(crate) fn new(symmetric_params: SymmetricParams, aad: Option<Vec<u8>>) -> Self {
         Self {
             symmetric_params,
             aad,
@@ -37,7 +34,11 @@ impl<'a> OrdinaryEncryptor<'a> {
 
         let algorithm = SymmetricAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
 
-        let mut ciphertext = Vec::with_capacity(plaintext.len() + algorithm.tag_size() * (plaintext.len() / self.symmetric_params.chunk_size as usize + 1));
+        let mut ciphertext = Vec::with_capacity(
+            plaintext.len()
+                + algorithm.tag_size()
+                    * (plaintext.len() / self.symmetric_params.chunk_size as usize + 1),
+        );
         let chunk_size = self.symmetric_params.chunk_size as usize;
 
         let mut encrypted_chunk_buffer = vec![0u8; chunk_size + algorithm.tag_size()];

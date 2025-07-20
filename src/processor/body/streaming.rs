@@ -4,10 +4,10 @@
 //! 实现同步、流式加密和解密的通用逻辑。
 //! 这是对称和混合流式模式的后端。
 
-use crate::processor::traits::FinishingWrite;
 use crate::common::derive_nonce;
 use crate::common::header::SymmetricParams;
 use crate::error::{Error, FormatError, Result};
+use crate::processor::traits::FinishingWrite;
 use seal_crypto_wrapper::prelude::TypedSymmetricKey;
 use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
 use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
@@ -24,10 +24,7 @@ pub struct StreamingEncryptorSetup<'a> {
 }
 
 impl<'a> StreamingEncryptorSetup<'a> {
-    pub(crate) fn new(
-        symmetric_params: SymmetricParams,
-        aad: Option<Vec<u8>>,
-    ) -> Self {
+    pub(crate) fn new(symmetric_params: SymmetricParams, aad: Option<Vec<u8>>) -> Self {
         Self {
             symmetric_params,
             aad,
@@ -278,4 +275,3 @@ impl<'a, R: Read> Read for StreamingDecryptor<'a, R> {
         self.buffer.read(buf)
     }
 }
-
