@@ -6,6 +6,9 @@ description = "A stateless, high-level cryptographic workflow library."
 repository = "https://github.com/seal-io/seal-flow"
 readme = "README.md"
 
+[package.metadata.docs.rs]
+features = ["full"]
+
 [dependencies]
 # --- 核心密码学特性 ---
 # 提供了所有密码学操作的 Trait 和基础实现
