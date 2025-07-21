@@ -59,7 +59,10 @@ fn main() -> Result<()> {
         // Create symmetric parameters. The AAD is hashed and included for integrity.
         let params = SymmetricParamsBuilder::new(SymmetricAlgorithm::build().aes256_gcm(), 1024)
             .aad_hash(aad, Sha256::new())
-            .base_nonce(|nonce| nonce.fill(1)) // Using a fixed nonce for simplicity.
+            .base_nonce(|nonce| {
+                nonce.fill(1);
+                Ok(())
+            })?
             .build();
 
         // Create our custom header instance.

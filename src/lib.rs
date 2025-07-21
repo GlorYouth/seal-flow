@@ -45,3 +45,4 @@ pub mod prelude {
     pub use crate::processor::api::*;
 }
 pub use ::sha2;
+pub use ::rand;

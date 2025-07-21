@@ -79,7 +79,10 @@ fn main() -> Result<()> {
         // Create a header with relevant metadata.
         let params = SymmetricParamsBuilder::new(SymmetricAlgorithm::build().aes256_gcm(), 4096)
             .aad_hash(aad, Sha256::new())
-            .base_nonce(|nonce| nonce.fill(2))
+            .base_nonce(|nonce| {
+                nonce.fill(2);
+                Ok(())
+            })?
             .build();
 
         let header = StreamHeader {

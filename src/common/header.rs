@@ -63,11 +63,11 @@ impl SymmetricParamsBuilder {
         }
     }
 
-    pub fn base_nonce(mut self, f: impl FnOnce(&mut [u8])) -> Self {
+    pub fn base_nonce(mut self, f: impl FnOnce(&mut [u8]) -> Result<()>) -> Result<Self> {
         let mut nonce = vec![0u8; self.algorithm.into_symmetric_wrapper().nonce_size()];
-        f(&mut nonce);
+        f(&mut nonce)?;
         self.base_nonce = Some(nonce.into());
-        self
+        Ok(self)
     }
 
     pub fn aad_hash(mut self, aad: &[u8], mut hasher: impl Digest) -> Self {

@@ -21,7 +21,10 @@ fn symmetric_params(aad: Option<&[u8]>) -> SymmetricParams {
     if let Some(aad) = aad {
         builder = builder.aad_hash(aad, Sha256::new());
     }
-    builder = builder.base_nonce(|nonce| nonce.fill(1));
+    builder = builder.base_nonce(|nonce| {
+        nonce.fill(1);
+        Ok(())
+    }).unwrap();
     builder.build()
 }
 
