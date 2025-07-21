@@ -18,6 +18,7 @@ use seal_flow::crypto::prelude::*;
 use seal_flow::prelude::{EncryptionConfigurator, prepare_decryption_from_slice};
 use seal_flow::sha2::{Digest, Sha256};
 use std::borrow::Cow;
+use seal_crypto_wrapper::algorithms::kdf::key::KdfKeyAlgorithm;
 
 /// Parameters for Key Derivation Function (KDF).
 ///
@@ -25,7 +26,7 @@ use std::borrow::Cow;
 #[derive(Clone, bincode::Encode, bincode::Decode, serde::Serialize, serde::Deserialize, Debug)]
 #[bincode(crate = "seal_crypto_wrapper::bincode")]
 struct KdfParams {
-    algorithm: KdfAlgorithm,
+    algorithm: KdfKeyAlgorithm,
     salt: Option<Vec<u8>>,
     info: Option<Vec<u8>>,
 }
