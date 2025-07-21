@@ -10,21 +10,21 @@
 //! ```
 
 use anyhow::Result;
-use seal_crypto_wrapper::algorithms::asymmetric::kem::KemAlgorithm;
-use seal_crypto_wrapper::bincode;
-use seal_crypto_wrapper::traits::KemAlgorithmTrait;
+use seal_flow::crypto::algorithms::asymmetric::kem::KemAlgorithm;
+use seal_flow::crypto::bincode;
+use seal_flow::crypto::traits::KemAlgorithmTrait;
 use seal_flow::common::header::{SealFlowHeader, SymmetricParams, SymmetricParamsBuilder};
 use seal_flow::crypto::prelude::*;
 use seal_flow::prelude::{EncryptionConfigurator, prepare_decryption_from_slice};
 use seal_flow::sha2::{Digest, Sha256};
 use std::borrow::Cow;
-use seal_crypto_wrapper::algorithms::kdf::key::KdfKeyAlgorithm;
+use seal_flow::crypto::algorithms::kdf::key::KdfKeyAlgorithm;
 
 /// Parameters for Key Derivation Function (KDF).
 ///
 /// 密钥派生函数（KDF）的参数。
 #[derive(Clone, bincode::Encode, bincode::Decode, serde::Serialize, serde::Deserialize, Debug)]
-#[bincode(crate = "seal_crypto_wrapper::bincode")]
+#[bincode(crate = "bincode")]
 struct KdfParams {
     algorithm: KdfKeyAlgorithm,
     salt: Option<Vec<u8>>,
@@ -36,7 +36,7 @@ struct KdfParams {
 ///
 /// 用于混合加密的自定义标头。它包含接收方解密对称密钥所需的封装密钥。
 #[derive(Clone, bincode::Encode, bincode::Decode, serde::Serialize, serde::Deserialize, Debug)]
-#[bincode(crate = "seal_crypto_wrapper::bincode")]
+#[bincode(crate = "bincode")]
 struct HybridHeader {
     params: SymmetricParams,
     encapsulated_key: EncapsulatedKey,
