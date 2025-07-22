@@ -7,7 +7,6 @@ use seal_flow::processor::api::prepare_decryption_from_async_reader;
 use seal_flow::processor::api::{
     EncryptionConfigurator, prepare_decryption_from_reader, prepare_decryption_from_slice,
 };
-use seal_flow::sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::io::{Cursor, Read, Write};
 use std::{future::Future, pin::Pin, sync::Arc};
@@ -20,7 +19,7 @@ fn aead_params(aad: Option<&[u8]>) -> AeadParams {
     let algorithm = AeadAlgorithm::build().aes256_gcm();
     let mut builder = AeadParamsBuilder::new(algorithm, TEST_CHUNK_SIZE);
     if let Some(aad) = aad {
-        builder = builder.aad_hash(aad, Sha256::new());
+        builder = builder.aad_hash(aad, HashAlgorithm::Sha256.into_wrapper());
     }
     builder = builder
         .base_nonce(|nonce| {

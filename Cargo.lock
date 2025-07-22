@@ -1127,7 +1127,6 @@ dependencies = [
  "rayon",
  "seal-crypto-wrapper",
  "serde",
- "sha2",
  "thiserror",
  "tokio",
 ]

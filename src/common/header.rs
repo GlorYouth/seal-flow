@@ -11,11 +11,10 @@
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享。
 use crate::error::{Error, FormatError, Result};
 use async_trait::async_trait;
-use seal_crypto_wrapper::algorithms::aead::AeadAlgorithm;
+use seal_crypto_wrapper::{algorithms::aead::AeadAlgorithm, wrappers::hash::HashAlgorithmWrapper};
 use seal_crypto_wrapper::bincode;
 use seal_crypto_wrapper::prelude::TypedSignaturePublicKey;
 use serde::{Deserialize, Serialize};
-use sha2::Digest;
 use std::io::{Read, Write};
 #[cfg(feature = "async")]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -71,10 +70,8 @@ impl AeadParamsBuilder {
         Ok(self)
     }
 
-    pub fn aad_hash(mut self, aad: &[u8], mut hasher: impl Digest) -> Self {
-        hasher.update(aad);
-        let hash = hasher.finalize();
-        self.aad_hash = Some(hash.to_vec().into());
+    pub fn aad_hash(mut self, aad: &[u8], hasher: HashAlgorithmWrapper) -> Self {
+        self.aad_hash = Some(hasher.hash(aad).into());
         self
     }
 

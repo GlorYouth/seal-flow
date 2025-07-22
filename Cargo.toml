@@ -34,7 +34,6 @@ pin-project-lite = "0.2.16"
 
 serde = { version = "1.0", features = ["derive"] }
 async-trait = "0.1.88"
-sha2 = "0.10.9"
 crossbeam-utils = "0.8.21"
 
 [dev-dependencies]

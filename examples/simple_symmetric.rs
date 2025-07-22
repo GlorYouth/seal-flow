@@ -13,9 +13,9 @@ use anyhow::Result;
 use seal_crypto_wrapper::algorithms::aead::AeadAlgorithm;
 use seal_crypto_wrapper::bincode;
 use seal_flow::common::header::{AeadParams, AeadParamsBuilder, SealFlowHeader};
+use seal_flow::crypto::algorithms::hash::HashAlgorithm;
 use seal_flow::crypto::prelude::*;
 use seal_flow::prelude::{EncryptionConfigurator, prepare_decryption_from_slice};
-use seal_flow::sha2::{Digest, Sha256};
 use std::borrow::Cow;
 
 /// A custom header structure for our example.
@@ -53,7 +53,7 @@ fn main() -> Result<()> {
 
         // Create symmetric parameters. The AAD is hashed and included for integrity.
         let params = AeadParamsBuilder::new(AeadAlgorithm::build().aes256_gcm(), 1024)
-            .aad_hash(aad, Sha256::new())
+            .aad_hash(aad, HashAlgorithm::Sha256.into_wrapper())
             .base_nonce(|nonce| {
                 nonce.fill(1);
                 Ok(())
