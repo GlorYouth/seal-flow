@@ -125,7 +125,7 @@ fn main() -> Result<()> {
 
         // Prepare for decryption by reading the header from the start of the file.
         let pending_decryption =
-            prepare_decryption_from_reader::<_, StreamHeader>(&mut encrypted_file)?;
+            prepare_decryption_from_reader::<_, StreamHeader>(&mut encrypted_file, None)?;
 
         println!(
             "  - Header parsed successfully. Original filename: \"{}\"",

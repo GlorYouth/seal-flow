@@ -184,7 +184,7 @@ async fn test_all_modes_interoperability() -> anyhow::Result<()> {
                 "Ordinary",
                 Arc::new(|ciphertext, key, aad| {
                     Box::pin(async move {
-                        let pending = prepare_decryption_from_slice::<TestHeader>(ciphertext)?;
+                        let pending = prepare_decryption_from_slice::<TestHeader>(ciphertext, None)?;
                         pending
                             .decrypt_ordinary(Cow::Borrowed(key), aad)
                             .map_err(|e| e.into())
@@ -195,7 +195,7 @@ async fn test_all_modes_interoperability() -> anyhow::Result<()> {
                 "Parallel",
                 Arc::new(|ciphertext, key, aad| {
                     Box::pin(async move {
-                        let pending = prepare_decryption_from_slice::<TestHeader>(ciphertext)?;
+                        let pending = prepare_decryption_from_slice::<TestHeader>(ciphertext, None)?;
                         pending
                             .decrypt_parallel(Cow::Borrowed(key), aad)
                             .map_err(|e| e.into())
@@ -207,7 +207,7 @@ async fn test_all_modes_interoperability() -> anyhow::Result<()> {
                 Arc::new(|ciphertext, key, aad| {
                     Box::pin(async move {
                         let mut reader = Cursor::new(ciphertext);
-                        let pending = prepare_decryption_from_reader::<_, TestHeader>(&mut reader)?;
+                        let pending = prepare_decryption_from_reader::<_, TestHeader>(&mut reader, None)?;
                         let mut decryptor = pending.decrypt_streaming(Cow::Borrowed(key), aad)?;
                         let mut decrypted = Vec::new();
                         decryptor.read_to_end(&mut decrypted)?;
@@ -220,7 +220,7 @@ async fn test_all_modes_interoperability() -> anyhow::Result<()> {
                 Arc::new(|ciphertext, key, aad| {
                     Box::pin(async move {
                         let mut reader = Cursor::new(ciphertext);
-                        let pending = prepare_decryption_from_reader::<_, TestHeader>(&mut reader)?;
+                        let pending = prepare_decryption_from_reader::<_, TestHeader>(&mut reader, None)?;
                         let mut writer = Vec::new();
                         pending.decrypt_parallel_streaming(
                             &mut writer,
@@ -242,7 +242,7 @@ async fn test_all_modes_interoperability() -> anyhow::Result<()> {
                     use tokio::io::AsyncReadExt;
                     let mut reader = tokio::io::BufReader::new(ciphertext);
                     let pending =
-                        prepare_decryption_from_async_reader::<_, TestHeader>(&mut reader).await?;
+                        prepare_decryption_from_async_reader::<_, TestHeader>(&mut reader, None).await?;
                     let mut decryptor = pending.decrypt_asynchronous(Cow::Borrowed(key), aad, 4);
                     let mut decrypted = Vec::new();
                     decryptor.read_to_end(&mut decrypted).await?;

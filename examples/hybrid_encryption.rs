@@ -141,7 +141,7 @@ fn main() -> Result<()> {
 
         // 1. Parse the header from the ciphertext.
         // 1. 从密文中解析标头。
-        let pending_decryption = prepare_decryption_from_slice::<HybridHeader>(&ciphertext)?;
+        let pending_decryption = prepare_decryption_from_slice::<HybridHeader>(&ciphertext, None)?;
         let header = pending_decryption.header();
         println!("  - Hybrid header parsed successfully.");
 

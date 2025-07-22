@@ -13,6 +13,7 @@ use crate::error::{Error, FormatError, Result};
 use async_trait::async_trait;
 use seal_crypto_wrapper::algorithms::symmetric::SymmetricAlgorithm;
 use seal_crypto_wrapper::bincode;
+use seal_crypto_wrapper::prelude::TypedSignaturePublicKey;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::io::{Read, Write};
@@ -123,7 +124,8 @@ pub trait SealFlowHeader:
     ///
     /// 验证标头中的签名（如果存在）。
     /// 默认实现不执行任何操作。
-    fn verify_signature(&self) -> Result<()> {
+    fn verify_signature<'a>(&self, verify_key: Option<&'a TypedSignaturePublicKey>) -> Result<()> {
+        let _ = verify_key;
         Ok(())
     }
 
@@ -155,7 +157,10 @@ pub trait SealFlowHeader:
         Ok(())
     }
 
-    fn decode_from_prefixed_slice(ciphertext: &[u8]) -> Result<(Self, &[u8])> {
+    fn decode_from_prefixed_slice<'a, 'b>(
+        ciphertext: &'a [u8],
+        verify_key: Option<&'b TypedSignaturePublicKey>,
+    ) -> Result<(Self, &'a [u8])> {
         if ciphertext.len() < 4 {
             return Err(FormatError::InvalidCiphertext.into());
         }
@@ -167,11 +172,14 @@ pub trait SealFlowHeader:
         let ciphertext_body = &ciphertext[4 + header_len..];
 
         let (header, _) = Self::decode_from_slice(header_bytes)?;
-        header.verify_signature()?;
+        header.verify_signature(verify_key)?;
         Ok((header, ciphertext_body))
     }
 
-    fn decode_from_prefixed_reader<R: Read>(reader: &mut R) -> Result<Self> {
+    fn decode_from_prefixed_reader<'a, R: Read>(
+        reader: &mut R,
+        verify_key: Option<&'a TypedSignaturePublicKey>,
+    ) -> Result<Self> {
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf)?;
         let header_len = u32::from_le_bytes(len_buf) as usize;
@@ -179,14 +187,15 @@ pub trait SealFlowHeader:
         let mut header_bytes = vec![0u8; header_len];
         reader.read_exact(&mut header_bytes)?;
         let (header, _) = Self::decode_from_slice(&header_bytes)?;
-        header.verify_signature()?;
+        header.verify_signature(verify_key)?;
 
         Ok(header)
     }
 
     #[cfg(feature = "async")]
-    async fn decode_from_prefixed_async_reader<R: AsyncRead + Unpin + Send>(
+    async fn decode_from_prefixed_async_reader<'a, R: AsyncRead + Unpin + Send>(
         reader: &mut R,
+        verify_key: Option<&'a TypedSignaturePublicKey>,
     ) -> Result<Self> {
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf).await?;
@@ -195,7 +204,7 @@ pub trait SealFlowHeader:
         let mut header_bytes = vec![0u8; header_len];
         reader.read_exact(&mut header_bytes).await?;
         let (header, _) = Self::decode_from_slice(&header_bytes)?;
-        header.verify_signature()?;
+        header.verify_signature(verify_key)?;
 
         Ok(header)
     }

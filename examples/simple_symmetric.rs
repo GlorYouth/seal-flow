@@ -92,7 +92,7 @@ fn main() -> Result<()> {
         println!("\n--- Decrypting ---");
 
         // Prepare for decryption by parsing the header from the ciphertext.
-        let pending_decryption = prepare_decryption_from_slice::<SimpleHeader>(&ciphertext)?;
+        let pending_decryption = prepare_decryption_from_slice::<SimpleHeader>(&ciphertext, None)?;
 
         println!(
             "  - Header parsed successfully. Found metadata: \"{}\"",
