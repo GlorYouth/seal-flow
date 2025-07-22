@@ -75,7 +75,7 @@ fn main() -> Result<()> {
 
         // Create a header with relevant metadata.
         let params = AeadParamsBuilder::new(AeadAlgorithm::build().aes256_gcm(), 4096)
-            .aad_hash(aad, HashAlgorithm::Sha256.into_wrapper())
+            .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
             .base_nonce(|nonce| {
                 nonce.fill(2);
                 Ok(())

@@ -19,7 +19,7 @@ fn aead_params(aad: Option<&[u8]>) -> AeadParams {
     let algorithm = AeadAlgorithm::build().aes256_gcm();
     let mut builder = AeadParamsBuilder::new(algorithm, TEST_CHUNK_SIZE);
     if let Some(aad) = aad {
-        builder = builder.aad_hash(aad, HashAlgorithm::Sha256.into_wrapper());
+        builder = builder.aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper());
     }
     builder = builder
         .base_nonce(|nonce| {

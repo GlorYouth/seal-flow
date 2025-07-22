@@ -70,7 +70,7 @@ impl AeadParamsBuilder {
         Ok(self)
     }
 
-    pub fn aad_hash(mut self, aad: &[u8], hasher: HashAlgorithmWrapper) -> Self {
+    pub fn aad_hash(mut self, aad: &[u8], hasher: &HashAlgorithmWrapper) -> Self {
         self.aad_hash = Some(hasher.hash(aad).into());
         self
     }

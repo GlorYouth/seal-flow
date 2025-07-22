@@ -53,7 +53,7 @@ fn main() -> Result<()> {
 
         // Create symmetric parameters. The AAD is hashed and included for integrity.
         let params = AeadParamsBuilder::new(AeadAlgorithm::build().aes256_gcm(), 1024)
-            .aad_hash(aad, HashAlgorithm::Sha256.into_wrapper())
+            .aad_hash(aad, &HashAlgorithm::Sha256.into_wrapper())
             .base_nonce(|nonce| {
                 nonce.fill(1);
                 Ok(())
