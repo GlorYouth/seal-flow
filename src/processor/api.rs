@@ -9,7 +9,7 @@ use crate::error::Result;
 #[cfg(feature = "async")]
 use crate::processor::body::asynchronous::{AsyncDecryptorImpl, AsyncEncryptorImpl};
 use crate::processor::traits::FinishingWrite;
-use seal_crypto_wrapper::prelude::{TypedSignaturePublicKey, TypedAeadKey};
+use seal_crypto_wrapper::prelude::{TypedAeadKey, TypedSignaturePublicKey};
 use seal_crypto_wrapper::wrappers::aead::AeadAlgorithmWrapper;
 use std::borrow::Cow;
 use std::io::{Read, Write};
@@ -88,8 +88,7 @@ pub struct EncryptionFlow<'a, W: Write + 'a, H: SealFlowHeader> {
 impl<'a, W: Write + 'a, H: SealFlowHeader> EncryptionFlow<'a, W, H> {
     pub fn encrypt_ordinary(self, plaintext: &[u8]) -> Result<Vec<u8>> {
         let aead_params = self.config.header.aead_params().clone();
-        let encryptor =
-            super::body::ordinary::OrdinaryEncryptor::new(aead_params, self.config.aad);
+        let encryptor = super::body::ordinary::OrdinaryEncryptor::new(aead_params, self.config.aad);
         let mut ciphertext = encryptor.encrypt(plaintext, self.config.key)?;
 
         let mut header_bytes = self.config.header.encode_to_prefixed_vec()?;
@@ -99,8 +98,7 @@ impl<'a, W: Write + 'a, H: SealFlowHeader> EncryptionFlow<'a, W, H> {
 
     pub fn encrypt_parallel(self, plaintext: &[u8]) -> Result<Vec<u8>> {
         let aead_params = self.config.header.aead_params().clone();
-        let encryptor =
-            super::body::parallel::ParallelEncryptor::new(aead_params, self.config.aad);
+        let encryptor = super::body::parallel::ParallelEncryptor::new(aead_params, self.config.aad);
         let mut ciphertext = encryptor.encrypt(plaintext, self.config.key)?;
 
         let mut header_bytes = self.config.header.encode_to_prefixed_vec()?;
@@ -189,9 +187,9 @@ pub fn prepare_decryption_from_slice<'a, 'b, H: SealFlowHeader>(
 
 /// Prepares for decryption by reading the header from a reader.
 /// Returns a `PendingDecryption` instance, leaving the reader positioned at the start of the body.
-pub fn prepare_decryption_from_reader<'a, R: Read, H: SealFlowHeader>(
+pub fn prepare_decryption_from_reader<R: Read, H: SealFlowHeader>(
     mut reader: R,
-    verify_key: Option<&'a TypedSignaturePublicKey>,
+    verify_key: Option<&TypedSignaturePublicKey>,
 ) -> Result<PendingDecryption<R, H>> {
     let header = H::decode_from_prefixed_reader(&mut reader, verify_key)?;
     Ok(PendingDecryption {
@@ -204,12 +202,12 @@ pub fn prepare_decryption_from_reader<'a, R: Read, H: SealFlowHeader>(
 /// Prepares for decryption by reading the header from an asynchronous reader.
 /// Returns a `PendingDecryption` instance, leaving the reader positioned at the start of the body.
 #[cfg(feature = "async")]
-pub async fn prepare_decryption_from_async_reader<'a,
+pub async fn prepare_decryption_from_async_reader<
     R: AsyncRead + Unpin + Send,
     H: SealFlowHeader,
 >(
     mut reader: R,
-    verify_key: Option<&'a TypedSignaturePublicKey>,
+    verify_key: Option<&TypedSignaturePublicKey>,
 ) -> Result<PendingDecryption<R, H>> {
     let header = H::decode_from_prefixed_async_reader(&mut reader, verify_key).await?;
     Ok(PendingDecryption {
@@ -359,9 +357,9 @@ pub fn read_header_from_slice<'a, 'b, H: SealFlowHeader>(
 
 /// Reads a header from a synchronous reader.
 /// The reader will be consumed to the end of the header.
-pub fn read_header_from_reader<'a, R: Read, H: SealFlowHeader>(
+pub fn read_header_from_reader<R: Read, H: SealFlowHeader>(
     reader: &mut R,
-    verify_key: Option<&'a TypedSignaturePublicKey>,
+    verify_key: Option<&TypedSignaturePublicKey>,
 ) -> Result<H> {
     H::decode_from_prefixed_reader(reader, verify_key)
 }
@@ -369,9 +367,9 @@ pub fn read_header_from_reader<'a, R: Read, H: SealFlowHeader>(
 /// Reads a header from an asynchronous reader.
 /// The reader will be consumed to the end of the header.
 #[cfg(feature = "async")]
-pub async fn read_header_from_async_reader<'a, R: AsyncRead + Unpin + Send, H: SealFlowHeader>(
+pub async fn read_header_from_async_reader<R: AsyncRead + Unpin + Send, H: SealFlowHeader>(
     reader: &mut R,
-    verify_key: Option<&'a TypedSignaturePublicKey>,
+    verify_key: Option<&TypedSignaturePublicKey>,
 ) -> Result<H> {
     H::decode_from_prefixed_async_reader(reader, verify_key).await
 }

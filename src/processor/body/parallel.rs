@@ -82,11 +82,7 @@ impl<'a> ParallelDecryptor<'a> {
         }
     }
 
-    pub fn decrypt(
-        self,
-        ciphertext_body: &[u8],
-        key: Cow<'a, TypedAeadKey>,
-    ) -> Result<Vec<u8>> {
+    pub fn decrypt(self, ciphertext_body: &[u8], key: Cow<'a, TypedAeadKey>) -> Result<Vec<u8>> {
         let chunk_size_with_tag = self.chunk_size + self.algorithm.tag_size();
         let aad = self.aad.as_deref();
         let base_nonce = &self.nonce;

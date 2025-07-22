@@ -34,7 +34,6 @@ impl SealFlowHeader for SimpleHeader {
     fn aead_params(&self) -> &AeadParams {
         &self.params
     }
-
 }
 
 fn main() -> Result<()> {

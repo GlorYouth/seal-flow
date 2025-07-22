@@ -38,11 +38,7 @@ pub struct AsyncEncryptorSetup<'a> {
 }
 
 impl<'a> AsyncEncryptorSetup<'a> {
-    pub(crate) fn new(
-        aead_params: AeadParams,
-        aad: Option<Vec<u8>>,
-        channel_bound: usize,
-    ) -> Self {
+    pub(crate) fn new(aead_params: AeadParams, aad: Option<Vec<u8>>, channel_bound: usize) -> Self {
         Self {
             aead_params,
             aad,

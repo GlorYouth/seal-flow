@@ -34,7 +34,6 @@ impl SealFlowHeader for StreamHeader {
     fn aead_params(&self) -> &AeadParams {
         &self.params
     }
-
 }
 
 /// Creates a dummy file with a specified size in KB.

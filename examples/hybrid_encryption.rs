@@ -10,15 +10,16 @@
 //! ```
 
 use anyhow::Result;
-use seal_flow::crypto::algorithms::asymmetric::kem::KemAlgorithm;
-use seal_flow::crypto::bincode;
-use seal_flow::crypto::traits::KemAlgorithmTrait;
 use seal_flow::common::header::{AeadParams, AeadParamsBuilder, SealFlowHeader};
+use seal_flow::crypto::algorithms::aead::AeadAlgorithm;
+use seal_flow::crypto::algorithms::asymmetric::kem::KemAlgorithm;
+use seal_flow::crypto::algorithms::kdf::key::KdfKeyAlgorithm;
+use seal_flow::crypto::bincode;
 use seal_flow::crypto::prelude::*;
+use seal_flow::crypto::traits::KemAlgorithmTrait;
 use seal_flow::prelude::{EncryptionConfigurator, prepare_decryption_from_slice};
 use seal_flow::sha2::{Digest, Sha256};
 use std::borrow::Cow;
-use seal_flow::crypto::algorithms::kdf::key::KdfKeyAlgorithm;
 
 /// Parameters for Key Derivation Function (KDF).
 ///
@@ -55,7 +56,7 @@ fn main() -> Result<()> {
 
     // --- Recipient Side: Key Generation ---
     println!("\n--- Recipient: Generating KEM key pair ---");
-    let kem_algorithm = KemAlgorithm::build().kyber1024().into_asymmetric_wrapper();
+    let kem_algorithm = KemAlgorithm::build().kyber1024().into_wrapper();
     let recipient_key_pair = kem_algorithm.generate_keypair()?;
     let recipient_pk = recipient_key_pair.public_key();
     println!("  - Recipient generated public/private key pair.");
@@ -75,7 +76,7 @@ fn main() -> Result<()> {
 
         // 2. KDF: Derive a symmetric key from the shared secret.
         // 2. KDF：从共享密钥派生对称密钥。
-        let symmetric_algorithm = SymmetricAlgorithm::build().aes256_gcm();
+        let aead_algorithm = AeadAlgorithm::build().aes256_gcm();
 
         // Encapsulate KDF parameters for deriving the symmetric key from the shared secret.
         // 封装 KDF 参数，用于从共享密钥派生对称密钥。
@@ -91,7 +92,7 @@ fn main() -> Result<()> {
             kdf_params.algorithm,
             kdf_params.salt.as_deref(),
             kdf_params.info.as_deref(),
-            symmetric_algorithm,
+            aead_algorithm,
         )?;
 
         println!(
@@ -100,9 +101,12 @@ fn main() -> Result<()> {
 
         // 3. DEM: Use the ephemeral symmetric key to encrypt the actual data.
         // 3. DEM：使用临时对称密钥加密实际数据。
-        let params = AeadParamsBuilder::new(symmetric_algorithm, 4096)
+        let params = AeadParamsBuilder::new(aead_algorithm, 4096)
             .aad_hash(aad, Sha256::new())
-            .base_nonce(|nonce| nonce.fill(3))
+            .base_nonce(|nonce| {
+                nonce.fill(3);
+                Ok(())
+            })?
             .build();
 
         // Create the hybrid header, storing the encapsulated key and algorithms used.
@@ -144,7 +148,7 @@ fn main() -> Result<()> {
         // 2. KEM：使用接收者的私钥解封对称密钥。
         let shared_secret = header
             .kem_algorithm
-            .into_asymmetric_wrapper()
+            .into_wrapper()
             .decapsulate_key(&recipient_key_pair.private_key(), &header.encapsulated_key)?;
         println!("  - Shared secret recovered successfully.");
 

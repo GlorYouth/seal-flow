@@ -28,11 +28,7 @@ pub struct ParallelStreamingEncryptor<'a> {
 }
 
 impl<'a> ParallelStreamingEncryptor<'a> {
-    pub(crate) fn new(
-        aead_params: AeadParams,
-        aad: Option<Vec<u8>>,
-        channel_bound: usize,
-    ) -> Self {
+    pub(crate) fn new(aead_params: AeadParams, aad: Option<Vec<u8>>, channel_bound: usize) -> Self {
         Self {
             aead_params,
             aad,
@@ -41,12 +37,7 @@ impl<'a> ParallelStreamingEncryptor<'a> {
         }
     }
 
-    pub fn run<R, W>(
-        self,
-        mut reader: R,
-        mut writer: W,
-        key: Cow<'a, TypedAeadKey>,
-    ) -> Result<()>
+    pub fn run<R, W>(self, mut reader: R, mut writer: W, key: Cow<'a, TypedAeadKey>) -> Result<()>
     where
         R: Read + Send,
         W: Write + Send,
@@ -233,12 +224,7 @@ impl<'a> ParallelStreamingDecryptor<'a> {
         }
     }
 
-    pub fn run<R, W>(
-        self,
-        mut reader: R,
-        mut writer: W,
-        key: Cow<'a, TypedAeadKey>,
-    ) -> Result<()>
+    pub fn run<R, W>(self, mut reader: R, mut writer: W, key: Cow<'a, TypedAeadKey>) -> Result<()>
     where
         R: Read + Send,
         W: Write + Send,

@@ -124,7 +124,7 @@ pub trait SealFlowHeader:
     ///
     /// 验证标头中的签名（如果存在）。
     /// 默认实现不执行任何操作。
-    fn verify_signature<'a>(&self, verify_key: Option<&'a TypedSignaturePublicKey>) -> Result<()> {
+    fn verify_signature(&self, verify_key: Option<&TypedSignaturePublicKey>) -> Result<()> {
         let _ = verify_key;
         Ok(())
     }
