@@ -1,3 +1,4 @@
+use seal_crypto_wrapper::algorithms::aead::AeadAlgorithm;
 use seal_crypto_wrapper::bincode;
 use seal_flow::common::header::{SealFlowHeader, SymmetricParams, SymmetricParamsBuilder};
 use seal_flow::crypto::prelude::*;
@@ -16,7 +17,7 @@ const TEST_AAD: &[u8] = b"test aad";
 const TEST_DATA: &[u8] = b"some test data to be encrypted";
 
 fn symmetric_params(aad: Option<&[u8]>) -> SymmetricParams {
-    let algorithm = SymmetricAlgorithm::build().aes256_gcm();
+    let algorithm = AeadAlgorithm::build().aes256_gcm();
     let mut builder = SymmetricParamsBuilder::new(algorithm, TEST_CHUNK_SIZE);
     if let Some(aad) = aad {
         builder = builder.aad_hash(aad, Sha256::new());
@@ -54,7 +55,7 @@ fn new_test_header(aad: Option<&[u8]>) -> TestHeader {
 
 // Encryption Helpers
 fn encrypt_ordinary(
-    key: &TypedSymmetricKey,
+    key: &TypedAeadKey,
     aad: Option<Vec<u8>>,
     plaintext: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
@@ -65,7 +66,7 @@ fn encrypt_ordinary(
 }
 
 fn encrypt_parallel(
-    key: &TypedSymmetricKey,
+    key: &TypedAeadKey,
     aad: Option<Vec<u8>>,
     plaintext: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
@@ -76,7 +77,7 @@ fn encrypt_parallel(
 }
 
 fn encrypt_streaming(
-    key: &TypedSymmetricKey,
+    key: &TypedAeadKey,
     aad: Option<Vec<u8>>,
     plaintext: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
@@ -91,7 +92,7 @@ fn encrypt_streaming(
 }
 
 fn encrypt_parallel_streaming(
-    key: &TypedSymmetricKey,
+    key: &TypedAeadKey,
     aad: Option<Vec<u8>>,
     plaintext: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
@@ -106,7 +107,7 @@ fn encrypt_parallel_streaming(
 
 #[cfg(feature = "async")]
 async fn encrypt_asynchronous(
-    key: &TypedSymmetricKey,
+    key: &TypedAeadKey,
     aad: Option<Vec<u8>>,
     plaintext: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
@@ -124,14 +125,14 @@ async fn encrypt_asynchronous(
 
 #[tokio::test]
 async fn test_all_modes_interoperability() -> anyhow::Result<()> {
-    let key = TypedSymmetricKey::generate(SymmetricAlgorithm::build().aes256_gcm())?;
+    let key = TypedAeadKey::generate(AeadAlgorithm::build().aes256_gcm())?;
     let plaintext = TEST_DATA;
 
     // --- Encryption Mode Definitions ---
     enum EncFn {
         Sync(
             Arc<
-                dyn Fn(&TypedSymmetricKey, Option<Vec<u8>>, &[u8]) -> anyhow::Result<Vec<u8>>
+                dyn Fn(&TypedAeadKey, Option<Vec<u8>>, &[u8]) -> anyhow::Result<Vec<u8>>
                     + Send
                     + Sync,
             >,
@@ -139,7 +140,7 @@ async fn test_all_modes_interoperability() -> anyhow::Result<()> {
         Async(
             Arc<
                 dyn for<'a> Fn(
-                        &'a TypedSymmetricKey,
+                        &'a TypedAeadKey,
                         Option<Vec<u8>>,
                         &'a [u8],
                     )
@@ -173,7 +174,7 @@ async fn test_all_modes_interoperability() -> anyhow::Result<()> {
     // --- Decryption Mode Definitions ---
     type DecryptResult<'a> = Pin<Box<dyn Future<Output = anyhow::Result<Vec<u8>>> + Send + 'a>>;
     type DecryptFn = Arc<
-        dyn for<'a> Fn(&'a [u8], &'a TypedSymmetricKey, Option<Vec<u8>>) -> DecryptResult<'a>
+        dyn for<'a> Fn(&'a [u8], &'a TypedAeadKey, Option<Vec<u8>>) -> DecryptResult<'a>
             + Send
             + Sync,
     >;

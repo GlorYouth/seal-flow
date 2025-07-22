@@ -8,9 +8,9 @@ use crate::common::derive_nonce;
 use crate::common::header::SymmetricParams;
 use crate::error::{Error, FormatError, Result};
 use crate::processor::traits::FinishingWrite;
-use seal_crypto_wrapper::prelude::TypedSymmetricKey;
-use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
-use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
+use seal_crypto_wrapper::prelude::TypedAeadKey;
+use seal_crypto_wrapper::traits::AeadAlgorithmTrait;
+use seal_crypto_wrapper::wrappers::aead::AeadAlgorithmWrapper;
 use std::borrow::Cow;
 use std::io::{self, Read, Write};
 use std::marker::PhantomData;
@@ -35,13 +35,13 @@ impl<'a> StreamingEncryptorSetup<'a> {
     pub fn start<W: Write + 'a>(
         self,
         writer: W,
-        key: Cow<'a, TypedSymmetricKey>,
+        key: Cow<'a, TypedAeadKey>,
     ) -> Result<StreamingEncryptor<'a, W>> {
         if self.symmetric_params.algorithm != key.algorithm() {
             return Err(Error::Format(FormatError::InvalidKeyType.into()));
         }
 
-        let algorithm = SymmetricAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+        let algorithm = AeadAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
 
         let chunk_size = self.symmetric_params.chunk_size as usize;
         let tag_size = algorithm.tag_size();
@@ -62,8 +62,8 @@ impl<'a> StreamingEncryptorSetup<'a> {
 
 pub struct StreamingEncryptor<'a, W: Write> {
     writer: W,
-    algorithm: SymmetricAlgorithmWrapper,
-    key: TypedSymmetricKey,
+    algorithm: AeadAlgorithmWrapper,
+    key: TypedAeadKey,
     base_nonce: Box<[u8]>,
     chunk_size: usize,
     buffer: Vec<u8>,
@@ -160,7 +160,7 @@ impl<'a, W: Write> Write for StreamingEncryptor<'a, W> {
 // --- Decryptor ---
 
 pub struct StreamingDecryptorSetup<'a> {
-    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) algorithm: AeadAlgorithmWrapper,
     pub(crate) nonce: Box<[u8]>,
     pub(crate) chunk_size: usize,
     pub(crate) aad: Option<Vec<u8>>,
@@ -169,7 +169,7 @@ pub struct StreamingDecryptorSetup<'a> {
 
 impl<'a> StreamingDecryptorSetup<'a> {
     pub(crate) fn new(
-        algorithm: SymmetricAlgorithmWrapper,
+        algorithm: AeadAlgorithmWrapper,
         nonce: Box<[u8]>,
         chunk_size: usize,
         aad: Option<Vec<u8>>,
@@ -186,7 +186,7 @@ impl<'a> StreamingDecryptorSetup<'a> {
     pub fn start<R: Read + 'a>(
         self,
         reader: R,
-        key: Cow<'a, TypedSymmetricKey>,
+        key: Cow<'a, TypedAeadKey>,
     ) -> StreamingDecryptor<'a, R> {
         let encrypted_chunk_size = self.chunk_size + self.algorithm.tag_size();
         let algorithm = self.algorithm.clone();
@@ -208,8 +208,8 @@ impl<'a> StreamingDecryptorSetup<'a> {
 
 pub struct StreamingDecryptor<'a, R: Read> {
     reader: R,
-    algorithm: SymmetricAlgorithmWrapper,
-    key: TypedSymmetricKey,
+    algorithm: AeadAlgorithmWrapper,
+    key: TypedAeadKey,
     base_nonce: Box<[u8]>,
     encrypted_chunk_size: usize,
     buffer: io::Cursor<Vec<u8>>,

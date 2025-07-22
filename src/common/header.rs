@@ -11,7 +11,7 @@
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享。
 use crate::error::{Error, FormatError, Result};
 use async_trait::async_trait;
-use seal_crypto_wrapper::algorithms::symmetric::SymmetricAlgorithm;
+use seal_crypto_wrapper::algorithms::aead::AeadAlgorithm;
 use seal_crypto_wrapper::bincode;
 use seal_crypto_wrapper::prelude::TypedSignaturePublicKey;
 use serde::{Deserialize, Serialize};
@@ -23,14 +23,14 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 #[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 #[bincode(crate = "seal_crypto_wrapper::bincode")]
 pub struct SymmetricParams {
-    pub(crate) algorithm: SymmetricAlgorithm,
+    pub(crate) algorithm: AeadAlgorithm,
     pub(crate) chunk_size: u32,
     pub(crate) base_nonce: Box<[u8]>, // 用于派生每个 chunk nonce 的基础 nonce
     pub(crate) aad_hash: Option<Box<[u8]>>,
 }
 
 impl SymmetricParams {
-    pub fn algorithm(&self) -> SymmetricAlgorithm {
+    pub fn algorithm(&self) -> AeadAlgorithm {
         self.algorithm
     }
 
@@ -48,14 +48,14 @@ impl SymmetricParams {
 }
 
 pub struct SymmetricParamsBuilder {
-    algorithm: SymmetricAlgorithm,
+    algorithm: AeadAlgorithm,
     chunk_size: u32,
     base_nonce: Option<Box<[u8]>>,
     aad_hash: Option<Box<[u8]>>,
 }
 
 impl SymmetricParamsBuilder {
-    pub fn new(algorithm: SymmetricAlgorithm, chunk_size: u32) -> Self {
+    pub fn new(algorithm: AeadAlgorithm, chunk_size: u32) -> Self {
         Self {
             algorithm,
             chunk_size,
@@ -65,7 +65,7 @@ impl SymmetricParamsBuilder {
     }
 
     pub fn base_nonce(mut self, f: impl FnOnce(&mut [u8]) -> Result<()>) -> Result<Self> {
-        let mut nonce = vec![0u8; self.algorithm.into_symmetric_wrapper().nonce_size()];
+        let mut nonce = vec![0u8; self.algorithm.into_wrapper().nonce_size()];
         f(&mut nonce)?;
         self.base_nonce = Some(nonce.into());
         Ok(self)

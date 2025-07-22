@@ -10,8 +10,8 @@ use crate::common::{OrderedChunk, derive_nonce};
 use crate::error::{Error, FormatError, Result};
 use crossbeam_utils::thread;
 use rayon::prelude::*;
-use seal_crypto_wrapper::prelude::TypedSymmetricKey;
-use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
+use seal_crypto_wrapper::prelude::TypedAeadKey;
+use seal_crypto_wrapper::wrappers::aead::AeadAlgorithmWrapper;
 use std::borrow::Cow;
 use std::collections::BinaryHeap;
 use std::io::{Read, Write};
@@ -45,7 +45,7 @@ impl<'a> ParallelStreamingEncryptor<'a> {
         self,
         mut reader: R,
         mut writer: W,
-        key: Cow<'a, TypedSymmetricKey>,
+        key: Cow<'a, TypedAeadKey>,
     ) -> Result<()>
     where
         R: Read + Send,
@@ -55,7 +55,7 @@ impl<'a> ParallelStreamingEncryptor<'a> {
             return Err(Error::Format(FormatError::InvalidKeyType.into()));
         }
 
-        let algorithm = SymmetricAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+        let algorithm = AeadAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
 
         let key = Arc::new(key.into_owned());
         let aad_arc = Arc::new(self.aad);
@@ -207,7 +207,7 @@ impl<'a> ParallelStreamingEncryptor<'a> {
 // --- Decryptor ---
 
 pub struct ParallelStreamingDecryptor<'a> {
-    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) algorithm: AeadAlgorithmWrapper,
     pub(crate) nonce: Box<[u8]>,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) chunk_size: usize,
@@ -217,7 +217,7 @@ pub struct ParallelStreamingDecryptor<'a> {
 
 impl<'a> ParallelStreamingDecryptor<'a> {
     pub(crate) fn new(
-        algorithm: SymmetricAlgorithmWrapper,
+        algorithm: AeadAlgorithmWrapper,
         nonce: Box<[u8]>,
         aad: Option<Vec<u8>>,
         chunk_size: usize,
@@ -237,7 +237,7 @@ impl<'a> ParallelStreamingDecryptor<'a> {
         self,
         mut reader: R,
         mut writer: W,
-        key: Cow<'a, TypedSymmetricKey>,
+        key: Cow<'a, TypedAeadKey>,
     ) -> Result<()>
     where
         R: Read + Send,

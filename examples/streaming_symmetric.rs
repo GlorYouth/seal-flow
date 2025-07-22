@@ -9,6 +9,7 @@
 //! ```
 
 use anyhow::Result;
+use seal_crypto_wrapper::algorithms::aead::AeadAlgorithm;
 use seal_crypto_wrapper::bincode;
 use seal_flow::common::header::{SealFlowHeader, SymmetricParams, SymmetricParamsBuilder};
 use seal_flow::crypto::prelude::*;
@@ -58,7 +59,7 @@ fn main() -> Result<()> {
     println!("Running streaming symmetric encryption/decryption example...");
 
     // 1. Setup: Define file paths and generate a key.
-    let key = TypedSymmetricKey::generate(SymmetricAlgorithm::build().aes256_gcm())?;
+    let key = TypedAeadKey::generate(AeadAlgorithm::build().aes256_gcm())?;
     let aad = b"streaming authenticated data";
     let input_file_path = "sample_input.bin";
     let encrypted_file_path = "sample_encrypted.bin";
@@ -77,7 +78,7 @@ fn main() -> Result<()> {
         let mut encrypted_file = File::create(encrypted_file_path)?;
 
         // Create a header with relevant metadata.
-        let params = SymmetricParamsBuilder::new(SymmetricAlgorithm::build().aes256_gcm(), 4096)
+        let params = SymmetricParamsBuilder::new(AeadAlgorithm::build().aes256_gcm(), 4096)
             .aad_hash(aad, Sha256::new())
             .base_nonce(|nonce| {
                 nonce.fill(2);

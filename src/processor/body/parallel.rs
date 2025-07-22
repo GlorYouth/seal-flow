@@ -8,9 +8,9 @@ use crate::common::derive_nonce;
 use crate::common::header::SymmetricParams;
 use crate::error::{Error, FormatError, Result};
 use rayon::prelude::*;
-use seal_crypto_wrapper::prelude::TypedSymmetricKey;
-use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
-use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
+use seal_crypto_wrapper::prelude::TypedAeadKey;
+use seal_crypto_wrapper::traits::AeadAlgorithmTrait;
+use seal_crypto_wrapper::wrappers::aead::AeadAlgorithmWrapper;
 use std::borrow::Cow;
 use std::marker::PhantomData;
 
@@ -29,12 +29,12 @@ impl<'a> ParallelEncryptor<'a> {
         }
     }
 
-    pub fn encrypt(self, plaintext: &[u8], key: Cow<'a, TypedSymmetricKey>) -> Result<Vec<u8>> {
+    pub fn encrypt(self, plaintext: &[u8], key: Cow<'a, TypedAeadKey>) -> Result<Vec<u8>> {
         if self.symmetric_params.algorithm != key.algorithm() {
             return Err(Error::Format(FormatError::InvalidKeyType.into()));
         }
 
-        let algorithm = SymmetricAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+        let algorithm = AeadAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
 
         let chunk_size = self.symmetric_params.chunk_size as usize;
         let aad = self.aad.as_deref();
@@ -59,7 +59,7 @@ impl<'a> ParallelEncryptor<'a> {
 }
 
 pub struct ParallelDecryptor<'a> {
-    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) algorithm: AeadAlgorithmWrapper,
     pub(crate) nonce: Box<[u8]>,
     pub(crate) chunk_size: usize,
     pub(crate) aad: Option<Vec<u8>>,
@@ -68,7 +68,7 @@ pub struct ParallelDecryptor<'a> {
 
 impl<'a> ParallelDecryptor<'a> {
     pub(crate) fn new(
-        algorithm: SymmetricAlgorithmWrapper,
+        algorithm: AeadAlgorithmWrapper,
         nonce: Box<[u8]>,
         chunk_size: usize,
         aad: Option<Vec<u8>>,
@@ -85,7 +85,7 @@ impl<'a> ParallelDecryptor<'a> {
     pub fn decrypt(
         self,
         ciphertext_body: &[u8],
-        key: Cow<'a, TypedSymmetricKey>,
+        key: Cow<'a, TypedAeadKey>,
     ) -> Result<Vec<u8>> {
         let chunk_size_with_tag = self.chunk_size + self.algorithm.tag_size();
         let aad = self.aad.as_deref();

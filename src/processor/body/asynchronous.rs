@@ -15,9 +15,9 @@ use crate::error::{Error, FormatError, Result};
 use bytes::BytesMut;
 use futures::stream::{FuturesUnordered, StreamExt};
 use pin_project_lite::pin_project;
-use seal_crypto_wrapper::prelude::TypedSymmetricKey;
-use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
-use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
+use seal_crypto_wrapper::prelude::TypedAeadKey;
+use seal_crypto_wrapper::traits::AeadAlgorithmTrait;
+use seal_crypto_wrapper::wrappers::aead::AeadAlgorithmWrapper;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BinaryHeap};
 use std::io;
@@ -54,13 +54,13 @@ impl<'a> AsyncEncryptorSetup<'a> {
     pub fn start<W: AsyncWrite + Send + Unpin + 'a>(
         self,
         writer: W,
-        key: Cow<'a, TypedSymmetricKey>,
+        key: Cow<'a, TypedAeadKey>,
     ) -> Result<AsyncEncryptorImpl<'a, W>> {
         if self.symmetric_params.algorithm != key.algorithm() {
             return Err(Error::Format(FormatError::InvalidKeyType.into()));
         }
 
-        let algorithm = SymmetricAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+        let algorithm = AeadAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
 
         let chunk_size = self.symmetric_params.chunk_size as usize;
         let out_pool = Arc::new(BufferPool::new(chunk_size + algorithm.tag_size()));
@@ -97,8 +97,8 @@ pin_project! {
     pub struct AsyncEncryptorImpl<'a, W: AsyncWrite> {
         #[pin]
         writer: W,
-        key: Arc<TypedSymmetricKey>,
-        algorithm: SymmetricAlgorithmWrapper,
+        key: Arc<TypedAeadKey>,
+        algorithm: AeadAlgorithmWrapper,
         base_nonce: Box<[u8]>,
         channel_bound: usize,
         buffer: BytesMut,
@@ -318,7 +318,7 @@ impl<'a, W: AsyncWrite + Unpin> AsyncWrite for AsyncEncryptorImpl<'a, W> {
 // --- Decryptor ---
 
 pub struct AsyncDecryptorSetup<'a> {
-    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) algorithm: AeadAlgorithmWrapper,
     pub(crate) nonce: Box<[u8]>,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) chunk_size: usize,
@@ -328,7 +328,7 @@ pub struct AsyncDecryptorSetup<'a> {
 
 impl<'a> AsyncDecryptorSetup<'a> {
     pub(crate) fn new(
-        algorithm: SymmetricAlgorithmWrapper,
+        algorithm: AeadAlgorithmWrapper,
         nonce: Box<[u8]>,
         aad: Option<Vec<u8>>,
         chunk_size: usize,
@@ -347,7 +347,7 @@ impl<'a> AsyncDecryptorSetup<'a> {
     pub fn start<R: AsyncRead + Send + Unpin + 'a>(
         self,
         reader: R,
-        key: Cow<'a, TypedSymmetricKey>,
+        key: Cow<'a, TypedAeadKey>,
     ) -> AsyncDecryptorImpl<'a, R> {
         let decrypted_chunk_size = self.chunk_size;
         let encrypted_chunk_size = decrypted_chunk_size + self.algorithm.tag_size();
@@ -381,8 +381,8 @@ pin_project! {
     pub struct AsyncDecryptorImpl<'a, R: AsyncRead> {
         #[pin]
         reader: R,
-        algorithm: SymmetricAlgorithmWrapper,
-        key: Arc<TypedSymmetricKey>,
+        algorithm: AeadAlgorithmWrapper,
+        key: Arc<TypedAeadKey>,
         base_nonce: Box<[u8]>,
         channel_bound: usize,
         encrypted_chunk_size: usize,

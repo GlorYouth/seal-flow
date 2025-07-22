@@ -9,8 +9,8 @@ use crate::error::Result;
 #[cfg(feature = "async")]
 use crate::processor::body::asynchronous::{AsyncDecryptorImpl, AsyncEncryptorImpl};
 use crate::processor::traits::FinishingWrite;
-use seal_crypto_wrapper::prelude::{TypedSignaturePublicKey, TypedSymmetricKey};
-use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
+use seal_crypto_wrapper::prelude::{TypedSignaturePublicKey, TypedAeadKey};
+use seal_crypto_wrapper::wrappers::aead::AeadAlgorithmWrapper;
 use std::borrow::Cow;
 use std::io::{Read, Write};
 use std::marker::PhantomData;
@@ -23,7 +23,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 /// This struct configures the encryption behavior and initiates the process.
 pub struct EncryptionConfigurator<'a, H> {
     header: H,
-    key: Cow<'a, TypedSymmetricKey>,
+    key: Cow<'a, TypedAeadKey>,
     aad: Option<Vec<u8>>,
 }
 
@@ -34,7 +34,7 @@ impl<'a, H: SealFlowHeader> EncryptionConfigurator<'a, H> {
     /// * `header`: The `SealFlowEnvelopeHeader` containing all metadata for the encryption.
     /// * `key`: The symmetric key for encryption.
     /// * `aad`: Optional Additional Authenticated Data.
-    pub fn new(header: H, key: Cow<'a, TypedSymmetricKey>, aad: Option<Vec<u8>>) -> Self {
+    pub fn new(header: H, key: Cow<'a, TypedAeadKey>, aad: Option<Vec<u8>>) -> Self {
         Self { header, key, aad }
     }
 
@@ -248,11 +248,11 @@ impl<'a, H: SealFlowHeader> PendingDecryption<&'a [u8], H> {
     /// Decrypts data in-memory using a single thread.
     pub fn decrypt_ordinary(
         self,
-        key: Cow<'a, TypedSymmetricKey>,
+        key: Cow<'a, TypedAeadKey>,
         aad: Option<Vec<u8>>,
     ) -> Result<Vec<u8>> {
         let params = self.header.symmetric_params();
-        let wrapper = SymmetricAlgorithmWrapper::from_enum(params.algorithm);
+        let wrapper = AeadAlgorithmWrapper::from_enum(params.algorithm);
         let decryptor = super::body::ordinary::OrdinaryDecryptor::new(
             wrapper,
             params.base_nonce.clone(),
@@ -265,11 +265,11 @@ impl<'a, H: SealFlowHeader> PendingDecryption<&'a [u8], H> {
     /// Decrypts data in-memory using multiple threads.
     pub fn decrypt_parallel(
         self,
-        key: Cow<'a, TypedSymmetricKey>,
+        key: Cow<'a, TypedAeadKey>,
         aad: Option<Vec<u8>>,
     ) -> Result<Vec<u8>> {
         let params = self.header.symmetric_params();
-        let wrapper = SymmetricAlgorithmWrapper::from_enum(params.algorithm);
+        let wrapper = AeadAlgorithmWrapper::from_enum(params.algorithm);
         let decryptor = super::body::parallel::ParallelDecryptor::new(
             wrapper,
             params.base_nonce.clone(),
@@ -284,11 +284,11 @@ impl<'a, R: Read + 'a, H: SealFlowHeader> PendingDecryption<R, H> {
     /// Returns a reader that decrypts data as it's read.
     pub fn decrypt_streaming(
         self,
-        key: Cow<'a, TypedSymmetricKey>,
+        key: Cow<'a, TypedAeadKey>,
         aad: Option<Vec<u8>>,
     ) -> Result<impl Read + 'a> {
         let params = self.header.symmetric_params();
-        let wrapper = SymmetricAlgorithmWrapper::from_enum(params.algorithm);
+        let wrapper = AeadAlgorithmWrapper::from_enum(params.algorithm);
         let setup = super::body::streaming::StreamingDecryptorSetup::new(
             wrapper,
             params.base_nonce.clone(),
@@ -304,7 +304,7 @@ impl<'a, R: Read + Send + 'a, H: SealFlowHeader> PendingDecryption<R, H> {
     pub fn decrypt_parallel_streaming<W>(
         self,
         writer: W,
-        key: Cow<'a, TypedSymmetricKey>,
+        key: Cow<'a, TypedAeadKey>,
         aad: Option<Vec<u8>>,
         channel_bound: usize,
     ) -> Result<()>
@@ -312,7 +312,7 @@ impl<'a, R: Read + Send + 'a, H: SealFlowHeader> PendingDecryption<R, H> {
         W: Write + Send,
     {
         let params = self.header.symmetric_params();
-        let wrapper = SymmetricAlgorithmWrapper::from_enum(params.algorithm);
+        let wrapper = AeadAlgorithmWrapper::from_enum(params.algorithm);
         let decryptor = super::body::parallel_streaming::ParallelStreamingDecryptor::new(
             wrapper,
             params.base_nonce.clone(),
@@ -329,12 +329,12 @@ impl<'a, R: AsyncRead + Send + Unpin + 'a, H: SealFlowHeader> PendingDecryption<
     /// Returns a reader that asynchronously decrypts data as it's read.
     pub fn decrypt_asynchronous(
         self,
-        key: Cow<'a, TypedSymmetricKey>,
+        key: Cow<'a, TypedAeadKey>,
         aad: Option<Vec<u8>>,
         channel_bound: usize,
     ) -> AsyncDecryptorImpl<'a, R> {
         let params = self.header.symmetric_params();
-        let wrapper = SymmetricAlgorithmWrapper::from_enum(params.algorithm);
+        let wrapper = AeadAlgorithmWrapper::from_enum(params.algorithm);
         let setup = super::body::asynchronous::AsyncDecryptorSetup::new(
             wrapper,
             params.base_nonce.clone(),

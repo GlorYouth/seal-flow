@@ -7,9 +7,9 @@
 use crate::common::derive_nonce;
 use crate::common::header::SymmetricParams;
 use crate::error::{Error, FormatError, Result};
-use seal_crypto_wrapper::prelude::TypedSymmetricKey;
-use seal_crypto_wrapper::traits::SymmetricAlgorithmTrait;
-use seal_crypto_wrapper::wrappers::symmetric::SymmetricAlgorithmWrapper;
+use seal_crypto_wrapper::prelude::TypedAeadKey;
+use seal_crypto_wrapper::traits::AeadAlgorithmTrait;
+use seal_crypto_wrapper::wrappers::aead::AeadAlgorithmWrapper;
 use std::borrow::Cow;
 
 pub struct OrdinaryEncryptor<'a> {
@@ -27,12 +27,12 @@ impl<'a> OrdinaryEncryptor<'a> {
         }
     }
 
-    pub fn encrypt(self, plaintext: &[u8], key: Cow<'a, TypedSymmetricKey>) -> Result<Vec<u8>> {
+    pub fn encrypt(self, plaintext: &[u8], key: Cow<'a, TypedAeadKey>) -> Result<Vec<u8>> {
         if self.symmetric_params.algorithm != key.algorithm() {
             return Err(Error::Format(FormatError::InvalidKeyType.into()));
         }
 
-        let algorithm = SymmetricAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+        let algorithm = AeadAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
 
         let mut ciphertext = Vec::with_capacity(
             plaintext.len()
@@ -72,7 +72,7 @@ impl<'a> OrdinaryEncryptor<'a> {
 }
 
 pub struct OrdinaryDecryptor<'a> {
-    pub(crate) algorithm: SymmetricAlgorithmWrapper,
+    pub(crate) algorithm: AeadAlgorithmWrapper,
     pub(crate) nonce: Box<[u8]>,
     pub(crate) chunk_size: usize,
     pub(crate) aad: Option<Vec<u8>>,
@@ -81,7 +81,7 @@ pub struct OrdinaryDecryptor<'a> {
 
 impl<'a> OrdinaryDecryptor<'a> {
     pub(crate) fn new(
-        algorithm: SymmetricAlgorithmWrapper,
+        algorithm: AeadAlgorithmWrapper,
         nonce: Box<[u8]>,
         chunk_size: usize,
         aad: Option<Vec<u8>>,
@@ -95,12 +95,12 @@ impl<'a> OrdinaryDecryptor<'a> {
         }
     }
 
-    pub fn decrypt(self, ciphertext: &[u8], key: Cow<'a, TypedSymmetricKey>) -> Result<Vec<u8>> {
+    pub fn decrypt(self, ciphertext: &[u8], key: Cow<'a, TypedAeadKey>) -> Result<Vec<u8>> {
         if self.algorithm.algorithm() != key.algorithm() {
             return Err(Error::Format(FormatError::InvalidKeyType.into()));
         }
 
-        let algorithm = SymmetricAlgorithmWrapper::from_enum(self.algorithm.algorithm());
+        let algorithm = AeadAlgorithmWrapper::from_enum(self.algorithm.algorithm());
 
         let mut plaintext = Vec::with_capacity(ciphertext.len());
         let chunk_size_with_tag = self.chunk_size + algorithm.tag_size();

@@ -10,6 +10,7 @@
 //! ```
 
 use anyhow::Result;
+use seal_crypto_wrapper::algorithms::aead::AeadAlgorithm;
 use seal_crypto_wrapper::bincode;
 use seal_flow::common::header::{SealFlowHeader, SymmetricParams, SymmetricParamsBuilder};
 use seal_flow::crypto::prelude::*;
@@ -45,7 +46,7 @@ fn main() -> Result<()> {
     println!("Running simple symmetric encryption/decryption example...");
 
     // 1. Setup: Define a key, AAD (Additional Authenticated Data), and plaintext.
-    let key = TypedSymmetricKey::generate(SymmetricAlgorithm::build().aes256_gcm())?;
+    let key = TypedAeadKey::generate(AeadAlgorithm::build().aes256_gcm())?;
     let aad = b"additional authenticated data";
     let plaintext = b"this is a secret message that should be kept confidential";
 
@@ -57,7 +58,7 @@ fn main() -> Result<()> {
         println!("\n--- Encrypting ---");
 
         // Create symmetric parameters. The AAD is hashed and included for integrity.
-        let params = SymmetricParamsBuilder::new(SymmetricAlgorithm::build().aes256_gcm(), 1024)
+        let params = SymmetricParamsBuilder::new(AeadAlgorithm::build().aes256_gcm(), 1024)
             .aad_hash(aad, Sha256::new())
             .base_nonce(|nonce| {
                 nonce.fill(1);

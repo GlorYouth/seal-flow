@@ -93,6 +93,18 @@ pub enum FormatError {
     #[error("密文格式不正确或流不完整")]
     InvalidCiphertext,
 
+    /// The algorithm is invalid.
+    ///
+    /// 算法无效。
+    #[error("算法无效")]
+    InvalidAlgorithm,
+
+    /// The message is invalid.
+    ///
+    /// 消息无效。
+    #[error("消息无效")]
+    InvalidMessage,
+
     /// The key type is invalid.
     ///
     /// 密钥类型无效。
