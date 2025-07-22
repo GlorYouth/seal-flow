@@ -35,9 +35,6 @@ impl SealFlowHeader for StreamHeader {
         &self.params
     }
 
-    fn extra_data(&self) -> Option<&[u8]> {
-        None
-    }
 }
 
 /// Creates a dummy file with a specified size in KB.

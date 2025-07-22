@@ -48,11 +48,6 @@ impl SealFlowHeader for HybridHeader {
     fn aead_params(&self) -> &AeadParams {
         &self.params
     }
-
-    fn extra_data(&self) -> Option<&[u8]> {
-        // Not used in this example.
-        None
-    }
 }
 
 fn main() -> Result<()> {

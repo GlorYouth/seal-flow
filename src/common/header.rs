@@ -130,7 +130,6 @@ pub trait SealFlowHeader:
     }
 
     fn aead_params(&self) -> &AeadParams;
-    fn extra_data(&self) -> Option<&[u8]>;
 
     fn encode_to_prefixed_vec(&self) -> Result<Vec<u8>> {
         let header_bytes = self.encode_to_vec()?;

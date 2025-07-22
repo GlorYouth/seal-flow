@@ -33,23 +33,17 @@ fn aead_params(aad: Option<&[u8]>) -> AeadParams {
 #[bincode(crate = "seal_crypto_wrapper::bincode")]
 struct TestHeader {
     params: AeadParams,
-    extra: Vec<u8>,
 }
 
 impl SealFlowHeader for TestHeader {
     fn aead_params(&self) -> &AeadParams {
         &self.params
     }
-
-    fn extra_data(&self) -> Option<&[u8]> {
-        Some(&self.extra)
-    }
 }
 
 fn new_test_header(aad: Option<&[u8]>) -> TestHeader {
     TestHeader {
         params: aead_params(aad),
-        extra: vec![1, 2, 3, 4],
     }
 }
 

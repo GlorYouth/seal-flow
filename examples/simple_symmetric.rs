@@ -35,11 +35,6 @@ impl SealFlowHeader for SimpleHeader {
         &self.params
     }
 
-    fn extra_data(&self) -> Option<&[u8]> {
-        // This example doesn't use extra data, but it could be stored here.
-        // 这个例子没有使用额外的数据，但它可以存储在这里。
-        None
-    }
 }
 
 fn main() -> Result<()> {
