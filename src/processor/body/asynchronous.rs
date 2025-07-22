@@ -77,7 +77,7 @@ impl<'a> AsyncEncryptorSetup<'a> {
             writing_state: WritingState::Idle,
             out_pool,
             aad: self.aad.map(Arc::new),
-            _lifetime: std::marker::PhantomData,
+            _lifetime: PhantomData,
         })
     }
 }
@@ -106,7 +106,7 @@ pin_project! {
         writing_state: WritingState,
         out_pool: Arc<BufferPool>,
         aad: Option<Arc<Vec<u8>>>,
-        _lifetime: std::marker::PhantomData<&'a ()>,
+        _lifetime: PhantomData<&'a ()>,
     }
 }
 
@@ -366,7 +366,7 @@ impl<'a> AsyncDecryptorSetup<'a> {
             pending_chunks: BTreeMap::new(),
             out_pool,
             aad: self.aad.map(Arc::new),
-            _lifetime: std::marker::PhantomData,
+            _lifetime: PhantomData,
         }
     }
 }
@@ -392,7 +392,7 @@ pin_project! {
         pending_chunks: BTreeMap<u64, Result<BytesMut>>,
         out_pool: Arc<BufferPool>,
         aad: Option<Arc<Vec<u8>>>,
-        _lifetime: std::marker::PhantomData<&'a ()>,
+        _lifetime: PhantomData<&'a ()>,
     }
 }
 

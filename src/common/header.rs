@@ -175,9 +175,9 @@ pub trait SealFlowHeader:
         Ok((header, ciphertext_body))
     }
 
-    fn decode_from_prefixed_reader<'a, R: Read>(
+    fn decode_from_prefixed_reader<R: Read>(
         reader: &mut R,
-        verify_key: Option<&'a TypedSignaturePublicKey>,
+        verify_key: Option<&TypedSignaturePublicKey>,
     ) -> Result<Self> {
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf)?;
@@ -192,9 +192,9 @@ pub trait SealFlowHeader:
     }
 
     #[cfg(feature = "async")]
-    async fn decode_from_prefixed_async_reader<'a, R: AsyncRead + Unpin + Send>(
+    async fn decode_from_prefixed_async_reader<R: AsyncRead + Unpin + Send>(
         reader: &mut R,
-        verify_key: Option<&'a TypedSignaturePublicKey>,
+        verify_key: Option<&TypedSignaturePublicKey>,
     ) -> Result<Self> {
         let mut len_buf = [0u8; 4];
         reader.read_exact(&mut len_buf).await?;
