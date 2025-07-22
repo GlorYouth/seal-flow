@@ -5,7 +5,7 @@
 //! 这是对称和混合流式模式的后端。
 
 use crate::common::derive_nonce;
-use crate::common::header::SymmetricParams;
+use crate::common::header::AeadParams;
 use crate::error::{Error, FormatError, Result};
 use crate::processor::traits::FinishingWrite;
 use seal_crypto_wrapper::prelude::TypedAeadKey;
@@ -18,15 +18,15 @@ use std::marker::PhantomData;
 // --- Encryptor ---
 
 pub struct StreamingEncryptorSetup<'a> {
-    pub symmetric_params: SymmetricParams,
+    pub aead_params: AeadParams,
     pub(crate) aad: Option<Vec<u8>>,
     _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> StreamingEncryptorSetup<'a> {
-    pub(crate) fn new(symmetric_params: SymmetricParams, aad: Option<Vec<u8>>) -> Self {
+    pub(crate) fn new(aead_params: AeadParams, aad: Option<Vec<u8>>) -> Self {
         Self {
-            symmetric_params,
+            aead_params,
             aad,
             _lifetime: PhantomData,
         }
@@ -37,19 +37,19 @@ impl<'a> StreamingEncryptorSetup<'a> {
         writer: W,
         key: Cow<'a, TypedAeadKey>,
     ) -> Result<StreamingEncryptor<'a, W>> {
-        if self.symmetric_params.algorithm != key.algorithm() {
+        if self.aead_params.algorithm != key.algorithm() {
             return Err(Error::Format(FormatError::InvalidKeyType.into()));
         }
 
-        let algorithm = AeadAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+        let algorithm = AeadAlgorithmWrapper::from_enum(self.aead_params.algorithm);
 
-        let chunk_size = self.symmetric_params.chunk_size as usize;
+        let chunk_size = self.aead_params.chunk_size as usize;
         let tag_size = algorithm.tag_size();
         Ok(StreamingEncryptor {
             writer,
             algorithm,
             key: key.into_owned(),
-            base_nonce: self.symmetric_params.base_nonce,
+            base_nonce: self.aead_params.base_nonce,
             chunk_size,
             buffer: Vec::with_capacity(chunk_size),
             chunk_counter: 0,

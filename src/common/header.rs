@@ -22,14 +22,14 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 #[bincode(crate = "seal_crypto_wrapper::bincode")]
-pub struct SymmetricParams {
+pub struct AeadParams {
     pub(crate) algorithm: AeadAlgorithm,
     pub(crate) chunk_size: u32,
     pub(crate) base_nonce: Box<[u8]>, // 用于派生每个 chunk nonce 的基础 nonce
     pub(crate) aad_hash: Option<Box<[u8]>>,
 }
 
-impl SymmetricParams {
+impl AeadParams {
     pub fn algorithm(&self) -> AeadAlgorithm {
         self.algorithm
     }
@@ -47,14 +47,14 @@ impl SymmetricParams {
     }
 }
 
-pub struct SymmetricParamsBuilder {
+pub struct AeadParamsBuilder {
     algorithm: AeadAlgorithm,
     chunk_size: u32,
     base_nonce: Option<Box<[u8]>>,
     aad_hash: Option<Box<[u8]>>,
 }
 
-impl SymmetricParamsBuilder {
+impl AeadParamsBuilder {
     pub fn new(algorithm: AeadAlgorithm, chunk_size: u32) -> Self {
         Self {
             algorithm,
@@ -78,8 +78,8 @@ impl SymmetricParamsBuilder {
         self
     }
 
-    pub fn build(self) -> SymmetricParams {
-        SymmetricParams {
+    pub fn build(self) -> AeadParams {
+        AeadParams {
             algorithm: self.algorithm,
             chunk_size: self.chunk_size,
             base_nonce: self.base_nonce.unwrap_or_default(),
@@ -129,7 +129,7 @@ pub trait SealFlowHeader:
         Ok(())
     }
 
-    fn symmetric_params(&self) -> &SymmetricParams;
+    fn aead_params(&self) -> &AeadParams;
     fn extra_data(&self) -> Option<&[u8]>;
 
     fn encode_to_prefixed_vec(&self) -> Result<Vec<u8>> {

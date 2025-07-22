@@ -11,7 +11,7 @@
 use anyhow::Result;
 use seal_crypto_wrapper::algorithms::aead::AeadAlgorithm;
 use seal_crypto_wrapper::bincode;
-use seal_flow::common::header::{SealFlowHeader, SymmetricParams, SymmetricParamsBuilder};
+use seal_flow::common::header::{AeadParams, AeadParamsBuilder, SealFlowHeader};
 use seal_flow::crypto::prelude::*;
 use seal_flow::prelude::{EncryptionConfigurator, prepare_decryption_from_reader};
 use seal_flow::sha2::{Digest, Sha256};
@@ -25,13 +25,13 @@ use std::io::{Read, Write};
 #[derive(Clone, bincode::Encode, bincode::Decode, serde::Serialize, serde::Deserialize, Debug)]
 #[bincode(crate = "seal_crypto_wrapper::bincode")]
 struct StreamHeader {
-    params: SymmetricParams,
+    params: AeadParams,
     filename: String,
     timestamp: u64,
 }
 
 impl SealFlowHeader for StreamHeader {
-    fn symmetric_params(&self) -> &SymmetricParams {
+    fn aead_params(&self) -> &AeadParams {
         &self.params
     }
 
@@ -78,7 +78,7 @@ fn main() -> Result<()> {
         let mut encrypted_file = File::create(encrypted_file_path)?;
 
         // Create a header with relevant metadata.
-        let params = SymmetricParamsBuilder::new(AeadAlgorithm::build().aes256_gcm(), 4096)
+        let params = AeadParamsBuilder::new(AeadAlgorithm::build().aes256_gcm(), 4096)
             .aad_hash(aad, Sha256::new())
             .base_nonce(|nonce| {
                 nonce.fill(2);

@@ -13,7 +13,7 @@ use anyhow::Result;
 use seal_flow::crypto::algorithms::asymmetric::kem::KemAlgorithm;
 use seal_flow::crypto::bincode;
 use seal_flow::crypto::traits::KemAlgorithmTrait;
-use seal_flow::common::header::{SealFlowHeader, SymmetricParams, SymmetricParamsBuilder};
+use seal_flow::common::header::{AeadParams, AeadParamsBuilder, SealFlowHeader};
 use seal_flow::crypto::prelude::*;
 use seal_flow::prelude::{EncryptionConfigurator, prepare_decryption_from_slice};
 use seal_flow::sha2::{Digest, Sha256};
@@ -38,14 +38,14 @@ struct KdfParams {
 #[derive(Clone, bincode::Encode, bincode::Decode, serde::Serialize, serde::Deserialize, Debug)]
 #[bincode(crate = "bincode")]
 struct HybridHeader {
-    params: SymmetricParams,
+    params: AeadParams,
     encapsulated_key: EncapsulatedKey,
     kem_algorithm: KemAlgorithm,
     kdf_params: KdfParams,
 }
 
 impl SealFlowHeader for HybridHeader {
-    fn symmetric_params(&self) -> &SymmetricParams {
+    fn aead_params(&self) -> &AeadParams {
         &self.params
     }
 
@@ -105,7 +105,7 @@ fn main() -> Result<()> {
 
         // 3. DEM: Use the ephemeral symmetric key to encrypt the actual data.
         // 3. DEM：使用临时对称密钥加密实际数据。
-        let params = SymmetricParamsBuilder::new(symmetric_algorithm, 4096)
+        let params = AeadParamsBuilder::new(symmetric_algorithm, 4096)
             .aad_hash(aad, Sha256::new())
             .base_nonce(|nonce| nonce.fill(3))
             .build();

@@ -5,7 +5,7 @@
 //! 这是对称和混合并行流式模式的后端。
 
 use crate::common::buffer::BufferPool;
-use crate::common::header::SymmetricParams;
+use crate::common::header::AeadParams;
 use crate::common::{OrderedChunk, derive_nonce};
 use crate::error::{Error, FormatError, Result};
 use crossbeam_utils::thread;
@@ -21,7 +21,7 @@ use std::sync::Arc;
 // --- Encryptor ---
 
 pub struct ParallelStreamingEncryptor<'a> {
-    pub symmetric_params: SymmetricParams,
+    pub aead_params: AeadParams,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) channel_bound: usize,
     _lifetime: PhantomData<&'a ()>,
@@ -29,12 +29,12 @@ pub struct ParallelStreamingEncryptor<'a> {
 
 impl<'a> ParallelStreamingEncryptor<'a> {
     pub(crate) fn new(
-        symmetric_params: SymmetricParams,
+        aead_params: AeadParams,
         aad: Option<Vec<u8>>,
         channel_bound: usize,
     ) -> Self {
         Self {
-            symmetric_params,
+            aead_params,
             aad,
             channel_bound,
             _lifetime: PhantomData,
@@ -51,17 +51,17 @@ impl<'a> ParallelStreamingEncryptor<'a> {
         R: Read + Send,
         W: Write + Send,
     {
-        if self.symmetric_params.algorithm != key.algorithm() {
+        if self.aead_params.algorithm != key.algorithm() {
             return Err(Error::Format(FormatError::InvalidKeyType.into()));
         }
 
-        let algorithm = AeadAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+        let algorithm = AeadAlgorithmWrapper::from_enum(self.aead_params.algorithm);
 
         let key = Arc::new(key.into_owned());
         let aad_arc = Arc::new(self.aad);
-        let pool = Arc::new(BufferPool::new(self.symmetric_params.chunk_size as usize));
+        let pool = Arc::new(BufferPool::new(self.aead_params.chunk_size as usize));
         let tag_size = algorithm.tag_size();
-        let base_nonce = self.symmetric_params.base_nonce;
+        let base_nonce = self.aead_params.base_nonce;
 
         let (raw_chunk_tx, raw_chunk_rx) = crossbeam_channel::bounded(self.channel_bound);
         let (enc_chunk_tx, enc_chunk_rx) = crossbeam_channel::bounded(self.channel_bound);
@@ -111,7 +111,7 @@ impl<'a> ParallelStreamingEncryptor<'a> {
             let aad_clone = Arc::clone(&aad_arc);
             let in_pool = Arc::clone(&pool);
             let out_pool = Arc::new(BufferPool::new(
-                self.symmetric_params.chunk_size as usize + tag_size,
+                self.aead_params.chunk_size as usize + tag_size,
             ));
             let writer_pool = Arc::clone(&out_pool);
             let key_clone = Arc::clone(&key);

@@ -9,7 +9,7 @@
 #![cfg(feature = "async")]
 
 use crate::common::buffer::BufferPool;
-use crate::common::header::SymmetricParams;
+use crate::common::header::AeadParams;
 use crate::common::{OrderedChunk, derive_nonce};
 use crate::error::{Error, FormatError, Result};
 use bytes::BytesMut;
@@ -31,7 +31,7 @@ use tokio::task::JoinHandle;
 // --- Encryptor ---
 
 pub struct AsyncEncryptorSetup<'a> {
-    pub symmetric_params: SymmetricParams,
+    pub aead_params: AeadParams,
     pub(crate) aad: Option<Vec<u8>>,
     pub(crate) channel_bound: usize,
     _lifetime: PhantomData<&'a ()>,
@@ -39,12 +39,12 @@ pub struct AsyncEncryptorSetup<'a> {
 
 impl<'a> AsyncEncryptorSetup<'a> {
     pub(crate) fn new(
-        symmetric_params: SymmetricParams,
+        aead_params: AeadParams,
         aad: Option<Vec<u8>>,
         channel_bound: usize,
     ) -> Self {
         Self {
-            symmetric_params,
+            aead_params,
             aad,
             channel_bound,
             _lifetime: PhantomData,
@@ -56,13 +56,13 @@ impl<'a> AsyncEncryptorSetup<'a> {
         writer: W,
         key: Cow<'a, TypedAeadKey>,
     ) -> Result<AsyncEncryptorImpl<'a, W>> {
-        if self.symmetric_params.algorithm != key.algorithm() {
+        if self.aead_params.algorithm != key.algorithm() {
             return Err(Error::Format(FormatError::InvalidKeyType.into()));
         }
 
-        let algorithm = AeadAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+        let algorithm = AeadAlgorithmWrapper::from_enum(self.aead_params.algorithm);
 
-        let chunk_size = self.symmetric_params.chunk_size as usize;
+        let chunk_size = self.aead_params.chunk_size as usize;
         let out_pool = Arc::new(BufferPool::new(chunk_size + algorithm.tag_size()));
         let key = Arc::new(key.into_owned());
 
@@ -70,7 +70,7 @@ impl<'a> AsyncEncryptorSetup<'a> {
             writer,
             algorithm,
             key,
-            base_nonce: self.symmetric_params.base_nonce,
+            base_nonce: self.aead_params.base_nonce,
             channel_bound: self.channel_bound,
             buffer: BytesMut::with_capacity(chunk_size * 2),
             chunk_counter: 0,

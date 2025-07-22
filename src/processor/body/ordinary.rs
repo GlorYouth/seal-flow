@@ -5,7 +5,7 @@
 //! 这是对称和混合普通模式的后端。
 
 use crate::common::derive_nonce;
-use crate::common::header::SymmetricParams;
+use crate::common::header::AeadParams;
 use crate::error::{Error, FormatError, Result};
 use seal_crypto_wrapper::prelude::TypedAeadKey;
 use seal_crypto_wrapper::traits::AeadAlgorithmTrait;
@@ -13,33 +13,33 @@ use seal_crypto_wrapper::wrappers::aead::AeadAlgorithmWrapper;
 use std::borrow::Cow;
 
 pub struct OrdinaryEncryptor<'a> {
-    pub symmetric_params: SymmetricParams,
+    pub aead_params: AeadParams,
     pub(crate) aad: Option<Vec<u8>>,
     _lifetime: std::marker::PhantomData<&'a ()>,
 }
 
 impl<'a> OrdinaryEncryptor<'a> {
-    pub(crate) fn new(symmetric_params: SymmetricParams, aad: Option<Vec<u8>>) -> Self {
+    pub(crate) fn new(aead_params: AeadParams, aad: Option<Vec<u8>>) -> Self {
         Self {
-            symmetric_params,
+            aead_params,
             aad,
             _lifetime: std::marker::PhantomData,
         }
     }
 
     pub fn encrypt(self, plaintext: &[u8], key: Cow<'a, TypedAeadKey>) -> Result<Vec<u8>> {
-        if self.symmetric_params.algorithm != key.algorithm() {
+        if self.aead_params.algorithm != key.algorithm() {
             return Err(Error::Format(FormatError::InvalidKeyType.into()));
         }
 
-        let algorithm = AeadAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+        let algorithm = AeadAlgorithmWrapper::from_enum(self.aead_params.algorithm);
 
         let mut ciphertext = Vec::with_capacity(
             plaintext.len()
                 + algorithm.tag_size()
-                    * (plaintext.len() / self.symmetric_params.chunk_size as usize + 1),
+                    * (plaintext.len() / self.aead_params.chunk_size as usize + 1),
         );
-        let chunk_size = self.symmetric_params.chunk_size as usize;
+        let chunk_size = self.aead_params.chunk_size as usize;
 
         let mut encrypted_chunk_buffer = vec![0u8; chunk_size + algorithm.tag_size()];
 
@@ -51,7 +51,7 @@ impl<'a> OrdinaryEncryptor<'a> {
 
             let plain_chunk = &plaintext[cursor..cursor + current_chunk_len];
 
-            let current_nonce = derive_nonce(&self.symmetric_params.base_nonce, chunk_index as u64);
+            let current_nonce = derive_nonce(&self.aead_params.base_nonce, chunk_index as u64);
 
             let bytes_written = algorithm.encrypt_to_buffer(
                 plain_chunk,

@@ -87,9 +87,9 @@ pub struct EncryptionFlow<'a, W: Write + 'a, H: SealFlowHeader> {
 
 impl<'a, W: Write + 'a, H: SealFlowHeader> EncryptionFlow<'a, W, H> {
     pub fn encrypt_ordinary(self, plaintext: &[u8]) -> Result<Vec<u8>> {
-        let symmetric_params = self.config.header.symmetric_params().clone();
+        let aead_params = self.config.header.aead_params().clone();
         let encryptor =
-            super::body::ordinary::OrdinaryEncryptor::new(symmetric_params, self.config.aad);
+            super::body::ordinary::OrdinaryEncryptor::new(aead_params, self.config.aad);
         let mut ciphertext = encryptor.encrypt(plaintext, self.config.key)?;
 
         let mut header_bytes = self.config.header.encode_to_prefixed_vec()?;
@@ -98,9 +98,9 @@ impl<'a, W: Write + 'a, H: SealFlowHeader> EncryptionFlow<'a, W, H> {
     }
 
     pub fn encrypt_parallel(self, plaintext: &[u8]) -> Result<Vec<u8>> {
-        let symmetric_params = self.config.header.symmetric_params().clone();
+        let aead_params = self.config.header.aead_params().clone();
         let encryptor =
-            super::body::parallel::ParallelEncryptor::new(symmetric_params, self.config.aad);
+            super::body::parallel::ParallelEncryptor::new(aead_params, self.config.aad);
         let mut ciphertext = encryptor.encrypt(plaintext, self.config.key)?;
 
         let mut header_bytes = self.config.header.encode_to_prefixed_vec()?;
@@ -110,9 +110,9 @@ impl<'a, W: Write + 'a, H: SealFlowHeader> EncryptionFlow<'a, W, H> {
 
     /// Starts the encryption on the stream, returning a writer that encrypts data as it's written.
     pub fn start_streaming(self) -> Result<Box<dyn FinishingWrite + 'a>> {
-        let symmetric_params = self.config.header.symmetric_params().clone();
+        let aead_params = self.config.header.aead_params().clone();
         let setup =
-            super::body::streaming::StreamingEncryptorSetup::new(symmetric_params, self.config.aad);
+            super::body::streaming::StreamingEncryptorSetup::new(aead_params, self.config.aad);
         let encryptor = setup.start(self.writer, self.config.key)?;
         Ok(Box::new(encryptor))
     }
@@ -138,9 +138,9 @@ pub struct ParallelEncryptionStreamFlow<'a, W: Write + Send + 'a, H: SealFlowHea
 impl<'a, W: Write + Send + 'a, H: SealFlowHeader> ParallelEncryptionStreamFlow<'a, W, H> {
     /// Starts the parallel encryption, consuming a reader and writing encrypted data to the writer.
     pub fn start_parallel_streaming<R: Read + Send>(self, reader: R) -> Result<()> {
-        let symmetric_params = self.config.header.symmetric_params().clone();
+        let aead_params = self.config.header.aead_params().clone();
         let encryptor = super::body::parallel_streaming::ParallelStreamingEncryptor::new(
-            symmetric_params,
+            aead_params,
             self.config.aad,
             self.channel_bound,
         );
@@ -160,9 +160,9 @@ pub struct AsyncEncryptionStreamFlow<'a, W: AsyncWrite + Send + Unpin + 'a, H: S
 impl<'a, W: AsyncWrite + Send + Unpin + 'a, H: SealFlowHeader> AsyncEncryptionStreamFlow<'a, W, H> {
     /// Starts the encryption on the async stream, returning a writer that encrypts data as it's written.
     pub fn start_asynchronous(self) -> Result<AsyncEncryptorImpl<'a, W>> {
-        let symmetric_params = self.config.header.symmetric_params().clone();
+        let aead_params = self.config.header.aead_params().clone();
         let setup = super::body::asynchronous::AsyncEncryptorSetup::new(
-            symmetric_params,
+            aead_params,
             self.config.aad,
             self.channel_bound,
         );
@@ -251,7 +251,7 @@ impl<'a, H: SealFlowHeader> PendingDecryption<&'a [u8], H> {
         key: Cow<'a, TypedAeadKey>,
         aad: Option<Vec<u8>>,
     ) -> Result<Vec<u8>> {
-        let params = self.header.symmetric_params();
+        let params = self.header.aead_params();
         let wrapper = AeadAlgorithmWrapper::from_enum(params.algorithm);
         let decryptor = super::body::ordinary::OrdinaryDecryptor::new(
             wrapper,
@@ -268,7 +268,7 @@ impl<'a, H: SealFlowHeader> PendingDecryption<&'a [u8], H> {
         key: Cow<'a, TypedAeadKey>,
         aad: Option<Vec<u8>>,
     ) -> Result<Vec<u8>> {
-        let params = self.header.symmetric_params();
+        let params = self.header.aead_params();
         let wrapper = AeadAlgorithmWrapper::from_enum(params.algorithm);
         let decryptor = super::body::parallel::ParallelDecryptor::new(
             wrapper,
@@ -287,7 +287,7 @@ impl<'a, R: Read + 'a, H: SealFlowHeader> PendingDecryption<R, H> {
         key: Cow<'a, TypedAeadKey>,
         aad: Option<Vec<u8>>,
     ) -> Result<impl Read + 'a> {
-        let params = self.header.symmetric_params();
+        let params = self.header.aead_params();
         let wrapper = AeadAlgorithmWrapper::from_enum(params.algorithm);
         let setup = super::body::streaming::StreamingDecryptorSetup::new(
             wrapper,
@@ -311,7 +311,7 @@ impl<'a, R: Read + Send + 'a, H: SealFlowHeader> PendingDecryption<R, H> {
     where
         W: Write + Send,
     {
-        let params = self.header.symmetric_params();
+        let params = self.header.aead_params();
         let wrapper = AeadAlgorithmWrapper::from_enum(params.algorithm);
         let decryptor = super::body::parallel_streaming::ParallelStreamingDecryptor::new(
             wrapper,
@@ -333,7 +333,7 @@ impl<'a, R: AsyncRead + Send + Unpin + 'a, H: SealFlowHeader> PendingDecryption<
         aad: Option<Vec<u8>>,
         channel_bound: usize,
     ) -> AsyncDecryptorImpl<'a, R> {
-        let params = self.header.symmetric_params();
+        let params = self.header.aead_params();
         let wrapper = AeadAlgorithmWrapper::from_enum(params.algorithm);
         let setup = super::body::asynchronous::AsyncDecryptorSetup::new(
             wrapper,

@@ -1,6 +1,6 @@
 use seal_crypto_wrapper::algorithms::aead::AeadAlgorithm;
 use seal_crypto_wrapper::bincode;
-use seal_flow::common::header::{SealFlowHeader, SymmetricParams, SymmetricParamsBuilder};
+use seal_flow::common::header::{AeadParams, AeadParamsBuilder, SealFlowHeader};
 use seal_flow::crypto::prelude::*;
 #[cfg(feature = "async")]
 use seal_flow::processor::api::prepare_decryption_from_async_reader;
@@ -16,9 +16,9 @@ const TEST_CHUNK_SIZE: u32 = 1024;
 const TEST_AAD: &[u8] = b"test aad";
 const TEST_DATA: &[u8] = b"some test data to be encrypted";
 
-fn symmetric_params(aad: Option<&[u8]>) -> SymmetricParams {
+fn aead_params(aad: Option<&[u8]>) -> AeadParams {
     let algorithm = AeadAlgorithm::build().aes256_gcm();
-    let mut builder = SymmetricParamsBuilder::new(algorithm, TEST_CHUNK_SIZE);
+    let mut builder = AeadParamsBuilder::new(algorithm, TEST_CHUNK_SIZE);
     if let Some(aad) = aad {
         builder = builder.aad_hash(aad, Sha256::new());
     }
@@ -32,12 +32,12 @@ fn symmetric_params(aad: Option<&[u8]>) -> SymmetricParams {
 #[derive(Clone, bincode::Encode, bincode::Decode, serde::Serialize, serde::Deserialize)]
 #[bincode(crate = "seal_crypto_wrapper::bincode")]
 struct TestHeader {
-    params: SymmetricParams,
+    params: AeadParams,
     extra: Vec<u8>,
 }
 
 impl SealFlowHeader for TestHeader {
-    fn symmetric_params(&self) -> &SymmetricParams {
+    fn aead_params(&self) -> &AeadParams {
         &self.params
     }
 
@@ -48,7 +48,7 @@ impl SealFlowHeader for TestHeader {
 
 fn new_test_header(aad: Option<&[u8]>) -> TestHeader {
     TestHeader {
-        params: symmetric_params(aad),
+        params: aead_params(aad),
         extra: vec![1, 2, 3, 4],
     }
 }

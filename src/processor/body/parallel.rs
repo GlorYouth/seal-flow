@@ -5,7 +5,7 @@
 //! 这是对称和混合并行模式的后端。
 
 use crate::common::derive_nonce;
-use crate::common::header::SymmetricParams;
+use crate::common::header::AeadParams;
 use crate::error::{Error, FormatError, Result};
 use rayon::prelude::*;
 use seal_crypto_wrapper::prelude::TypedAeadKey;
@@ -15,30 +15,30 @@ use std::borrow::Cow;
 use std::marker::PhantomData;
 
 pub struct ParallelEncryptor<'a> {
-    pub symmetric_params: SymmetricParams,
+    pub aead_params: AeadParams,
     pub(crate) aad: Option<Vec<u8>>,
     _lifetime: PhantomData<&'a ()>,
 }
 
 impl<'a> ParallelEncryptor<'a> {
-    pub(crate) fn new(symmetric_params: SymmetricParams, aad: Option<Vec<u8>>) -> Self {
+    pub(crate) fn new(aead_params: AeadParams, aad: Option<Vec<u8>>) -> Self {
         Self {
-            symmetric_params,
+            aead_params,
             aad,
             _lifetime: PhantomData,
         }
     }
 
     pub fn encrypt(self, plaintext: &[u8], key: Cow<'a, TypedAeadKey>) -> Result<Vec<u8>> {
-        if self.symmetric_params.algorithm != key.algorithm() {
+        if self.aead_params.algorithm != key.algorithm() {
             return Err(Error::Format(FormatError::InvalidKeyType.into()));
         }
 
-        let algorithm = AeadAlgorithmWrapper::from_enum(self.symmetric_params.algorithm);
+        let algorithm = AeadAlgorithmWrapper::from_enum(self.aead_params.algorithm);
 
-        let chunk_size = self.symmetric_params.chunk_size as usize;
+        let chunk_size = self.aead_params.chunk_size as usize;
         let aad = self.aad.as_deref();
-        let base_nonce = &self.symmetric_params.base_nonce;
+        let base_nonce = &self.aead_params.base_nonce;
 
         let chunks: Vec<_> = plaintext.chunks(chunk_size).enumerate().collect();
 
