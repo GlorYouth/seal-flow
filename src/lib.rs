@@ -36,8 +36,6 @@ pub mod common;
 pub mod error;
 pub mod processor;
 pub use error::{Error, Result};
-#[cfg(feature = "async")]
-pub use {::futures, ::tokio};
 
 pub use ::seal_crypto_wrapper as crypto;
 pub mod prelude {
