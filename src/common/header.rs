@@ -11,9 +11,9 @@
 // 这两个枚举也可以考虑放到 seal-crypto 中，以便共享。
 use crate::error::{Error, FormatError, Result};
 use async_trait::async_trait;
-use seal_crypto_wrapper::{algorithms::aead::AeadAlgorithm, wrappers::hash::HashAlgorithmWrapper};
 use seal_crypto_wrapper::bincode;
 use seal_crypto_wrapper::prelude::TypedSignaturePublicKey;
+use seal_crypto_wrapper::{algorithms::aead::AeadAlgorithm, wrappers::hash::HashAlgorithmWrapper};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 #[cfg(feature = "async")]
