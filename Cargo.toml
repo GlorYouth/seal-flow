@@ -12,7 +12,7 @@ features = ["full"]
 [dependencies]
 # --- 核心密码学特性 ---
 # 提供了所有密码学操作的 Trait 和基础实现
-seal-crypto-wrapper = { path = "../seal-crypto-wrapper", features = ["aead", "asymmetric-signature"]}
+seal-crypto-wrapper = { version = "0.1.0", features = ["aead", "asymmetric-signature"]}
 
 # 提供了方便的宏来创建自定义错误类型
 thiserror = "2.0.12"
